@@ -1,0 +1,26 @@
+{
+  "name": "ust-central-bot",
+  "version": "1.0.0",
+  "description": "UST Central Bot - Telegram bot system for University of Science and Technology (Mockup)",
+  "private": true,
+  "scripts": {
+    "deploy:student": "wrangler deploy --config wrangler.student.toml",
+    "deploy:admin": "wrangler deploy --config wrangler.admin.toml",
+    "deploy:all": "npm run deploy:student && npm run deploy:admin",
+    "set-secrets": "node scripts/set-secrets.js",
+    "set-webhooks": "node scripts/set-webhooks.js",
+    "test:student": "curl -s https://api.telegram.org/bot$STUDENT_TOKEN/getMe | jq .",
+    "test:admin": "curl -s https://api.telegram.org/bot$ADMIN_TOKEN/getMe | jq ."
+  },
+  "dependencies": {
+    "grammy": "^1.30.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260722.1",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
