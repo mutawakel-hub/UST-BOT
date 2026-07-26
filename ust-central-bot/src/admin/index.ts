@@ -1083,9 +1083,37 @@ export function createAdminBot(token: string): Bot {
     );
   });
 
-  // ====== معالجة الأخطاء ======
-  bot.catch((err) => {
-    console.error("Admin bot error:", err);
+  // ====== معالجة الأخطاء (مهم: لا تُرجع 500، فقط سجّل) ======
+  bot.catch(async (err) => {
+    const e = err.error as any;
+    const ctx = err.ctx;
+    console.error("Admin bot error:", e?.message || e);
+
+    const ignorableMessages = [
+      "query is too old",
+      "message is not modified",
+      "chat not found",
+      "message to edit not found",
+      "message to delete not found",
+      "QUERY_ID_INVALID",
+      "MESSAGE_ID_INVALID",
+    ];
+    const errMsg = (e?.message || "").toLowerCase();
+    const isIgnorable = ignorableMessages.some((m) => errMsg.includes(m.toLowerCase()));
+    if (isIgnorable) {
+      return;
+    }
+
+    try {
+      if (ctx?.chat?.id) {
+        await ctx.api.sendMessage(
+          ctx.chat.id,
+          "⚠️ حدث خطأ أثناء معالجة طلبك. حاول مرة أخرى بكتابة /start"
+        );
+      }
+    } catch {
+      // تجاهل
+    }
   });
 
   return bot;
@@ -1117,7 +1145,7 @@ export default {
             status: "ok",
             bot: env.BOT_USERNAME,
             environment: env.ENVIRONMENT,
-            version: "2.0",
+            version: "2.1",
             timestamp: new Date().toISOString(),
           }),
           { headers: { "Content-Type": "application/json" } }
@@ -1125,8 +1153,14 @@ export default {
       }
 
       if (url.pathname === "/webhook") {
-        const callback = webhookCallback(botInstance, "cloudflare-mod");
-        return callback(request);
+        // معالجة الـ webhook بشكل آمن - إرجاع 200 دائماً لمنع إعادة المحاولة
+        try {
+          const callback = webhookCallback(botInstance, "cloudflare-mod");
+          return await callback(request);
+        } catch (err) {
+          console.error("Webhook handler error (returning 200 to stop retries):", err?.message || err);
+          return new Response("", { status: 200 });
+        }
       }
 
       return new Response(

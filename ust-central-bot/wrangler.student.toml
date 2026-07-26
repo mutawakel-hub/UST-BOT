@@ -3,10 +3,14 @@ main = "src/student/index.ts"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
+# تفعيل workers.dev URL
+workers_dev = true
+
 # Public non-secret vars
 [vars]
 BOT_USERNAME = "usttesterbot"
 ENVIRONMENT = "mockup"
 WORKERS_SUBDOMAIN = "atow73768"
 
-# Secret: BOT_TOKEN (set via `wrangler secret put BOT_TOKEN --config wrangler.student.toml`)
+# Secret: BOT_TOKEN
+# لتعيينه: echo "TOKEN" | npx wrangler secret put BOT_TOKEN --config wrangler.student.toml
