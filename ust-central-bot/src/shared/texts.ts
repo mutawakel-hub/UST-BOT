@@ -225,28 +225,7 @@ export const TEXTS = {
 // نصوص بوت الإدارة
 // ============================================
 export const ADMIN_TEXTS = {
-  // ====== شاشة A1: AdminLogin ======
-  login: {
-    welcome:
-      "🛡 *بوت الإدارة - UST Central*\n\n" +
-      "مرحباً بك! للوصول إلى لوحة الإدارة، يجب التحقق من هويتك.\n\n" +
-      "أرسل الآن معرّف المسؤول (Admin ID) المخصص لك.\n\n" +
-      "*🧪 معرّفات تجريبية للاختبار:*\n" +
-      "• `DEMO001` — 🛡 مسؤول مركزي (صلاحية كاملة)\n" +
-      "• `DEMO002` — 🏛 مسؤول كلية الحاسبات\n" +
-      "• `DEMO003` — 📚 مسؤول تخصص IT\n" +
-      "• `DEMO004` — 📊 مسؤول مستوى (IT - مستوى 1)",
-    not_authorized: (id: string) =>
-      `❌ *غير مصرّح*\n\nالمعرّف \`${id}\` غير موجود في قائمة المسؤولين.\n\nتواصل مع المسؤول المركزي للحصول على صلاحية، أو جرّب أحد المعرّفات التجريبية.`,
-    awaiting_login: "🔑 في انتظار معرّف المسؤول...",
-    success: (adminName: string, roleLabel: string, scope: string) =>
-      `✅ *تم تسجيل الدخول بنجاح!*\n\n` +
-      `👤 الاسم: *${adminName}*\n` +
-      `🎭 الدور: *${roleLabel}*\n` +
-      `📍 النطاق: ${scope}`,
-  },
-
-  // ====== شاشة A2: AdminDashboard ======
+  // ====== شاشة A2: AdminDashboard (وصول مباشر - لا تسجيل دخول) ======
   dashboard: {
     title: (adminName: string, roleLabel: string, pendingCount: number) =>
       `🛡 *لوحة الإدارة*\n\n` +
@@ -258,11 +237,10 @@ export const ADMIN_TEXTS = {
     btn_files_mgmt: "📁 إدارة الملفات",
     btn_subjects_mgmt: "📖 إدارة المواد",
     btn_broadcast: "📢 تعميم",
-    btn_manage_admins: "👥 إدارة المسؤولين",
+    btn_manage_admins: "👥 إدارة المناصب",
     btn_statistics: "📊 إحصائيات",
     btn_customize: "⚙️ تخصيص النصوص",
     btn_leaderboard: "🏆 لوحة الشرف",
-    btn_logout: "🚪 تسجيل الخروج",
   },
 
   // ====== شاشة A3: PendingList ======

@@ -352,7 +352,6 @@ export function adminDashboardKeyboard(
     kb.text(ADMIN_TEXTS.dashboard.btn_manage_admins, "manage_admins").row();
     kb.text(ADMIN_TEXTS.dashboard.btn_leaderboard, "leaderboard_update").row();
   }
-  kb.text(ADMIN_TEXTS.dashboard.btn_logout, "admin_logout");
   return kb;
 }
 

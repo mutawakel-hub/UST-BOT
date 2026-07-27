@@ -1,7 +1,11 @@
 // ============================================
 // بوت الإدارة - جامعة العلوم والتكنولوجيا (محسّن)
 // Mockup على Cloudflare Workers + grammY
-// 15 شاشة + نظام تسجيل دخول + 4 أدوار هرمية
+// 15 شاشة + وصول مباشر (للـ Mockup)
+// ============================================
+// ملاحظة: في الـ Mockup، كل من يفتح البوت يُعامل كمسؤول مركزي.
+// في الإنتاج، سيتم تطبيق نظام RBAC كامل (وراثة الصلاحيات)
+// بناءً على المنصب المرتبط بـ Telegram ID في قاعدة البيانات.
 // ============================================
 
 import { Bot, webhookCallback, InlineKeyboard } from "grammy";
@@ -37,37 +41,37 @@ import {
   getMockFilesForSubject,
 } from "../shared/data/subjects";
 import {
-  MOCK_ADMINS,
   MOCK_PENDING_CONTRIBUTIONS,
   MOCK_STATISTICS,
-  type MockAdmin,
   type MockContribution,
-  getAdminByLoginId,
-  getRoleLabel,
-  getRoleScope,
 } from "../shared/data/admins";
+
+// ============================================
+// نوع المسؤول الافتراضي (في الـ Mockup، الجميع مسؤولون مركزيون)
+// ============================================
+type AdminRole = "central";
+
+interface DefaultAdmin {
+  telegram_id: number;
+  name: string;
+  role: AdminRole;
+}
 
 // ============================================
 // حالة الجلسة لكل مسؤول
 // ============================================
 interface AdminSession {
-  admin: MockAdmin;
-  awaiting_login?: boolean;
+  admin: DefaultAdmin;
   awaiting_upload_step?: "major" | "level" | "semester" | "subject" | "type" | "file";
   awaiting_broadcast_scope?: "all" | "college" | "major" | "level";
   awaiting_broadcast_text?: string;
   awaiting_subject_add?: boolean;
   awaiting_text_edit?: string;
   awaiting_text_value?: string;
-  awaiting_admin_add_step?: "name" | "telegram_id" | "role" | "college" | "specialty" | "level";
-  new_admin_data?: any;
   upload_context?: any;
 }
 
 const adminSessions = new Map<number, AdminSession>();
-
-// قائمة المسؤولين الحالية (تبدأ من MOCK_ADMINS)
-const ALL_ADMINS: MockAdmin[] = [...MOCK_ADMINS];
 
 // قائمة المساهمات المعلقة (تبدأ من MOCK_PENDING_CONTRIBUTIONS)
 let pendingContributions: MockContribution[] = [...MOCK_PENDING_CONTRIBUTIONS];
@@ -87,65 +91,47 @@ function removeContribution(id: number): void {
   pendingContributions = pendingContributions.filter((c) => c.id !== id);
 }
 
+// الحصول على أو إنشاء جلسة المسؤول (وصول مباشر - لا تسجيل دخول)
+function getOrCreateSession(telegramId: number, firstName?: string): AdminSession {
+  if (!adminSessions.has(telegramId)) {
+    adminSessions.set(telegramId, {
+      admin: {
+        telegram_id: telegramId,
+        name: firstName || "مسؤول",
+        role: "central" as AdminRole,
+      },
+    });
+  }
+  return adminSessions.get(telegramId)!;
+}
+
 // ============================================
 // إنشاء البوت
 // ============================================
 export function createAdminBot(token: string): Bot {
   const bot = new Bot(token);
 
-  // ====== A1: تسجيل الدخول ======
+  // ====== A1: /start - وصول مباشر للوحة الإدارة ======
   bot.command("start", async (ctx) => {
-    // إذا كان مسجل دخول بالفعل
-    if (adminSessions.has(ctx.from.id)) {
-      const session = adminSessions.get(ctx.from.id)!;
-      await ctx.reply(
-        ADMIN_TEXTS.dashboard.title(
-          session.admin.name,
-          getRoleLabel(session.admin.role),
-          getPendingCount()
-        ) + "\n\n📍 النطاق: " + getRoleScope(session.admin),
-        {
-          reply_markup: adminDashboardKeyboard(session.admin.role, getPendingCount()),
-          parse_mode: "Markdown",
-        }
-      );
-      return;
-    }
-
-    // طلب تسجيل الدخول
-    adminSessions.set(ctx.from.id, { admin: null as any, awaiting_login: true });
-    await ctx.reply(ADMIN_TEXTS.login.welcome, { parse_mode: "Markdown" });
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    await ctx.reply(
+      ADMIN_TEXTS.dashboard.title(
+        session.admin.name,
+        "🛡 مسؤول مركزي (تجريبي)",
+        getPendingCount()
+      ) + "\n\n" +
+      "ℹ️ *وضع التجربة:* يتم منحك صلاحية مسؤول مركزي تلقائياً.\n" +
+      "في الإنتاج، سيتم التحقق من منصبك في قاعدة البيانات وتطبيق صلاحيات RBAC.",
+      {
+        reply_markup: adminDashboardKeyboard("central", getPendingCount()),
+        parse_mode: "Markdown",
+      }
+    );
   });
 
-  // استقبال معرّف تسجيل الدخول
+  // استقبال الرسائل النصية
   bot.on(":text", async (ctx) => {
-    const session = adminSessions.get(ctx.from.id);
-
-    if (session?.awaiting_login) {
-      const loginId = ctx.message.text.trim();
-      const admin = getAdminByLoginId(loginId);
-
-      if (!admin) {
-        await ctx.reply(ADMIN_TEXTS.login.not_authorized(loginId), {
-          reply_markup: new InlineKeyboard().text("🔄 محاولة أخرى", "retry_login"),
-          parse_mode: "Markdown",
-        });
-        return;
-      }
-
-      session.admin = admin;
-      session.awaiting_login = false;
-      await ctx.reply(
-        ADMIN_TEXTS.login.success(admin.name, getRoleLabel(admin.role), getRoleScope(admin)) +
-          "\n\n" +
-          ADMIN_TEXTS.dashboard.title(admin.name, getRoleLabel(admin.role), getPendingCount()),
-        {
-          reply_markup: adminDashboardKeyboard(admin.role, getPendingCount()),
-          parse_mode: "Markdown",
-        }
-      );
-      return;
-    }
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
 
     // استقبال نص التعميم
     if (session?.awaiting_broadcast_text === "awaiting") {
@@ -197,88 +183,32 @@ export function createAdminBot(token: string): Bot {
       return;
     }
 
-    // استقبال اسم مسؤول جديد
-    if (session?.awaiting_admin_add_step === "name") {
-      session.new_admin_data = { name: ctx.message.text };
-      session.awaiting_admin_add_step = "telegram_id";
-      await ctx.reply(
-        "🆔 أرسل معرّف تلجرام للمسؤول الجديد (رقم):\n\n💡 للحصول على المعرّف: توجّه إلى @userinfobot",
-        {
-          reply_markup: new InlineKeyboard().text("❌ إلغاء", "manage_admins"),
-        }
-      );
-      return;
-    }
-
-    if (session?.awaiting_admin_add_step === "telegram_id") {
-      const tid = parseInt(ctx.message.text);
-      if (isNaN(tid)) {
-        await ctx.reply("⚠️ المعرّف يجب أن يكون رقماً. أعد المحاولة:");
-        return;
-      }
-      session.new_admin_data.telegram_id = tid;
-      session.awaiting_admin_add_step = "role";
-      const kb = new InlineKeyboard()
-        .text("🛡 مركزي", "new_admin_role_central")
-        .text("🏛 كلية", "new_admin_role_college")
-        .row()
-        .text("📚 تخصص", "new_admin_role_specialty")
-        .text("📊 مستوى", "new_admin_role_level")
-        .row()
-        .text("❌ إلغاء", "manage_admins");
-      await ctx.reply("🎭 اختر دور المسؤول الجديد:", { reply_markup: kb });
-      return;
-    }
-
     // رسالة افتراضية
-    if (session?.admin) {
-      await ctx.reply(
-        "👋 استخدم الأزرار للتنقل، أو /start للعودة للوحة الإدارة."
-      );
-    } else {
-      await ctx.reply(ADMIN_TEXTS.login.welcome, { parse_mode: "Markdown" });
-    }
-  });
-
-  bot.callbackQuery("retry_login", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    adminSessions.set(ctx.from.id, { admin: null as any, awaiting_login: true });
-    await ctx.editMessageText(ADMIN_TEXTS.login.welcome, { parse_mode: "Markdown" });
+    await ctx.reply(
+      "👋 استخدم الأزرار للتنقل، أو /start للعودة للوحة الإدارة."
+    );
   });
 
   // ====== A2: لوحة الإدارة ======
   bot.callbackQuery("back_to_dashboard", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = adminSessions.get(ctx.from.id);
-    if (!session?.admin) return;
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     session.awaiting_upload_step = undefined;
     session.awaiting_broadcast_text = undefined;
     session.awaiting_subject_add = false;
     session.awaiting_text_edit = undefined;
     session.awaiting_text_value = undefined;
     session.upload_context = undefined;
-    session.awaiting_admin_add_step = undefined;
-    session.new_admin_data = undefined;
     await ctx.editMessageText(
       ADMIN_TEXTS.dashboard.title(
         session.admin.name,
-        getRoleLabel(session.admin.role),
+        "🛡 مسؤول مركزي (تجريبي)",
         getPendingCount()
-      ) + "\n\n📍 النطاق: " + getRoleScope(session.admin),
+      ),
       {
-        reply_markup: adminDashboardKeyboard(session.admin.role, getPendingCount()),
+        reply_markup: adminDashboardKeyboard("central", getPendingCount()),
         parse_mode: "Markdown",
       }
-    );
-  });
-
-  // تسجيل الخروج
-  bot.callbackQuery("admin_logout", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    adminSessions.delete(ctx.from.id);
-    await ctx.editMessageText(
-      "🚪 *تم تسجيل الخروج بنجاح*\n\nللعودة، أرسل /start وأدخل معرّف المسؤول.",
-      { parse_mode: "Markdown" }
     );
   });
 
@@ -494,7 +424,7 @@ export function createAdminBot(token: string): Bot {
   // A5a: معالج رفع الملفات (مع شريط تقدّم)
   bot.callbackQuery("upload_file", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = adminSessions.get(ctx.from.id);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (session) {
       session.awaiting_upload_step = "major";
       session.upload_context = {};
@@ -511,7 +441,7 @@ export function createAdminBot(token: string): Bot {
 
   bot.callbackQuery(/upload_col_(\d+)/, async (ctx) => {
     const collegeId = parseInt(ctx.match[1]);
-    const session = adminSessions.get(ctx.from.id);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (!session) return;
     session.upload_context = { ...session.upload_context, college_id: collegeId };
     session.awaiting_upload_step = "level";
@@ -532,7 +462,7 @@ export function createAdminBot(token: string): Bot {
 
   bot.callbackQuery(/upload_major_(\d+)/, async (ctx) => {
     const specId = parseInt(ctx.match[1]);
-    const session = adminSessions.get(ctx.from.id);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (!session) return;
     session.upload_context = { ...session.upload_context, specialty_id: specId };
     session.awaiting_upload_step = "semester";
@@ -558,7 +488,7 @@ export function createAdminBot(token: string): Bot {
 
   bot.callbackQuery(/upload_level_(\d+)/, async (ctx) => {
     const level = parseInt(ctx.match[1]);
-    const session = adminSessions.get(ctx.from.id);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (!session || !session.upload_context?.specialty_id) return;
     session.upload_context = { ...session.upload_context, level };
     session.awaiting_upload_step = "subject";
@@ -579,7 +509,7 @@ export function createAdminBot(token: string): Bot {
 
   bot.callbackQuery(/upload_sem_(\d+)/, async (ctx) => {
     const semester = parseInt(ctx.match[1]);
-    const session = adminSessions.get(ctx.from.id);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (!session || !session.upload_context?.specialty_id || !session.upload_context?.level) return;
     session.upload_context.semester = semester;
     session.awaiting_upload_step = "type";
@@ -612,7 +542,7 @@ export function createAdminBot(token: string): Bot {
 
   bot.callbackQuery(/upload_subj_(\d+)/, async (ctx) => {
     const subjectId = parseInt(ctx.match[1]);
-    const session = adminSessions.get(ctx.from.id);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (!session) return;
     session.upload_context = { ...session.upload_context, subject_id: subjectId };
     session.awaiting_upload_step = "file";
@@ -637,7 +567,7 @@ export function createAdminBot(token: string): Bot {
 
   bot.callbackQuery(/upload_type_(.+)/, async (ctx) => {
     const type = ctx.match[1];
-    const session = adminSessions.get(ctx.from.id);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (!session) return;
     session.upload_context = { ...session.upload_context, category: type };
     session.awaiting_upload_step = "file";
@@ -668,7 +598,7 @@ export function createAdminBot(token: string): Bot {
   });
 
   bot.on(":document", async (ctx) => {
-    const session = adminSessions.get(ctx.from.id);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (session?.awaiting_upload_step === "file") {
       const doc = ctx.message.document;
       session.awaiting_upload_step = undefined;
@@ -776,7 +706,7 @@ export function createAdminBot(token: string): Bot {
 
   bot.callbackQuery("add_subject", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = adminSessions.get(ctx.from.id);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (session) session.awaiting_subject_add = true;
     await ctx.editMessageText(ADMIN_TEXTS.subjects_mgmt.add_prompt, { parse_mode: "Markdown" });
   });
@@ -824,7 +754,7 @@ export function createAdminBot(token: string): Bot {
 
   bot.callbackQuery(/broadcast_(all|college|major|level)/, async (ctx) => {
     const scope = ctx.match[1] as "all" | "college" | "major" | "level";
-    const session = adminSessions.get(ctx.from.id);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (session) {
       session.awaiting_broadcast_scope = scope;
       session.awaiting_broadcast_text = "awaiting";
@@ -843,7 +773,7 @@ export function createAdminBot(token: string): Bot {
   });
 
   bot.callbackQuery("confirm_broadcast", async (ctx) => {
-    const session = adminSessions.get(ctx.from.id);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (!session) return;
     const text = session.awaiting_broadcast_text || "";
     const scope = session.awaiting_broadcast_scope || "all";
@@ -859,12 +789,27 @@ export function createAdminBot(token: string): Bot {
   });
 
   // ====== A8: إدارة المسؤولين ======
+  // ملاحظة: في الـ Mockup، هذه الشاشة معطّلة لأنه لا يوجد نظام صلاحيات.
+  // في الإنتاج، ستتيح إدارة المناصب (تعيين/إزالة مسؤول من منصب).
   bot.callbackQuery("manage_admins", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(ADMIN_TEXTS.manage_admins.title, {
-      reply_markup: manageAdminsKeyboard(),
-      parse_mode: "Markdown",
-    });
+    await ctx.editMessageText(
+      "👥 *إدارة المسؤولين*\n\n" +
+      "ℹ️ *وضع التجربة:* نظام إدارة المناصب سيُفعّل في الإنتاج.\n\n" +
+      "في الإنتاج سيتيح هذا القسم:\n" +
+      "• 📋 قائمة المناصب (مع شاغل كل منصب)\n" +
+      "• ➕ تعيين مسؤول على منصب معين\n" +
+      "• ➖ إزالة مسؤول من منصبه\n" +
+      "• 🔄 تغيير شاغل المنصب\n\n" +
+      "_النظام يعتمد على المناصب وليس الأشخاص — يمكنك تغيير شاغل أي منصب دون التأثير على بنية النظام._",
+      {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_dashboard,
+          "back_to_dashboard"
+        ),
+        parse_mode: "Markdown",
+      }
+    );
   });
 
   bot.callbackQuery("back_to_manage_admins", async (ctx) => {
@@ -877,105 +822,42 @@ export function createAdminBot(token: string): Bot {
 
   bot.callbackQuery("list_admins", async (ctx) => {
     await ctx.answerCallbackQuery();
-    let msg = ADMIN_TEXTS.manage_admins.list_header(ALL_ADMINS.length);
-    ALL_ADMINS.forEach((a) => {
-      msg += ADMIN_TEXTS.manage_admins.entry({
-        name: a.name,
-        roleLabel: getRoleLabel(a.role),
-        scope: getRoleScope(a),
-        id: a.id,
-      });
-    });
-    await ctx.editMessageText(msg, {
-      reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_manage_admins, "back_to_manage_admins"),
-      parse_mode: "Markdown",
-    });
-  });
-
-  bot.callbackQuery("add_admin", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const session = adminSessions.get(ctx.from.id);
-    if (session) {
-      session.awaiting_admin_add_step = "name";
-      session.new_admin_data = {};
-    }
     await ctx.editMessageText(
-      "➕ *إضافة مسؤول جديد*\n\nالخطوة 1/3: أرسل اسم المسؤول الكريم:",
+      "📋 *قائمة المناصب*\n\n" +
+      "ℹ️ في الإنتاج، ستظهر هنا قائمة بالمناصب التالية مع شاغل كل منها:\n\n" +
+      "🛡 *رئيس اللجنة العلمية* (مركزي)\n" +
+      "🏛 *مسؤولو الكليات* (7 مناصب — واحدة لكل كلية)\n" +
+      "📊 *مندوبو المستويات* (لكل تخصص × مستوى)\n\n" +
+      "_النظام يعتمد على المناصب وليس الأشخاص._",
       {
-        reply_markup: new InlineKeyboard().text("❌ إلغاء", "manage_admins"),
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_dashboard,
+          "back_to_dashboard"
+        ),
         parse_mode: "Markdown",
       }
     );
   });
 
-  bot.callbackQuery(/new_admin_role_(central|college|specialty|level)/, async (ctx) => {
-    const role = ctx.match[1] as any;
-    const session = adminSessions.get(ctx.from.id);
-    if (!session) return;
-    session.new_admin_data.role = role;
-    if (role === "central") {
-      // إضافة مباشرة - لا نطالب بنطاق
-      const newAdmin: MockAdmin = {
-        id: `DEMO${String(ALL_ADMINS.length + 1).padStart(3, "0")}`,
-        telegram_id: session.new_admin_data.telegram_id,
-        name: session.new_admin_data.name,
-        role: "central",
-      };
-      ALL_ADMINS.push(newAdmin);
-      session.awaiting_admin_add_step = undefined;
-      session.new_admin_data = undefined;
-      await ctx.answerCallbackQuery({ text: "✅ تمت الإضافة" });
-      await ctx.editMessageText(
-        `✅ *تمت إضافة المسؤول بنجاح!*\n\n👤 الاسم: ${newAdmin.name}\n🎭 الدور: ${getRoleLabel(newAdmin.role)}\n🆔 المعرّف: \`${newAdmin.id}\``,
-        {
-          reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_manage_admins, "back_to_manage_admins"),
-          parse_mode: "Markdown",
-        }
-      );
-    } else {
-      // للتبسيط في الـ Mockup - نضيف بنطاق الكلية الحاسبات
-      const collegeId = 5;
-      let newAdmin: MockAdmin;
-      if (role === "college") {
-        newAdmin = {
-          id: `DEMO${String(ALL_ADMINS.length + 1).padStart(3, "0")}`,
-          telegram_id: session.new_admin_data.telegram_id,
-          name: session.new_admin_data.name,
-          role: "college",
-          college_id: collegeId,
-        };
-      } else if (role === "specialty") {
-        newAdmin = {
-          id: `DEMO${String(ALL_ADMINS.length + 1).padStart(3, "0")}`,
-          telegram_id: session.new_admin_data.telegram_id,
-          name: session.new_admin_data.name,
-          role: "specialty",
-          college_id: collegeId,
-          specialty_id: 16,
-        };
-      } else {
-        newAdmin = {
-          id: `DEMO${String(ALL_ADMINS.length + 1).padStart(3, "0")}`,
-          telegram_id: session.new_admin_data.telegram_id,
-          name: session.new_admin_data.name,
-          role: "level",
-          college_id: collegeId,
-          specialty_id: 16,
-          level: 1,
-        };
+  bot.callbackQuery("add_admin", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(
+      "➕ *تعيين مسؤول على منصب*\n\n" +
+      "ℹ️ هذه الميزة ستُفعّل في الإنتاج ضمن نظام RBAC.\n\n" +
+      "_في الإنتاج: ستختار منصباً شاغراً، ثم تُحدّد Telegram ID للمستخدم الذي سيشغله، وسيحصل تلقائياً على صلاحيات المنصب._",
+      {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_dashboard,
+          "back_to_dashboard"
+        ),
+        parse_mode: "Markdown",
       }
-      ALL_ADMINS.push(newAdmin);
-      session.awaiting_admin_add_step = undefined;
-      session.new_admin_data = undefined;
-      await ctx.answerCallbackQuery({ text: "✅ تمت الإضافة" });
-      await ctx.editMessageText(
-        `✅ *تمت إضافة المسؤول بنجاح!*\n\n👤 الاسم: ${newAdmin.name}\n🎭 الدور: ${getRoleLabel(newAdmin.role)}\n📍 النطاق: ${getRoleScope(newAdmin)}\n🆔 المعرّف: \`${newAdmin.id}\`\n\nℹ️ في الإنتاج سيُطلب منك تحديد النطاق بدقة (كلية/تخصص/مستوى).`,
-        {
-          reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_manage_admins, "back_to_manage_admins"),
-          parse_mode: "Markdown",
-        }
-      );
-    }
+    );
+  });
+
+  // handlers قديمة معطّلة (للحفاظ على التوافق مع الأزرار القديمة)
+  bot.callbackQuery(/new_admin_role_(central|college|specialty|level)/, async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "ℹ️ سيُفعّل في الإنتاج" });
   });
 
   // ====== A9: الإحصائيات ======
@@ -1026,7 +908,7 @@ export function createAdminBot(token: string): Bot {
 
   bot.callbackQuery(/custom_screen_(.+)/, async (ctx) => {
     const screenKey = ctx.match[1];
-    const session = adminSessions.get(ctx.from.id);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (session) {
       session.awaiting_text_edit = screenKey;
       session.awaiting_text_value = "awaiting";
@@ -1049,7 +931,7 @@ export function createAdminBot(token: string): Bot {
 
   bot.callbackQuery("reset_default", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = adminSessions.get(ctx.from.id);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (session?.awaiting_text_edit) {
       customTexts.delete(session.awaiting_text_edit);
       session.awaiting_text_edit = undefined;

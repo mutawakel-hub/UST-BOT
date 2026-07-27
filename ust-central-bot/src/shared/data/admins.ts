@@ -1,83 +1,13 @@
 // ============================================
-// المسؤولون التجريبيون - Mockup
-// 4 IDs تجريبية بأدوار مختلفة لاختبار هرمية الصلاحيات
+// بيانات الإدارة - Mockup
+// ============================================
+// ملاحظة: نظام تسجيل الدخول والـ MOCK_ADMINS تم حذفه.
+// في الإنتاج، سيتم تطبيق نظام RBAC كامل يعتمد على المناصب.
 // ============================================
 
-export type AdminRole = "central" | "college" | "specialty" | "level";
-
-export interface MockAdmin {
-  id: string; // معرّف تسجيل الدخول التجريبي
-  telegram_id: number;
-  name: string;
-  role: AdminRole;
-  college_id?: number;
-  specialty_id?: number;
-  level?: number;
-}
-
-// 4 مسؤولين تجريبيين - كل واحد بدور مختلف لاختبار الهرمية
-export const MOCK_ADMINS: MockAdmin[] = [
-  {
-    id: "DEMO001",
-    telegram_id: 100000001,
-    name: "د. أحمد المركزي",
-    role: "central",
-  },
-  {
-    id: "DEMO002",
-    telegram_id: 100000002,
-    name: "أ. سارة - كلية الحاسبات",
-    role: "college",
-    college_id: 5,
-  },
-  {
-    id: "DEMO003",
-    telegram_id: 100000003,
-    name: "م. محمد - IT",
-    role: "specialty",
-    college_id: 5,
-    specialty_id: 16,
-  },
-  {
-    id: "DEMO004",
-    telegram_id: 100000004,
-    name: "أ. فاطمة - IT مستوى 1",
-    role: "level",
-    college_id: 5,
-    specialty_id: 16,
-    level: 1,
-  },
-];
-
-// مساعدات
-export function getAdminByLoginId(loginId: string): MockAdmin | undefined {
-  return MOCK_ADMINS.find((a) => a.id.toLowerCase() === loginId.toLowerCase());
-}
-
-export function getRoleLabel(role: AdminRole): string {
-  const labels: Record<AdminRole, string> = {
-    central: "🛡 مسؤول مركزي",
-    college: "🏛 مسؤول كلية",
-    specialty: "📚 مسؤول تخصص",
-    level: "📊 مسؤول مستوى",
-  };
-  return labels[role];
-}
-
-export function getRoleScope(admin: MockAdmin): string {
-  switch (admin.role) {
-    case "central":
-      return "🌍 جميع الكليات والتخصصات";
-    case "college":
-      return `🏛 كلية محددة`;
-    case "specialty":
-      return `📚 تخصص محدد`;
-    case "level":
-      return `📊 مستوى محدد`;
-  }
-}
-
+// ============================================
 // المساهمات المعلقة - Mockup
+// ============================================
 export interface MockContribution {
   id: number;
   file_name: string;
@@ -147,7 +77,9 @@ export const MOCK_PENDING_CONTRIBUTIONS: MockContribution[] = [
   },
 ];
 
-// الإحصائيات - Mockup (قيم ثابتة بدل Math.random)
+// ============================================
+// الإحصائيات - Mockup
+// ============================================
 export const MOCK_STATISTICS = {
   total_users: 1247,
   total_files: 89,
@@ -159,7 +91,9 @@ export const MOCK_STATISTICS = {
   new_this_week: 47,
 };
 
+// ============================================
 // التعميمات السابقة - Mockup
+// ============================================
 export interface MockBroadcast {
   id: number;
   admin_name: string;
@@ -185,5 +119,90 @@ export const MOCK_BROADCASTS: MockBroadcast[] = [
     text: "تنبيه: موعد اختبارات منتصف الفصل القادم...",
     sent_count: 312,
     sent_at: "قبل 4 أيام",
+  },
+];
+
+// ============================================
+// تعريف المنازل الهرمية (للمرحلة 2 - RBAC)
+// ============================================
+// في الإنتاج، ستُخزّن المناصب في قاعدة البيانات
+// وكل منصب يرث صلاحيات المنازل الأدنى منه
+export type PositionLevel = "central" | "college" | "level";
+
+export interface Position {
+  id: string;
+  level: PositionLevel;
+  title: string;
+  description: string;
+  permissions: string[]; // قائمة الصلاحيات الموروثة
+  current_holder_telegram_id?: number; // شاغل المنصب الحالي
+}
+
+// هيكل المناصب الهرمي (للمرجعية - سيُخزّن في DB في الإنتاج)
+export const POSITIONS_HIERARCHY: Omit<Position, "current_holder_telegram_id">[] = [
+  {
+    id: "central_chair",
+    level: "central",
+    title: "🛡 رئيس اللجنة العلمية",
+    description: "المسؤول الأعلى في النظام — يملك كل الصلاحيات",
+    permissions: [
+      // يرث كل الصلاحيات
+      "manage_admins",
+      "manage_colleges",
+      "manage_specialties",
+      "manage_levels",
+      "manage_broadcasts",
+      "manage_messages",
+      "manage_committee_links",
+      "view_reports",
+      "system_settings",
+      // + صلاحيات مسؤول الكلية
+      "manage_subjects",
+      "add_subject",
+      "edit_subject",
+      "delete_subject",
+      "move_subject",
+      "college_broadcast",
+      "manage_level_reps",
+      "view_college_stats",
+      // + صلاحيات مندوب المستوى
+      "level_broadcast",
+      "approve_level_contributions",
+      "manage_level_files",
+      "view_level_stats",
+    ],
+  },
+  {
+    id: "college_admin",
+    level: "college",
+    title: "🏛 مسؤول الكلية",
+    description: "يرث صلاحيات مندوب المستوى + صلاحيات الكلية",
+    permissions: [
+      "manage_subjects",
+      "add_subject",
+      "edit_subject",
+      "delete_subject",
+      "move_subject",
+      "college_broadcast",
+      "manage_level_reps",
+      "view_college_stats",
+      // + يرث صلاحيات مندوب المستوى
+      "level_broadcast",
+      "approve_level_contributions",
+      "manage_level_files",
+      "view_level_stats",
+    ],
+  },
+  {
+    id: "level_rep",
+    level: "level",
+    title: "📊 مندوب المستوى",
+    description: "أقل مستوى صلاحيات — نطاق مستوى محدد",
+    permissions: [
+      "level_broadcast",
+      "approve_level_contributions",
+      "manage_level_files",
+      "view_level_stats",
+    ],
   },
 ];
