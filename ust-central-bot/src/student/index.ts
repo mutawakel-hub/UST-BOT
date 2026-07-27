@@ -26,7 +26,7 @@ import {
   getLeaderboardByCollege,
   getLeaderboardBySpecialty,
 } from "../shared/data/leaderboard";
-import { MOCK_COMMITTEE_CHANNELS } from "../shared/data/admins";
+import { MOCK_COMMITTEE_CHANNELS, MOCK_STUDENT_NOTIFICATIONS, type MockStudentNotification } from "../shared/data/admins";
 import { TEXTS } from "../shared/texts";
 import {
   mainMenuKeyboard,
@@ -38,7 +38,6 @@ import {
   subjectMenuKeyboard,
   filesListKeyboard,
   filePreviewKeyboard,
-  contributionKeyboard,
   searchKeyboard,
   searchResultsKeyboard,
   leaderboardKeyboard,
@@ -85,9 +84,24 @@ interface UserState {
   accepted_contributions: number;
   recent_downloads: DownloadHistoryEntry[];
   my_contributions: ContributionEntry[];
+  // المسار القصير للمساهمة (من شاشة المادة - 4 خطوات)
   awaiting_contribution_for_subject?: number;
+  awaiting_contribution_type?: string;
+  awaiting_contribution_step?: "title" | "file";
+  awaiting_contribution_title?: string;
+  // المسار الكامل للمساهمة (من القائمة الرئيسية - 9 خطوات)
+  contribution_main_context?: {
+    college_id?: number;
+    specialty_id?: number;
+    level?: number;
+    semester?: number;
+    subject_id?: number;
+    content_type?: string;
+  };
+  contribution_main_step?: "college" | "specialty" | "level" | "semester" | "subject" | "type" | "title" | "file";
+  contribution_main_title?: string;
   awaiting_search?: boolean;
-  last_file_id?: string; // لاستخدامه في زر التحميل
+  last_file_id?: string;
 }
 
 // مخزن مؤقت للحالات
@@ -552,50 +566,61 @@ export function createStudentBot(token: string): Bot {
     });
   });
 
-  // S9: المساهمة
+  // ============================================
+  // S9: المساهمة من شاشة المادة (4 خطوات)
+  // ============================================
   bot.callbackQuery(/contribute_(\d+)/, async (ctx) => {
     const subjectId = parseInt(ctx.match[1]);
     const subject = getSubjectByIdWithFallback(subjectId);
     await ctx.answerCallbackQuery();
     const userState = getUserState(ctx.from.id, ctx.from.first_name);
     userState.awaiting_contribution_for_subject = subjectId;
-    await ctx.editMessageText(TEXTS.contribution.intro(subject?.name || ""), {
-      reply_markup: contributionKeyboard(subjectId),
-      parse_mode: "Markdown",
-    });
+
+    // بناء keyboard لأنواع المساهمة
+    const kb = new InlineKeyboard();
+    if (subject?.has_theory) kb.text("📘 المقرر النظري", `ctype_book_theory_${subjectId}`);
+    if (subject?.has_practical) kb.text("📗 المقرر العملي", `ctype_book_practical_${subjectId}`);
+    kb.row();
+    kb.text("📑 نماذج اختبارات", `ctype_exam_${subjectId}`);
+    kb.text("📝 ملخصات", `ctype_summary_${subjectId}`);
+    kb.row();
+    kb.text("🎥 مرئيات", `ctype_video_${subjectId}`);
+    kb.text("📚 مراجع", `ctype_reference_${subjectId}`);
+    kb.row();
+    kb.text("❌ إلغاء", `cancel_contribute_${subjectId}`);
+
+    await ctx.editMessageText(
+      TEXTS.contribution.intro(subject?.name || ""),
+      {
+        reply_markup: kb,
+        parse_mode: "Markdown",
+      }
+    );
   });
 
-  // استقبال ملف المساهمة
-  bot.on(":document", async (ctx) => {
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
-    if (!userState.awaiting_contribution_for_subject) {
-      await ctx.reply(
-        "ℹ️ لم تختر مادة للمساهمة بعد.\n\nابدأ من: 🏛 الكليات → التخصص → المادة → 💡 مساهمة"
-      );
-      return;
-    }
-
-    const doc = ctx.message.document;
-    const subjectId = userState.awaiting_contribution_for_subject;
+  // اختيار نوع المساهمة → طلب العنوان
+  bot.callbackQuery(/ctype_(\w+)_(\d+)/, async (ctx) => {
+    const contentType = ctx.match[1];
+    const subjectId = parseInt(ctx.match[2]);
     const subject = getSubjectByIdWithFallback(subjectId);
-    const contributionId = 9900 + Math.floor(Math.random() * 1000);
+    await ctx.answerCallbackQuery();
+    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    userState.awaiting_contribution_type = contentType;
+    userState.awaiting_contribution_step = "title";
 
-    userState.my_contributions.unshift({
-      id: contributionId,
-      file_name: doc.file_name || "ملف بدون اسم",
-      subject_name: subject?.name || "غير معروف",
-      status: "pending",
-      submitted_at: "الآن",
-    });
-    userState.awaiting_contribution_for_subject = undefined;
+    const typeLabel = {
+      book_theory: "📘 المقرر النظري",
+      book_practical: "📗 المقرر العملي",
+      exam: "📑 نماذج اختبارات",
+      summary: "📝 ملخصات",
+      video: "🎥 مرئيات",
+      reference: "📚 مراجع",
+    }[contentType] || contentType;
 
-    await ctx.reply(
-      TEXTS.contribution.received(contributionId, doc.file_name || "ملف"),
+    await ctx.editMessageText(
+      TEXTS.contribution.prompt_title(subject?.name || "", typeLabel),
       {
-        reply_markup: new InlineKeyboard()
-          .text(TEXTS.navigation.back_to_subject_menu, `back_to_subject_menu_${subjectId}`)
-          .row()
-          .text(TEXTS.navigation.back_to_main, "back_to_main"),
+        reply_markup: new InlineKeyboard().text("❌ إلغاء", `cancel_contribute_${subjectId}`),
         parse_mode: "Markdown",
       }
     );
@@ -606,12 +631,276 @@ export function createStudentBot(token: string): Bot {
     await ctx.answerCallbackQuery();
     const userState = getUserState(ctx.from.id, ctx.from.first_name);
     userState.awaiting_contribution_for_subject = undefined;
+    userState.awaiting_contribution_type = undefined;
+    userState.awaiting_contribution_step = undefined;
+    userState.awaiting_contribution_title = undefined;
     await ctx.editMessageText(TEXTS.contribution.cancel, {
       reply_markup: new InlineKeyboard().text(
         TEXTS.navigation.back_to_subject_menu,
         `back_to_subject_menu_${subjectId}`
       ),
     });
+  });
+
+  // ============================================
+  // S13: المساهمة من القائمة الرئيسية (9 خطوات)
+  // ============================================
+  bot.callbackQuery("menu_contribute_main", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(TEXTS.contribution_main.intro, {
+      reply_markup: new InlineKeyboard()
+        .text("🚀 ابدأ المساهمة", "contribute_main_start")
+        .row()
+        .text(TEXTS.navigation.back_to_main, "back_to_main"),
+      parse_mode: "Markdown",
+    });
+  });
+
+  bot.callbackQuery("contribute_main_start", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    userState.contribution_main_context = {};
+    userState.contribution_main_step = "college";
+    // عرض الكليات
+    await ctx.editMessageText(
+      TEXTS.contribution_main.step(1, 6, TEXTS.contribution_main.select_college),
+      {
+        reply_markup: collegesKeyboard(0),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // handlers لكل خطوة من مسار المساهمة الكامل
+  bot.callbackQuery(/cm_col_(\d+)/, async (ctx) => {
+    const collegeId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    userState.contribution_main_context = { ...userState.contribution_main_context, college_id: collegeId };
+    userState.contribution_main_step = "specialty";
+    await ctx.editMessageText(
+      TEXTS.contribution_main.step(2, 6, TEXTS.contribution_main.select_specialty),
+      { reply_markup: majorsKeyboard(collegeId, 0), parse_mode: "Markdown" }
+    );
+  });
+
+  bot.callbackQuery(/cm_major_(\d+)/, async (ctx) => {
+    const specId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    userState.contribution_main_context = { ...userState.contribution_main_context, specialty_id: specId };
+    userState.contribution_main_step = "level";
+    await ctx.editMessageText(
+      TEXTS.contribution_main.step(3, 6, TEXTS.contribution_main.select_level),
+      { reply_markup: levelsKeyboard(specId), parse_mode: "Markdown" }
+    );
+  });
+
+  bot.callbackQuery(/cm_level_(\d+)_spec_(\d+)/, async (ctx) => {
+    const level = parseInt(ctx.match[1]);
+    const specId = parseInt(ctx.match[2]);
+    await ctx.answerCallbackQuery();
+    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    userState.contribution_main_context = { ...userState.contribution_main_context, level };
+    userState.contribution_main_step = "semester";
+    const kb = new InlineKeyboard();
+    kb.text("🍂 الفصل الأول", `cm_sem_1_spec_${specId}_lvl_${level}`).row();
+    kb.text("🌸 الفصل الثاني", `cm_sem_2_spec_${specId}_lvl_${level}`).row();
+    kb.text("🔙 رجوع", `cm_major_${specId}`);
+    await ctx.editMessageText(
+      TEXTS.contribution_main.step(4, 6, TEXTS.contribution_main.select_semester),
+      { reply_markup: kb, parse_mode: "Markdown" }
+    );
+  });
+
+  bot.callbackQuery(/cm_sem_(\d+)_spec_(\d+)_lvl_(\d+)/, async (ctx) => {
+    const semester = parseInt(ctx.match[1]) as 1 | 2;
+    const specId = parseInt(ctx.match[2]);
+    const level = parseInt(ctx.match[3]);
+    await ctx.answerCallbackQuery();
+    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    userState.contribution_main_context = { ...userState.contribution_main_context, semester };
+    userState.contribution_main_step = "subject";
+    const subjects = getSubjectsBySpecialtyLevelSemester(specId, level, semester);
+    if (subjects.length === 0) {
+      await ctx.editMessageText("⚠️ لا توجد مواد في هذا الفصل.");
+      return;
+    }
+    const kb = new InlineKeyboard();
+    subjects.forEach((s) => kb.text(`📖 ${s.name}`, `cm_subj_${s.id}`).row());
+    kb.text("🔙 رجوع", `cm_level_${level}_spec_${specId}`);
+    await ctx.editMessageText(
+      TEXTS.contribution_main.step(5, 6, TEXTS.contribution_main.select_subject),
+      { reply_markup: kb, parse_mode: "Markdown" }
+    );
+  });
+
+  bot.callbackQuery(/cm_subj_(\d+)/, async (ctx) => {
+    const subjectId = parseInt(ctx.match[1]);
+    const subject = getSubjectByIdWithFallback(subjectId);
+    await ctx.answerCallbackQuery();
+    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    userState.contribution_main_context = { ...userState.contribution_main_context, subject_id: subjectId };
+    userState.contribution_main_step = "type";
+    // عرض أنواع المساهمة
+    const kb = new InlineKeyboard();
+    if (subject?.has_theory) kb.text("📘 المقرر النظري", `cm_type_book_theory`);
+    if (subject?.has_practical) kb.text("📗 المقرر العملي", `cm_type_book_practical`);
+    kb.row();
+    kb.text("📑 نماذج اختبارات", "cm_type_exam");
+    kb.text("📝 ملخصات", "cm_type_summary");
+    kb.row();
+    kb.text("🎥 مرئيات", "cm_type_video");
+    kb.text("📚 مراجع", "cm_type_reference");
+    kb.row();
+    kb.text("🔙 رجوع", `cm_sem_${userState.contribution_main_context.semester}_spec_${userState.contribution_main_context.specialty_id}_lvl_${userState.contribution_main_context.level}`);
+    await ctx.editMessageText(
+      TEXTS.contribution_main.step(6, 6, TEXTS.contribution_main.select_type),
+      { reply_markup: kb, parse_mode: "Markdown" }
+    );
+  });
+
+  bot.callbackQuery(/cm_type_(\w+)/, async (ctx) => {
+    const contentType = ctx.match[1];
+    await ctx.answerCallbackQuery();
+    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    userState.contribution_main_context = { ...userState.contribution_main_context, content_type: contentType };
+    userState.contribution_main_step = "title";
+    const subject = getSubjectByIdWithFallback(userState.contribution_main_context.subject_id);
+    const typeLabel = {
+      book_theory: "📘 المقرر النظري",
+      book_practical: "📗 المقرر العملي",
+      exam: "📑 نماذج اختبارات",
+      summary: "📝 ملخصات",
+      video: "🎥 مرئيات",
+      reference: "📚 مراجع",
+    }[contentType] || contentType;
+    await ctx.editMessageText(
+      TEXTS.contribution_main.prompt_title(subject?.name || "", typeLabel),
+      {
+        reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_contribute_main"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery("cancel_contribute_main", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    userState.contribution_main_context = undefined;
+    userState.contribution_main_step = undefined;
+    userState.contribution_main_title = undefined;
+    await ctx.editMessageText(
+      TEXTS.contribution_main.cancel,
+      {
+        reply_markup: new InlineKeyboard().text(TEXTS.navigation.back_to_main, "back_to_main"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // استقبال ملف المساهمة (للمسارين: القصير + الكامل)
+  bot.on(":document", async (ctx) => {
+    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const doc = ctx.message.document;
+    const contributionId = 9900 + Math.floor(Math.random() * 1000);
+
+    // المسار القصير (من شاشة المادة - 4 خطوات)
+    if (userState.awaiting_contribution_for_subject && userState.awaiting_contribution_step === "file") {
+      const subjectId = userState.awaiting_contribution_for_subject;
+      const subject = getSubjectByIdWithFallback(subjectId);
+      const contentType = userState.awaiting_contribution_type || "summary";
+      const title = userState.awaiting_contribution_title || doc.file_name || "بدون عنوان";
+      const typeLabel = {
+        book_theory: "📘 المقرر النظري",
+        book_practical: "📗 المقرر العملي",
+        exam: "📑 نماذج اختبارات",
+        summary: "📝 ملخصات",
+        video: "🎥 مرئيات",
+        reference: "📚 مراجع",
+      }[contentType] || contentType;
+
+      userState.my_contributions.unshift({
+        id: contributionId,
+        file_name: doc.file_name || "ملف بدون اسم",
+        subject_name: subject?.name || "غير معروف",
+        status: "pending",
+        submitted_at: "الآن",
+      });
+      // إعادة ضبط حالة المساهمة
+      userState.awaiting_contribution_for_subject = undefined;
+      userState.awaiting_contribution_type = undefined;
+      userState.awaiting_contribution_step = undefined;
+      userState.awaiting_contribution_title = undefined;
+
+      await ctx.reply(
+        TEXTS.contribution.received(
+          contributionId,
+          doc.file_name || "ملف",
+          subject?.name || "غير معروف",
+          typeLabel,
+          title
+        ),
+        {
+          reply_markup: new InlineKeyboard()
+            .text(TEXTS.navigation.back_to_subject_menu, `back_to_subject_menu_${subjectId}`)
+            .row()
+            .text(TEXTS.navigation.back_to_main, "back_to_main"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    // المسار الكامل (من القائمة الرئيسية - 9 خطوات)
+    if (userState.contribution_main_step === "file" && userState.contribution_main_context?.subject_id) {
+      const ctx_data = userState.contribution_main_context;
+      const subject = getSubjectByIdWithFallback(ctx_data.subject_id);
+      const contentType = ctx_data.content_type || "summary";
+      const title = userState.contribution_main_title || doc.file_name || "بدون عنوان";
+      const typeLabel = {
+        book_theory: "📘 المقرر النظري",
+        book_practical: "📗 المقرر العملي",
+        exam: "📑 نماذج اختبارات",
+        summary: "📝 ملخصات",
+        video: "🎥 مرئيات",
+        reference: "📚 مراجع",
+      }[contentType] || contentType;
+
+      userState.my_contributions.unshift({
+        id: contributionId,
+        file_name: doc.file_name || "ملف بدون اسم",
+        subject_name: subject?.name || "غير معروف",
+        status: "pending",
+        submitted_at: "الآن",
+      });
+      // إعادة ضبط الحالة
+      userState.contribution_main_context = undefined;
+      userState.contribution_main_step = undefined;
+      userState.contribution_main_title = undefined;
+
+      await ctx.reply(
+        TEXTS.contribution.received(
+          contributionId,
+          doc.file_name || "ملف",
+          subject?.name || "غير معروف",
+          typeLabel,
+          title
+        ),
+        {
+          reply_markup: new InlineKeyboard()
+            .text(TEXTS.navigation.back_to_main, "back_to_main"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    // لو وصل ملف بدون طلب
+    await ctx.reply(
+      "ℹ️ لم تبدأ عملية مساهمة بعد.\n\n" +
+      "ابدأ من: 🌟 المساهمة (في القائمة الرئيسية) أو 💡 مساهمة (في شاشة المادة)"
+    );
   });
 
   // S10: البحث
@@ -627,6 +916,45 @@ export function createStudentBot(token: string): Bot {
 
   bot.on(":text", async (ctx) => {
     const userState = getUserState(ctx.from.id, ctx.from.first_name);
+
+    // استقبال عنوان المساهمة (المسار القصير - من شاشة المادة)
+    if (userState.awaiting_contribution_step === "title" && userState.awaiting_contribution_for_subject) {
+      userState.awaiting_contribution_title = ctx.message.text;
+      userState.awaiting_contribution_step = "file";
+      const subject = getSubjectByIdWithFallback(userState.awaiting_contribution_for_subject);
+      const contentType = userState.awaiting_contribution_type || "summary";
+      const typeLabel = {
+        book_theory: "📘 المقرر النظري",
+        book_practical: "📗 المقرر العملي",
+        exam: "📑 نماذج اختبارات",
+        summary: "📝 ملخصات",
+        video: "🎥 مرئيات",
+        reference: "📚 مراجع",
+      }[contentType] || contentType;
+      await ctx.reply(
+        TEXTS.contribution.prompt_file(subject?.name || "", typeLabel, ctx.message.text),
+        {
+          reply_markup: new InlineKeyboard().text("❌ إلغاء", `cancel_contribute_${userState.awaiting_contribution_for_subject}`),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    // استقبال عنوان المساهمة (المسار الكامل - من القائمة الرئيسية)
+    if (userState.contribution_main_step === "title") {
+      userState.contribution_main_title = ctx.message.text;
+      userState.contribution_main_step = "file";
+      await ctx.reply(
+        TEXTS.contribution_main.prompt_file(ctx.message.text),
+        {
+          reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_contribute_main"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
     if (userState.awaiting_search) {
       userState.awaiting_search = false;
       const query = ctx.message.text;
@@ -791,6 +1119,7 @@ export function createStudentBot(token: string): Bot {
     const specialty = userState.current_specialty_id ? getSpecialtyById(userState.current_specialty_id)?.name : undefined;
 
     const pending = userState.my_contributions.filter((c) => c.status === "pending").length;
+    const unreadCount = MOCK_STUDENT_NOTIFICATIONS.filter((n) => !n.is_read).length;
 
     const msg =
       TEXTS.profile.title(userState.first_name || "طالب") +
@@ -804,7 +1133,7 @@ export function createStudentBot(token: string): Bot {
       });
 
     await ctx.editMessageText(msg, {
-      reply_markup: profileKeyboard(),
+      reply_markup: profileKeyboard(unreadCount),
       parse_mode: "Markdown",
     });
   });
@@ -846,6 +1175,41 @@ export function createStudentBot(token: string): Bot {
     });
   });
 
+  // شاشة الإشعارات
+  bot.callbackQuery("my_notifications", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    // محاكاة: نستخدم MOCK_STUDENT_NOTIFICATIONS (في الإنتاج ستُستعلم من DB)
+    const notifications = MOCK_STUDENT_NOTIFICATIONS;
+    let msg = "🔔 *الإشعارات*\n\n";
+    if (notifications.length === 0) {
+      msg += "📭 لا توجد إشعارات حالياً.";
+    } else {
+      notifications.forEach((n) => {
+        const icon = n.is_read ? "📭" : "🆕";
+        msg += `${icon} *${n.title}*\n   📅 ${n.created_at}\n   ${n.body}\n\n`;
+      });
+    }
+    await ctx.editMessageText(msg, {
+      reply_markup: new InlineKeyboard()
+        .text("✅ تعليم الكل كمقروء", "mark_notifications_read")
+        .row()
+        .text(TEXTS.navigation.back_to_main, "back_to_profile"),
+      parse_mode: "Markdown",
+    });
+  });
+
+  bot.callbackQuery("mark_notifications_read", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "✅ تم التحديث" });
+    MOCK_STUDENT_NOTIFICATIONS.forEach((n) => { n.is_read = true; });
+    await ctx.editMessageText(
+      "✅ *تم تعليم كل الإشعارات كمقروءة.*",
+      {
+        reply_markup: new InlineKeyboard().text(TEXTS.navigation.back_to_main, "back_to_profile"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
   bot.callbackQuery("change_major", async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(
@@ -864,6 +1228,7 @@ export function createStudentBot(token: string): Bot {
     const college = userState.current_college_id ? getCollegeById(userState.current_college_id)?.name : undefined;
     const specialty = userState.current_specialty_id ? getSpecialtyById(userState.current_specialty_id)?.name : undefined;
     const pending = userState.my_contributions.filter((c) => c.status === "pending").length;
+    const unreadCount = MOCK_STUDENT_NOTIFICATIONS.filter((n) => !n.is_read).length;
     const msg =
       TEXTS.profile.title(userState.first_name || "طالب") +
       TEXTS.profile.stats({
@@ -875,7 +1240,7 @@ export function createStudentBot(token: string): Bot {
         current_level: userState.current_level,
       });
     await ctx.editMessageText(msg, {
-      reply_markup: profileKeyboard(),
+      reply_markup: profileKeyboard(unreadCount),
       parse_mode: "Markdown",
     });
   });
@@ -1153,7 +1518,7 @@ export default {
             status: "ok",
             bot: env.BOT_USERNAME,
             environment: env.ENVIRONMENT,
-            version: "2.2",
+            version: "2.3",
             timestamp: new Date().toISOString(),
           }),
           { headers: { "Content-Type": "application/json" } }

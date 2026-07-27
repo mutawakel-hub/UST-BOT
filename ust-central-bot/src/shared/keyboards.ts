@@ -29,7 +29,7 @@ export function breadcrumb(...parts: string[]): string {
 }
 
 // ============================================
-// S1: قائمة الطالب الرئيسية
+// S1: قائمة الطالب الرئيسية (مع زر المساهمة)
 // ============================================
 export function mainMenuKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
@@ -38,6 +38,8 @@ export function mainMenuKeyboard(): InlineKeyboard {
     .row()
     .text(TEXTS.main_menu.btn_leaderboard, "menu_leaderboard")
     .text(TEXTS.main_menu.btn_profile, "menu_profile")
+    .row()
+    .text(TEXTS.main_menu.btn_contribute, "menu_contribute_main")
     .row()
     .text(TEXTS.main_menu.btn_committee, "menu_committee")
     .text(TEXTS.main_menu.btn_contact, "menu_contact");
@@ -302,13 +304,18 @@ export function leaderboardKeyboard(): InlineKeyboard {
 }
 
 // ============================================
-// S12: شاشة الحساب
+// S12: شاشة الحساب (مع زر الإشعارات)
 // ============================================
-export function profileKeyboard(): InlineKeyboard {
+export function profileKeyboard(unreadNotifications = 0): InlineKeyboard {
   const kb = new InlineKeyboard();
   kb.text(TEXTS.profile.btn_my_contributions, "my_contributions");
   kb.text(TEXTS.profile.btn_my_downloads, "my_downloads");
   kb.row();
+  if (unreadNotifications > 0) {
+    kb.text(`🔔 الإشعارات (${unreadNotifications})`, "my_notifications").row();
+  } else {
+    kb.text("🔔 الإشعارات", "my_notifications").row();
+  }
   kb.text(TEXTS.profile.btn_change_major, "change_major").row();
   kb.text(TEXTS.navigation.back_to_main, "back_to_main");
   return kb;

@@ -12,13 +12,15 @@ export const TEXTS = {
       "• 🏛 تصفّح الكليات لتنزيل المقررات والنماذج\n" +
       "• 🔍 ابحث عن مادة معينة بالاسم\n" +
       "• 🏆 شاهد أبرز المساهمين من زملائك\n" +
-      "• 👤 تابع نشاطك (تحميلات + مساهمات)",
+      "• 👤 تابع نشاطك (تحميلات + مساهمات)\n" +
+      "• 🌟 ساهم في إثراء المحتوى",
     btn_colleges: "🏛 الكليات",
     btn_search: "🔍 بحث",
     btn_leaderboard: "🏆 لوحة الشرف",
     btn_profile: "👤 حسابي",
     btn_committee: "📢 قناة اللجنة",
     btn_contact: "📞 تواصل معنا",
+    btn_contribute: "🌟 المساهمة",
   },
 
   // ====== شاشة S2: ChooseCollege ======
@@ -105,25 +107,86 @@ export const TEXTS = {
     btn_back: "🔙 رجوع للقائمة",
   },
 
-  // ====== شاشة S9: Contribution ======
+  // ====== شاشة S9: Contribution (من شاشة المادة - 4 خطوات) ======
   contribution: {
     intro: (subjectName: string) =>
       `💡 *المساهمة في: ${subjectName}*\n\n` +
       "شكراً لرغبتك في إثراء المحتوى! مساهمات الطلاب تساعد آلاف الزملاء.\n\n" +
-      "*للمساهمة:*\n" +
-      "📎 أرسل الآن الملف (PDF/DOCX/صورة)\n\n" +
-      "*ملاحظات:*\n" +
-      "✅ الحد الأقصى: 50 MB (PDF/DOCX)، 10 MB (صور)\n" +
-      "❌ ممنوع: EXE, BAT, ZIP, RAR, APK\n" +
-      "⏱ ستتم مراجعتك من المسؤول خلال 24-48 ساعة\n" +
-      "🏆 المساهمات المقبولة تمنحك نقاطاً في لوحة الشرف",
+      "*الخطوة 1/3:* اختر نوع المساهمة:\n",
     cancel: "✅ تم إلغاء المساهمة. يمكنك البدء من جديد في أي وقت.",
-    received: (id: number, fileName: string) =>
-      `✅ *تم استلام مساهمتك!*\n\n` +
-      `📎 الملف: \`${fileName}\`\n` +
-      `🔢 رقم المساهمة: \`#${id}\`\n\n` +
-      "⏱ سيتم مراجعتها من قبل المسؤول خلال 24-48 ساعة.\n\n" +
-      "💡 يمكنك متابعة حالة المساهمة من: *👤 حسابي → 📋 مساهماتي*",
+    prompt_title: (subjectName: string, contentType: string) =>
+      `📝 *الخطوة 2/3: عنوان المساهمة*\n\n` +
+      `📚 المادة: ${subjectName}\n` +
+      `🏷 النوع: ${contentType}\n\n` +
+      "أرسل عنواناً وصفيّاً للمساهمة.\n\n" +
+      "*أمثلة:*\n" +
+      "• `ملخص Python للفصل الأول`\n" +
+      "• `نموذج اختبار منتصف الفصل 1445`\n" +
+      "• `حلول تمارين الفصل 3`",
+    prompt_file: (subjectName: string, contentType: string, title: string) =>
+      `📎 *الخطوة 3/3: رفع المساهمة*\n\n` +
+      `📚 المادة: ${subjectName}\n` +
+      `🏷 النوع: ${contentType}\n` +
+      `📝 العنوان: ${title}\n\n` +
+      "أرسل الملف الآن:\n" +
+      "✅ الحد الأقصى: 50 MB (PDF/DOCX)، 10 MB (صور)\n" +
+      "❌ ممنوع: EXE, BAT, ZIP, RAR, APK",
+    received: (id: number, fileName: string, subjectName: string, contentType: string, title: string) =>
+      `✅ *تم استلام مساهمتك بنجاح!*\n\n` +
+      `📝 *العنوان:* ${title}\n` +
+      `📚 *المادة:* ${subjectName}\n` +
+      `🏷 *النوع:* ${contentType}\n` +
+      `📎 *الملف:* \`${fileName}\`\n` +
+      `🔢 *رقم المساهمة:* \`#${id}\`\n\n` +
+      "🙏 *شكراً لك!* مساهمتك ستُراجع من قبل *مسؤول الدفعة* في أقرب وقت.\n\n" +
+      "⏱ زمن المراجعة المتوقع: 24-48 ساعة\n" +
+      "🏆 عند الاعتماد، ستحصل على *10 نقاط* تُضاف لرصيدك في لوحة الشرف.\n\n" +
+      "💡 يمكنك متابعة الحالة من: *👤 حسابي → 📋 مساهماتي*\n" +
+      "🔔 ستصل رسالة تنبيه فور اعتماد أو رفض المساهمة.",
+  },
+
+  // ====== شاشة S13: Contribution من القائمة الرئيسية (9 خطوات) ======
+  contribution_main: {
+    intro:
+      "🌟 *المساهمة في إثراء المحتوى*\n\n" +
+      "🤝 مساهمات الطلاب هي أساس هذا البوت. كل ملف ترفعه يساعد عشرات الزملاء في تخصصك.\n\n" +
+      "🏆 *التكريم:* في نهاية كل فصل، يتم تكريم *أبرز 5 مساهمين* من كل تخصص من قبل اللجنة العلمية المركزية.\n\n" +
+      "💎 *المكافآت:*\n" +
+      "• ✅ كل مساهمة معتمدة = *10 نقاط*\n" +
+      "• ⭐ المساهمة المميزة = *20 نقطة*\n" +
+      "• 🏆 التكريم الفصلي = *50 نقطة إضافية*\n\n" +
+      "📋 *خطوات المساهمة (9 خطوات بسيطة):*\n" +
+      "1️⃣ اختيار الكلية\n" +
+      "2️⃣ اختيار التخصص\n" +
+      "3️⃣ اختيار المستوى\n" +
+      "4️⃣ اختيار الفصل\n" +
+      "5️⃣ اختيار المادة\n" +
+      "6️⃣ اختيار نوع المساهمة\n" +
+      "7️⃣ عنوان المساهمة\n" +
+      "8️⃣ رفع الملف\n" +
+      "9️⃣ رسالة التأكيد\n\n" +
+      "_للمساهمة السريعة، تنقّل لأي مادة واضغط زر 💡 مساهمة (4 خطوات فقط)._",
+    step: (step: number, total: number, label: string) =>
+      `🌟 *المساهمة - خطوة ${step}/${total}*\n\n${label}`,
+    progress: (steps: string[]) =>
+      steps.map((s, i) => `${i + 1}. ${s}`).join("\n"),
+    select_college: "اختر الكلية:",
+    select_specialty: "اختر التخصص:",
+    select_level: "اختر المستوى:",
+    select_semester: "اختر الفصل الدراسي:",
+    select_subject: "اختر المادة:",
+    select_type: "اختر نوع المساهمة:",
+    prompt_title: (subjectName: string, contentType: string) =>
+      `📝 *عنوان المساهمة*\n\n` +
+      `📚 المادة: ${subjectName}\n` +
+      `🏷 النوع: ${contentType}\n\n` +
+      "أرسل عنواناً وصفيّاً.\n\n*أمثلة:* `ملخص Python للفصل الأول`، `نموذج اختبار نهائي 1445`",
+    prompt_file: (title: string) =>
+      `📎 *رفع المساهمة*\n\n` +
+      `📝 العنوان: ${title}\n\n` +
+      "أرسل الملف الآن (PDF/DOCX/صورة)\n" +
+      "✅ الحد: 50 MB | ❌ ممنوع: EXE, ZIP, APK",
+    cancel: "✅ تم إلغاء المساهمة. يمكنك البدء من جديد في أي وقت من زر 🌟 المساهمة.",
   },
 
   // ====== شاشة S10: Search ======
@@ -587,5 +650,75 @@ export const ADMIN_TEXTS = {
     btn_open: "🔗 فتح القناة",
     btn_back_to_channels: "🔙 قنوات اللجان",
     empty: "⚠️ لا توجد روابط مسجّلة في هذا القسم.",
+  },
+
+  // ====== شاشة A13: Honors Management (تكريم المساهمين - للمركزي) ======
+  honors: {
+    title: "🏆 *إدارة تكريم المساهمين*\n\nاختر القسم:",
+    btn_pending: (count: number) => `⏳ تكريمات معلّقة (${count})`,
+    btn_approved: "✅ تكريمات معتمدة",
+    btn_new: "➕ منح تكريم يدوي",
+    btn_reset_points: "🔄 إعادة ضبط النقاط",
+    btn_view_log: "📜 سجل التكريم",
+    pending_title: (count: number) => `⏳ *التكريمات المعلّقة (${count})*\n\n`,
+    honor_entry: (h: {
+      student_name: string;
+      honor_title: string;
+      points_at_honor: number;
+      bonus_points: number;
+    }) =>
+      `• 👤 *${h.student_name}*\n` +
+      `  🏆 ${h.honor_title}\n` +
+      `  📊 النقاط: ${h.points_at_honor} | 💎 مكافأة: +${h.bonus_points}\n\n`,
+    honor_detail: (h: {
+      student_name: string;
+      honor_title: string;
+      honor_type: string;
+      scope: string;
+      honor_period: string;
+      points_at_honor: number;
+      bonus_points: number;
+      nominated_by: string;
+      created_at: string;
+    }) =>
+      `🏆 *تفاصيل التكريم*\n\n` +
+      `👤 *الطالب:* ${h.student_name}\n` +
+      `🏆 *العنوان:* ${h.honor_title}\n` +
+      `🏷 *النوع:* ${h.honor_type}\n` +
+      `📍 *النطاق:* ${h.scope}\n` +
+      `📅 *الفترة:* ${h.honor_period}\n\n` +
+      `📊 *نقاط الطالب:* ${h.points_at_honor}\n` +
+      `💎 *مكافأة التكريم:* +${h.bonus_points} نقطة\n\n` +
+      `👤 *رشّحه:* ${h.nominated_by}\n` +
+      `📅 *تاريخ الترشيح:* ${h.created_at}`,
+    btn_approve: "✅ اعتماد التكريم",
+    btn_reject: "❌ رفض التكريم",
+    approve_success: (studentName: string, bonus: number) =>
+      `✅ *تم اعتماد التكريم!*\n\n👤 ${studentName}\n💎 +${bonus} نقطة إضافية\n🔔 تم إشعار الطالب.`,
+    reject_prompt: "❌ أرسل سبب رفض التكريم:",
+    reject_success: "✅ تم رفض التكريم. الطالب لم يُمنح المكافأة.",
+    reset_prompt: "🔄 *إعادة ضبط النقاط*\n\nاختر نطاق إعادة الضبط:",
+    btn_reset_global: "🌍 كل الطلاب",
+    btn_reset_college: "🏛 كلية محددة",
+    btn_reset_specialty: "📚 تخصص محدد",
+    reset_confirm: (scope: string, studentsCount: number, totalPoints: number) =>
+      `⚠️ *تأكيد إعادة الضبط*\n\n📍 النطاق: ${scope}\n👥 الطلاب المتأثرون: ${studentsCount}\n📊 إجمالي النقاط المُصفّرة: ${totalPoints}\n\n⚠️ *لا يمكن التراجع عن هذا الإجراء!*`,
+    btn_confirm_reset: "✅ نعم، أعد الضبط",
+    btn_cancel_reset: "❌ إلغاء",
+    reset_success: "✅ تم إعادة ضبط النقاط بنجاح.\n\n🔔 تم إشعار جميع الطلاب المتأثرين.",
+    log_title: (count: number) => `📜 *سجل التكريم (${count})*\n\n`,
+    log_entry: (h: {
+      student_name: string;
+      honor_title: string;
+      bonus_points: number;
+      approved_at: string;
+    }) =>
+      `• 👤 ${h.student_name} — ${h.honor_title}\n  💎 +${h.bonus_points} نقطة | 📅 ${h.approved_at}\n`,
+    log_empty: "📜 لا توجد تكريمات معتمدة بعد.",
+    new_honor_prompt_student: "👤 أرسل معرّف تلجرام للطالب المراد تكريمه:",
+    new_honor_prompt_title: "🏆 أرسل عنوان التكريم (مثال: «أبرز مساهم في تخصص IT»):",
+    new_honor_prompt_bonus: "💎 أرسل عدد نقاط المكافأة الإضافية (رقم):",
+    new_honor_success: (studentName: string, title: string) =>
+      `✅ *تم منح التكريم!*\n\n👤 ${studentName}\n🏆 ${title}\n🔔 تم إشعار الطالب.`,
   },
 } as const;

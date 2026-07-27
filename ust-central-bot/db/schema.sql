@@ -597,9 +597,206 @@ ALTER TABLE broadcasts ENABLE ROW LEVEL SECURITY;
 -- سياسات RLS تُطبّق في الإنتاج (تحتاج تهيئة auth.uid())
 
 -- ============================================
+-- 20. نقاط الطلاب (للمساهمات المقبولة)
+-- ============================================
+-- ملاحظة: جدول students يحتوي على total_points كعمود إجمالي
+-- هذا الجدول لتتبّع تفصيلي لكل نقطة
+ALTER TABLE students ADD COLUMN IF NOT EXISTS total_points INT DEFAULT 0;
+ALTER TABLE students ADD COLUMN IF NOT EXISTS last_points_reset_at TIMESTAMPTZ;
+
+CREATE TABLE student_points (
+  id BIGSERIAL PRIMARY KEY,
+  student_telegram_id BIGINT NOT NULL REFERENCES students(telegram_id) ON DELETE CASCADE,
+  points INT NOT NULL,
+  reason TEXT NOT NULL,                            -- 'contribution_approved', 'honor_bonus', 'manual'
+  related_contribution_id BIGINT,                  -- ربط بالمساهمة (إن وجدت)
+  awarded_by_position_id TEXT,
+  awarded_by_telegram_id BIGINT,
+  awarded_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_student_points_student ON student_points(student_telegram_id, awarded_at DESC);
+
+-- ============================================
+-- 21. تكريم المساهمين المميزين (إدارة يدوية للمركزي)
+-- ============================================
+CREATE TABLE contribution_honors (
+  id BIGSERIAL PRIMARY KEY,
+  student_telegram_id BIGINT NOT NULL REFERENCES students(telegram_id) ON DELETE CASCADE,
+  honor_type TEXT NOT NULL CHECK (honor_type IN ('top_contributor_specialty', 'top_contributor_college', 'top_contributor_global', 'manual')),
+  -- نطاق التكريم
+  scope_specialty_id INT REFERENCES specialties(id),
+  scope_college_id INT REFERENCES colleges(id),
+  -- بيانات التكريم
+  honor_title TEXT NOT NULL,                       -- "أبرز مساهم في تخصص IT"
+  honor_period TEXT,                               -- "الفصل الأول 2025-2026"
+  points_at_honor INT,                             -- النقاط وقت التكريم
+  bonus_points INT DEFAULT 0,                      -- نقاط إضافية للتكريم
+  -- إدارة
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')),
+  nominated_by_telegram_id BIGINT,                 -- من رشّح (اختياري)
+  approved_by_position_id TEXT,
+  approved_by_telegram_id BIGINT REFERENCES admin_users(telegram_id),
+  approved_at TIMESTAMPTZ,
+  rejection_reason TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_honors_student ON contribution_honors(student_telegram_id);
+CREATE INDEX idx_honors_status ON contribution_honors(status, created_at DESC);
+CREATE INDEX idx_honors_scope ON contribution_honors(scope_college_id, scope_specialty_id);
+
+-- ============================================
+-- 22. سجل إعادة ضبط النقاط (Audit)
+-- ============================================
+CREATE TABLE points_reset_logs (
+  id BIGSERIAL PRIMARY KEY,
+  reset_scope TEXT NOT NULL CHECK (reset_scope IN ('global', 'college', 'specialty', 'student')),
+  scope_college_id INT,
+  scope_specialty_id INT,
+  scope_student_telegram_id BIGINT,
+  students_affected INT NOT NULL,
+  total_points_reset INT NOT NULL,
+  reset_reason TEXT,
+  performed_by_position_id TEXT,
+  performed_by_telegram_id BIGINT NOT NULL,
+  performed_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_points_reset_performed ON points_reset_logs(performed_at DESC);
+
+-- ============================================
+-- 23. إشعارات الطلاب (لإشعارهم بنتائج المراجعة)
+-- ============================================
+CREATE TABLE student_notifications (
+  id BIGSERIAL PRIMARY KEY,
+  student_telegram_id BIGINT NOT NULL REFERENCES students(telegram_id) ON DELETE CASCADE,
+  notification_type TEXT NOT NULL
+    CHECK (notification_type IN ('contribution_approved', 'contribution_rejected', 'contribution_starred', 'honor_awarded', 'points_reset', 'broadcast', 'general')),
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  related_entity_type TEXT,                        -- 'contribution', 'honor', 'broadcast'
+  related_entity_id BIGINT,
+  is_read BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_student_notifications_unread ON student_notifications(student_telegram_id, is_read, created_at DESC) WHERE is_read = FALSE;
+
+-- ============================================
+-- صلاحيات إضافية (للمسؤول المركزي فقط)
+-- ============================================
+INSERT INTO permissions (id, name, description, min_level) VALUES
+  ('manage_honors',  'إدارة تكريم المساهمين', 'اعتماد/رفض ترشيحات التكريم + منح تكريم يدوي', 'central'),
+  ('reset_points',   'إعادة ضبط النقاط',       'تصفير نقاط الطلاب (شهري/فصلي/سنوي)', 'central'),
+  ('view_honors_log', 'عرض سجل التكريم',       'الاطلاع على التكريمات السابقة', 'central');
+
+-- ربط الصلاحيات الجديدة بالمستوى المركزي فقط
+INSERT INTO position_level_permissions (position_level, permission_id) VALUES
+  ('central', 'manage_honors'),
+  ('central', 'reset_points'),
+  ('central', 'view_honors_log');
+
+-- ============================================
+-- Function: حساب أعلى 5 مساهمين في تخصص
+-- ============================================
+CREATE OR REPLACE FUNCTION get_top_contributors_specialty(
+  p_specialty_id INT,
+  p_limit INT DEFAULT 5
+) RETURNS TABLE (
+  student_telegram_id BIGINT,
+  first_name TEXT,
+  total_points INT,
+  accepted_contributions INT
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT s.telegram_id, s.first_name, s.total_points,
+         s.accepted_contributions
+  FROM students s
+  WHERE s.total_points > 0
+    AND EXISTS (
+      SELECT 1 FROM contributions c
+      WHERE c.user_telegram_id = s.telegram_id
+        AND c.subject_id IN (SELECT id FROM subjects WHERE specialty_id = p_specialty_id)
+        AND c.status = 'approved'
+    )
+  ORDER BY s.total_points DESC
+  LIMIT p_limit;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================
+-- Function: منح نقاط للطالب (عند اعتماد مساهمة)
+-- ============================================
+CREATE OR REPLACE FUNCTION award_contribution_points(
+  p_student_telegram_id BIGINT,
+  p_contribution_id BIGINT,
+  p_points INT DEFAULT 10,
+  p_awarded_by_telegram_id BIGINT,
+  p_awarded_by_position_id TEXT
+) RETURNS VOID AS $$
+BEGIN
+  -- إضافة سجل النقاط
+  INSERT INTO student_points (student_telegram_id, points, reason, related_contribution_id, awarded_by_position_id, awarded_by_telegram_id)
+  VALUES (p_student_telegram_id, p_points, 'contribution_approved', p_contribution_id, p_awarded_by_position_id, p_awarded_by_telegram_id);
+
+  -- تحديث إجمالي نقاط الطالب
+  UPDATE students
+  SET total_points = total_points + p_points,
+      accepted_contributions = accepted_contributions + 1
+  WHERE telegram_id = p_student_telegram_id;
+
+  -- إنشاء إشعار للطالب
+  INSERT INTO student_notifications (student_telegram_id, notification_type, title, body, related_entity_type, related_entity_id)
+  VALUES (
+    p_student_telegram_id,
+    'contribution_approved',
+    '✅ تم اعتماد مساهمتك!',
+    'تمت الموافقة على مساهمتك ومنحك ' || p_points || ' نقطة. شكراً لإثرائك المحتوى!',
+    'contribution',
+    p_contribution_id
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================
+-- Function: إشعار الطالب برفض مساهمة
+-- ============================================
+CREATE OR REPLACE FUNCTION notify_contribution_rejected(
+  p_student_telegram_id BIGINT,
+  p_contribution_id BIGINT,
+  p_reject_reason TEXT
+) RETURNS VOID AS $$
+BEGIN
+  INSERT INTO student_notifications (student_telegram_id, notification_type, title, body, related_entity_type, related_entity_id)
+  VALUES (
+    p_student_telegram_id,
+    'contribution_rejected',
+    '❌ تم رفض مساهمتك',
+    'للأسف لم يتم اعتماد مساهمتك. السبب: ' || COALESCE(p_reject_reason, 'غير محدد') || '. يمكنك المحاولة مرة أخرى بمحتوى أفضل.',
+    'contribution',
+    p_contribution_id
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================
+-- تحديث الأوصاف: "مندوب المستوى" → "مسؤول الدفعة"
+-- ============================================
+UPDATE permissions
+SET name = REPLACE(name, 'مندوبي المستويات', 'مسؤولي الدفع'),
+    description = REPLACE(description, 'مندوبي المستويات', 'مسؤولي الدفع'),
+    name = REPLACE(name, 'مندوب المستوى', 'مسؤول الدفعة'),
+    description = REPLACE(description, 'مندوب المستوى', 'مسؤول الدفعة');
+
+UPDATE positions
+SET title = REPLACE(title, 'مندوب', 'مسؤول'),
+    description = REPLACE(description, 'مندوب', 'مسؤول')
+WHERE level = 'level';
+
+-- ============================================
 -- نهاية الـ Schema
 -- ============================================
--- إجمالي الجداول: 19 جدول + 2 View + 2 Function + 2 Trigger
--- إجمالي المناصب: 8 (1 مركزي + 7 كليات)
--- إجمالي الصلاحيات: 16 صلاحية
+-- إجمالي الجداول: 23 جدول (مع نقاط + تكريم + سجلات + إشعارات)
+-- إجمالي المناصب: 8 (1 مركزي + 7 كليات) + مسؤولي الدفع
+-- إجمالي الصلاحيات: 19 صلاحية (16 + 3 جديدة)
+-- Functions: 4 (user_has_permission + get_top_contributors + award_points + notify_rejected)
 -- ============================================

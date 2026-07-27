@@ -116,6 +116,16 @@ export const MOCK_POSITIONS: MockPosition[] = [
     description: `مسؤول كلية ${c.short_name}`,
     college_id: c.id,
   })),
+  // مسؤول دفعة (للتجربة): IT مستوى 1
+  {
+    id: "level_rep_16_1",
+    level: "level",
+    title: "📊 مسؤول دفعة - تقنية معلومات (IT) - مستوى 1",
+    description: "مسؤول دفعة محددة",
+    college_id: 5,
+    specialty_id: 16,
+    level_num: 1,
+  },
 ];
 
 // ============================================
@@ -163,7 +173,7 @@ export const MOCK_POSITION_HOLDERS: MockPositionHolder[] = [
     assigned_by: 1000001,
     is_active: true,
   },
-  // (لتجربة المناصب المتعددة: م. خالد = مسؤول كلية الهندسة أيضاً)
+  // م. خالد = مسؤول كلية الهندسة
   {
     position_id: "college_admin_4",
     user_telegram_id: 1000003,
@@ -171,21 +181,29 @@ export const MOCK_POSITION_HOLDERS: MockPositionHolder[] = [
     assigned_by: 1000001,
     is_active: true,
   },
+  // أ. فاطمة = مسؤولة دفعة IT مستوى 1
+  {
+    position_id: "level_rep_16_1",
+    user_telegram_id: 1000004,
+    assigned_at: "2026-02-15",
+    assigned_by: 1000002,
+    is_active: true,
+  },
 ];
 
 // ============================================
-// الصلاحيات (16 صلاحية)
+// الصلاحيات (19 صلاحية)
 // ============================================
 export const MOCK_PERMISSIONS: Permission[] = [
-  // مندوب المستوى
-  { id: "level_broadcast", name: "نشر إعلانات المستوى", description: "السماح بنشر تعميمات على مستوى محدد", min_level: "level" },
-  { id: "approve_level_contributions", name: "الموافقة/رفض مساهمات المستوى", description: "مراجعة مساهمات الطلاب", min_level: "level" },
-  { id: "manage_level_content", name: "إدارة محتوى المستوى", description: "رفع/تعديل/نقل/حذف محتوى", min_level: "level" },
-  { id: "view_level_stats", name: "عرض إحصائيات المستوى", description: "الاطلاع على إحصائيات", min_level: "level" },
+  // مسؤول الدفعة (القاعدة)
+  { id: "level_broadcast", name: "نشر إعلانات الدفعة", description: "السماح بنشر تعميمات على دفعة محددة", min_level: "level" },
+  { id: "approve_level_contributions", name: "الموافقة/رفض مساهمات الدفعة", description: "مراجعة مساهمات الطلاب", min_level: "level" },
+  { id: "manage_level_content", name: "إدارة محتوى الدفعة", description: "رفع/تعديل/نقل/حذف محتوى", min_level: "level" },
+  { id: "view_level_stats", name: "عرض إحصائيات الدفعة", description: "الاطلاع على إحصائيات", min_level: "level" },
   // مسؤول الكلية
   { id: "manage_subjects", name: "إدارة المواد", description: "إضافة/تعديل/حذف/نقل المواد", min_level: "college" },
   { id: "college_broadcast", name: "نشر إعلانات الكلية", description: "تعميم على مستوى كلية", min_level: "college" },
-  { id: "manage_level_reps", name: "إدارة مندوبي المستويات", description: "تعيين/إزالة مندوبي المستويات", min_level: "college" },
+  { id: "manage_level_reps", name: "إدارة مسؤولي الدفع", description: "تعيين/إزالة مسؤولي الدفع", min_level: "college" },
   { id: "view_college_stats", name: "عرض إحصائيات الكلية", description: "الاطلاع على إحصائيات كلية", min_level: "college" },
   // مركزي
   { id: "manage_admins", name: "إدارة المناصب", description: "تعيين/إزالة شاغلي المناصب", min_level: "central" },
@@ -196,18 +214,22 @@ export const MOCK_PERMISSIONS: Permission[] = [
   { id: "view_reports", name: "عرض التقارير", description: "تقارير الأداء والنشاط", min_level: "central" },
   { id: "system_settings", name: "إعدادات النظام", description: "تخصيص النصوص والإعدادات", min_level: "central" },
   { id: "central_broadcast", name: "نشر تعميمات شاملة", description: "تعميم على كل الطلاب", min_level: "central" },
+  // صلاحيات جديدة (للمركزي فقط)
+  { id: "manage_honors", name: "إدارة تكريم المساهمين", description: "اعتماد/رفض ترشيحات التكريم + منح تكريم يدوي", min_level: "central" },
+  { id: "reset_points", name: "إعادة ضبط النقاط", description: "تصفير نقاط الطلاب (شهري/فصلي/سنوي)", min_level: "central" },
+  { id: "view_honors_log", name: "عرض سجل التكريم", description: "الاطلاع على التكريمات السابقة", min_level: "central" },
 ];
 
 // ============================================
 // ربط الصلاحيات بالمستويات (مع الوراثة)
 // ============================================
 export const MOCK_POSITION_LEVEL_PERMISSIONS: PositionLevelPermission[] = [
-  // مندوب المستوى
+  // مسؤول الدفعة
   { position_level: "level", permission_id: "level_broadcast" },
   { position_level: "level", permission_id: "approve_level_contributions" },
   { position_level: "level", permission_id: "manage_level_content" },
   { position_level: "level", permission_id: "view_level_stats" },
-  // مسؤول الكلية (يرث المستوى + صلاحياته)
+  // مسؤول الكلية (يرث الدفعة + صلاحياته)
   { position_level: "college", permission_id: "level_broadcast" },
   { position_level: "college", permission_id: "approve_level_contributions" },
   { position_level: "college", permission_id: "manage_level_content" },
@@ -216,7 +238,7 @@ export const MOCK_POSITION_LEVEL_PERMISSIONS: PositionLevelPermission[] = [
   { position_level: "college", permission_id: "college_broadcast" },
   { position_level: "college", permission_id: "manage_level_reps" },
   { position_level: "college", permission_id: "view_college_stats" },
-  // مركزي (يرث الكلية + المستوى + صلاحياته)
+  // مركزي (يرث الكلية + الدفعة + صلاحياته)
   { position_level: "central", permission_id: "level_broadcast" },
   { position_level: "central", permission_id: "approve_level_contributions" },
   { position_level: "central", permission_id: "manage_level_content" },
@@ -233,6 +255,9 @@ export const MOCK_POSITION_LEVEL_PERMISSIONS: PositionLevelPermission[] = [
   { position_level: "central", permission_id: "view_reports" },
   { position_level: "central", permission_id: "system_settings" },
   { position_level: "central", permission_id: "central_broadcast" },
+  { position_level: "central", permission_id: "manage_honors" },
+  { position_level: "central", permission_id: "reset_points" },
+  { position_level: "central", permission_id: "view_honors_log" },
 ];
 
 // ============================================
@@ -457,4 +482,142 @@ export function getSubjectNameById(subjectId: number): string {
     208: "الخوارزميات",
   };
   return names[subjectId] || "مادة غير معروفة";
+}
+
+// ============================================
+// بيانات التكريم (Mock)
+// ============================================
+export interface MockHonor {
+  id: number;
+  student_telegram_id: number;
+  student_name: string;
+  honor_type: "top_contributor_specialty" | "top_contributor_college" | "top_contributor_global" | "manual";
+  scope_college_id?: number;
+  scope_specialty_id?: number;
+  honor_title: string;
+  honor_period: string;
+  points_at_honor: number;
+  bonus_points: number;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  nominated_by_telegram_id?: number;
+  approved_by_telegram_id?: number;
+  approved_at?: string;
+  rejection_reason?: string;
+  created_at: string;
+}
+
+export const MOCK_HONORS: MockHonor[] = [
+  {
+    id: 1,
+    student_telegram_id: 555111222,
+    student_name: "أحمد العولقي",
+    honor_type: "top_contributor_specialty",
+    scope_college_id: 5,
+    scope_specialty_id: 16,
+    honor_title: "🏆 أبرز مساهم في تخصص IT - الفصل الأول 2025-2026",
+    honor_period: "الفصل الأول 2025-2026",
+    points_at_honor: 145,
+    bonus_points: 50,
+    status: "pending",
+    nominated_by_telegram_id: 1000004, // أ. فاطمة (مسؤولة الدفعة)
+    created_at: "2026-07-01",
+  },
+  {
+    id: 2,
+    student_telegram_id: 555333444,
+    student_name: "سارة الحداد",
+    honor_type: "top_contributor_specialty",
+    scope_college_id: 5,
+    scope_specialty_id: 16,
+    honor_title: "🏆 أبرز مساهم في تخصص IT - الفصل الأول 2025-2026",
+    honor_period: "الفصل الأول 2025-2026",
+    points_at_honor: 132,
+    bonus_points: 50,
+    status: "pending",
+    nominated_by_telegram_id: 1000004,
+    created_at: "2026-07-01",
+  },
+  {
+    id: 3,
+    student_telegram_id: 555555666,
+    student_name: "خالد الشريف",
+    honor_type: "top_contributor_college",
+    scope_college_id: 4,
+    honor_title: "🏆 أبرز مساهم في كلية الهندسة - الفصل الأول 2025-2026",
+    honor_period: "الفصل الأول 2025-2026",
+    points_at_honor: 110,
+    bonus_points: 30,
+    status: "approved",
+    approved_by_telegram_id: 1000001,
+    approved_at: "2026-07-10",
+    created_at: "2026-07-05",
+  },
+];
+
+// ============================================
+// بيانات إشعارات الطلاب (Mock)
+// ============================================
+export interface MockStudentNotification {
+  id: number;
+  student_telegram_id: number;
+  notification_type: "contribution_approved" | "contribution_rejected" | "contribution_starred" | "honor_awarded" | "points_reset" | "broadcast" | "general";
+  title: string;
+  body: string;
+  related_entity_type?: string;
+  related_entity_id?: number;
+  is_read: boolean;
+  created_at: string;
+}
+
+export const MOCK_STUDENT_NOTIFICATIONS: MockStudentNotification[] = [
+  {
+    id: 1,
+    student_telegram_id: 555111222,
+    notification_type: "contribution_approved",
+    title: "✅ تم اعتماد مساهمتك!",
+    body: "تمت الموافقة على مساهمتك 'ملخص Python شامل.pdf' ومنحك 10 نقاط. شكراً لإثرائك المحتوى!",
+    related_entity_type: "contribution",
+    related_entity_id: 9901,
+    is_read: false,
+    created_at: "قبل يوم",
+  },
+  {
+    id: 2,
+    student_telegram_id: 555111222,
+    notification_type: "broadcast",
+    title: "📢 تعميم من مسؤول الدفعة",
+    body: "نذكّر الطلاب بموعد اختبار منتصف الفصل يوم الأحد القادم.",
+    is_read: false,
+    created_at: "قبل 3 ساعات",
+  },
+];
+
+// ============================================
+// طلاب Mock (للإحصائيات والتكريم)
+// ============================================
+export interface MockStudent {
+  telegram_id: number;
+  first_name: string;
+  total_points: number;
+  accepted_contributions: number;
+  specialty_id?: number;
+  college_id?: number;
+}
+
+export const MOCK_STUDENTS: MockStudent[] = [
+  { telegram_id: 555111222, first_name: "أحمد العولقي", total_points: 145, accepted_contributions: 12, specialty_id: 16, college_id: 5 },
+  { telegram_id: 555333444, first_name: "سارة الحداد", total_points: 132, accepted_contributions: 11, specialty_id: 16, college_id: 5 },
+  { telegram_id: 555555666, first_name: "خالد الشريف", total_points: 110, accepted_contributions: 9, college_id: 4 },
+  { telegram_id: 555777888, first_name: "نورة الكثيري", total_points: 85, accepted_contributions: 7, specialty_id: 16, college_id: 5 },
+  { telegram_id: 555999000, first_name: "محمد باوزير", total_points: 72, accepted_contributions: 6, specialty_id: 16, college_id: 5 },
+];
+
+export function getTopContributors(specialtyId?: number, collegeId?: number, limit = 5): MockStudent[] {
+  let students = [...MOCK_STUDENTS];
+  if (specialtyId) {
+    students = students.filter((s) => s.specialty_id === specialtyId);
+  } else if (collegeId) {
+    students = students.filter((s) => s.college_id === collegeId);
+  }
+  return students.sort((a, b) => b.total_points - a.total_points).slice(0, limit);
 }

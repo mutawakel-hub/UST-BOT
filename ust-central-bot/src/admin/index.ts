@@ -26,9 +26,12 @@ import {
   MOCK_ADMIN_USERS,
   MOCK_CONTENT,
   MOCK_COMMITTEE_CHANNELS,
+  MOCK_HONORS,
+  MOCK_STUDENTS,
   CONTENT_TYPES,
   type MockContribution,
   type MockContent,
+  type MockHonor,
   getMockContentById,
   getMockContributionById,
   getMockPositionById,
@@ -36,6 +39,7 @@ import {
   getContentTypeLabel,
   getContentTypeEmoji,
   getSubjectNameById,
+  getTopContributors,
 } from "../shared/data/admins";
 import {
   getUserPermissions,
@@ -72,6 +76,10 @@ interface AdminSession {
   awaiting_position_assign?: { step: "name" | "telegram_id"; position_id: string; name?: string };
   awaiting_position_revoke?: { position_id: string };
   awaiting_channel_edit?: number; // channel_id
+  // تكريم
+  awaiting_honor_reject?: number; // honor_id
+  awaiting_honor_new_step?: "student_id" | "title" | "bonus";
+  awaiting_honor_new_data?: { student_id?: number; title?: string };
   // فلتر استعراض المحتوى
   content_filter?: { college_id?: number; specialty_id?: number; subject_id?: number; content_type?: string };
 }
@@ -116,8 +124,9 @@ function buildDynamicDashboard(perms: UserPermissions, pendingCount: number): In
   const kb = new InlineKeyboard();
   const p = perms.permissions;
 
-  // صف 1: المساهمات + المحتوى
-  if (p.has("approve_level_contributions")) {
+  // صف 1: المساهمات (مخفية للمركزي مؤقتاً) + المحتوى
+  // ملاحظة: المركزي محروم مؤقتاً من إدارة المساهمات حسب طلب العميل
+  if (p.has("approve_level_contributions") && !perms.is_central) {
     kb.text(ADMIN_TEXTS.dashboard.btn_pending(pendingCount), "pending");
   }
   if (p.has("manage_level_content")) {
@@ -152,7 +161,16 @@ function buildDynamicDashboard(perms: UserPermissions, pendingCount: number): In
   }
   kb.row();
 
-  // صف 5: لوحة الشرف (للمركزي فقط)
+  // صف 5: التكريم + إعادة ضبط النقاط (للمركزي فقط)
+  if (p.has("manage_honors")) {
+    kb.text("🏆 إدارة التكريم", "manage_honors");
+  }
+  if (p.has("reset_points")) {
+    kb.text("🔄 إعادة ضبط النقاط", "manage_reset_points");
+  }
+  kb.row();
+
+  // صف 6: لوحة الشرف (للمركزي فقط)
   if (perms.is_central) {
     kb.text("🏆 لوحة الشرف", "leaderboard_update").row();
   }
@@ -711,9 +729,13 @@ export function createAdminBot(token: string): Bot {
       all: "🌍 للجميع", college: "🏛 لكلية", major: "📚 لتخصص", level: "📊 لمستوى",
     };
     await ctx.editMessageText(
-      ADMIN_TEXTS.broadcast.prompt_text(scopeLabels[scope]),
+      ADMIN_TEXTS.broadcast.prompt_text(scopeLabels[scope]) +
+      "\n\n💡 *يمكنك إرسال:*\n" +
+      "📝 نص عادي (اكتب فقط)\n" +
+      "🖼 صورة (مع أو بدون تعليق)\n" +
+      "📎 ملف (PDF/DOCX/...)",
       {
-        reply_markup: new InlineKeyboard().text("broadcast", "broadcast"),
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
       }
     );
@@ -1301,16 +1323,377 @@ export function createAdminBot(token: string): Bot {
       return;
     }
 
+    // استقبال سبب رفض التكريم
+    if (session.awaiting_honor_reject) {
+      const honorId = session.awaiting_honor_reject;
+      const honor = MOCK_HONORS.find((h) => h.id === honorId);
+      if (honor) {
+        honor.status = "rejected";
+        honor.rejection_reason = ctx.message.text;
+      }
+      session.awaiting_honor_reject = undefined;
+      await ctx.reply(
+        ADMIN_TEXTS.honors.reject_success,
+        {
+          reply_markup: new InlineKeyboard()
+            .text("🔙 التكريمات المعلّقة", "honors_pending")
+            .row()
+            .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    // استقبال بيانات التكريم اليدوي الجديد
+    if (session.awaiting_honor_new_step === "student_id") {
+      const tid = parseInt(ctx.message.text);
+      if (isNaN(tid)) {
+        await ctx.reply("⚠️ المعرّف يجب أن يكون رقماً. أعد المحاولة:");
+        return;
+      }
+      session.awaiting_honor_new_data = { student_id: tid };
+      session.awaiting_honor_new_step = "title";
+      await ctx.reply(ADMIN_TEXTS.honors.new_honor_prompt_title, {
+        reply_markup: new InlineKeyboard().text("❌ إلغاء", "manage_honors"),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+    if (session.awaiting_honor_new_step === "title") {
+      session.awaiting_honor_new_data!.title = ctx.message.text;
+      session.awaiting_honor_new_step = "bonus";
+      await ctx.reply(ADMIN_TEXTS.honors.new_honor_prompt_bonus, {
+        reply_markup: new InlineKeyboard().text("❌ إلغاء", "manage_honors"),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+    if (session.awaiting_honor_new_step === "bonus") {
+      const bonus = parseInt(ctx.message.text);
+      if (isNaN(bonus)) {
+        await ctx.reply("⚠️ المكافأة يجب أن تكون رقماً. أعد المحاولة:");
+        return;
+      }
+      const data = session.awaiting_honor_new_data!;
+      // إنشاء تكريم جديد
+      const newHonor: MockHonor = {
+        id: MOCK_HONORS.length + 1,
+        student_telegram_id: data.student_id!,
+        student_name: `طالب ${data.student_id}`,
+        honor_type: "manual",
+        honor_title: data.title!,
+        honor_period: "يدوي",
+        points_at_honor: 0,
+        bonus_points: bonus,
+        status: "approved",
+        approved_by_telegram_id: ctx.from.id,
+        approved_at: new Date().toISOString().substring(0, 10),
+        created_at: new Date().toISOString().substring(0, 10),
+      };
+      MOCK_HONORS.push(newHonor);
+      session.awaiting_honor_new_step = undefined;
+      session.awaiting_honor_new_data = undefined;
+      await ctx.reply(
+        ADMIN_TEXTS.honors.new_honor_success(newHonor.student_name, newHonor.honor_title),
+        {
+          reply_markup: new InlineKeyboard()
+            .text("🏆 إدارة التكريم", "manage_honors")
+            .row()
+            .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
     // رسالة افتراضية
     await ctx.reply("👋 استخدم الأزرار للتنقل، أو /start للعودة للوحة الإدارة.");
   });
 
   // ====== استقبال ملفات (رفع محتوى) ======
   bot.on(":document", async (ctx) => {
+    const session = adminSessions.get(ctx.from.id);
+
+    // استقبال ملف للتعميم
+    if (session?.awaiting_broadcast_text && session.awaiting_broadcast_scope) {
+      session.awaiting_broadcast_text = false;
+      const doc = ctx.message.document;
+      const scope = session.awaiting_broadcast_scope;
+      session.awaiting_broadcast_scope = undefined;
+      const recipientCounts: Record<string, number> = { all: 1247, college: 312, major: 89, level: 23 };
+      const count = recipientCounts[scope] || 100;
+      await ctx.reply(
+        `✅ *تم إرسال التعميم بنجاح!*\n\n📎 الملف: \`${doc.file_name}\`\n👥 المستلمون: ${count}\n📝 النوع: ملف`,
+        {
+          reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
     // محاكاة رفع المحتوى
     const doc = ctx.message.document;
     await ctx.reply(
       `✅ *تم استلام الملف!*\n\n📄 *الاسم:* ${doc.file_name}\n📊 *الحجم:* ${(doc.file_size / 1024 / 1024).toFixed(2)} MB\n\n_في الإنتاج: سيُرفع الملف لقناة التخزين ويُسجّل في قاعدة البيانات._`,
+      {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // ====== استقبال صور (للتعميمات بصورة) ======
+  bot.on(":photo", async (ctx) => {
+    const session = adminSessions.get(ctx.from.id);
+    if (session?.awaiting_broadcast_text && session.awaiting_broadcast_scope) {
+      session.awaiting_broadcast_text = false;
+      const scope = session.awaiting_broadcast_scope;
+      session.awaiting_broadcast_scope = undefined;
+      const recipientCounts: Record<string, number> = { all: 1247, college: 312, major: 89, level: 23 };
+      const count = recipientCounts[scope] || 100;
+      const photo = ctx.message.photo[ctx.message.photo.length - 1];
+      const caption = ctx.message.caption || "(بدون تعليق)";
+      await ctx.reply(
+        `✅ *تم إرسال التعميم بنجاح!*\n\n🖼 صورة بحجم ${photo.width}×${photo.height}\n📝 التعليق: ${caption}\n👥 المستلمون: ${count}`,
+        {
+          reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+    await ctx.reply("ℹ️ استخدم الأزرار للتنقل. الصور تُستخدم للتعميمات فقط.");
+  });
+
+  // ============================================
+  // A13: إدارة التكريم (للمركزي فقط)
+  // ============================================
+  bot.callbackQuery("manage_honors", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    if (!perms.permissions.has("manage_honors")) {
+      await ctx.editMessageText("❌ *ليست لديك صلاحية إدارة التكريم.*", {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+    const pendingHonors = MOCK_HONORS.filter((h) => h.status === "pending");
+    await ctx.editMessageText(
+      ADMIN_TEXTS.honors.title,
+      {
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.honors.btn_pending(pendingHonors.length), "honors_pending")
+          .row()
+          .text(ADMIN_TEXTS.honors.btn_approved, "honors_approved")
+          .row()
+          .text(ADMIN_TEXTS.honors.btn_new, "honor_new")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery("honors_pending", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const pending = MOCK_HONORS.filter((h) => h.status === "pending");
+    if (pending.length === 0) {
+      await ctx.editMessageText(
+        "✅ *لا توجد تكريمات معلّقة حالياً.*",
+        {
+          reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+    let msg = ADMIN_TEXTS.honors.pending_title(pending.length);
+    const kb = new InlineKeyboard();
+    pending.forEach((h) => {
+      msg += ADMIN_TEXTS.honors.honor_entry({
+        student_name: h.student_name,
+        honor_title: h.honor_title,
+        points_at_honor: h.points_at_honor,
+        bonus_points: h.bonus_points,
+      });
+      kb.text(`👤 ${h.student_name} - ${h.honor_title.substring(0, 20)}...`, `honor_detail_${h.id}`).row();
+    });
+    kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
+    await ctx.editMessageText(msg, { reply_markup: kb, parse_mode: "Markdown" });
+  });
+
+  bot.callbackQuery(/honor_detail_(\d+)/, async (ctx) => {
+    const honorId = parseInt(ctx.match[1]);
+    const honor = MOCK_HONORS.find((h) => h.id === honorId);
+    await ctx.answerCallbackQuery();
+    if (!honor) {
+      await ctx.reply("⚠️ التكريم غير موجود.");
+      return;
+    }
+    const nominator = honor.nominated_by_telegram_id ? getMockAdminUser(honor.nominated_by_telegram_id) : null;
+    const scopeText = honor.scope_specialty_id
+      ? `تخصص ${honor.scope_specialty_id}`
+      : honor.scope_college_id
+      ? `كلية ${honor.scope_college_id}`
+      : "عالمي";
+    await ctx.editMessageText(
+      ADMIN_TEXTS.honors.honor_detail({
+        student_name: honor.student_name,
+        honor_title: honor.honor_title,
+        honor_type: honor.honor_type,
+        scope: scopeText,
+        honor_period: honor.honor_period,
+        points_at_honor: honor.points_at_honor,
+        bonus_points: honor.bonus_points,
+        nominated_by: nominator?.first_name || "غير معروف",
+        created_at: honor.created_at,
+      }),
+      {
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.honors.btn_approve, `approve_honor_${honorId}`)
+          .text(ADMIN_TEXTS.honors.btn_reject, `reject_honor_${honorId}`)
+          .row()
+          .text("🔙 التكريمات المعلّقة", "honors_pending")
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery(/approve_honor_(\d+)/, async (ctx) => {
+    const honorId = parseInt(ctx.match[1]);
+    const honor = MOCK_HONORS.find((h) => h.id === honorId);
+    await ctx.answerCallbackQuery({ text: "✅ تم الاعتماد" });
+    if (honor) {
+      honor.status = "approved";
+      honor.approved_by_telegram_id = ctx.from.id;
+      honor.approved_at = new Date().toISOString().substring(0, 10);
+    }
+    await ctx.editMessageText(
+      ADMIN_TEXTS.honors.approve_success(honor?.student_name || "الطالب", honor?.bonus_points || 0),
+      {
+        reply_markup: new InlineKeyboard()
+          .text("🔙 التكريمات المعلّقة", "honors_pending")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery(/reject_honor_(\d+)/, async (ctx) => {
+    const honorId = parseInt(ctx.match[1]);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.awaiting_honor_reject = honorId;
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(
+      ADMIN_TEXTS.honors.reject_prompt,
+      {
+        reply_markup: new InlineKeyboard().text("❌ إلغاء", `honor_detail_${honorId}`),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery("honors_approved", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const approved = MOCK_HONORS.filter((h) => h.status === "approved");
+    if (approved.length === 0) {
+      await ctx.editMessageText(ADMIN_TEXTS.honors.log_empty, {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+    let msg = ADMIN_TEXTS.honors.log_title(approved.length);
+    approved.forEach((h) => {
+      msg += ADMIN_TEXTS.honors.log_entry({
+        student_name: h.student_name,
+        honor_title: h.honor_title,
+        bonus_points: h.bonus_points,
+        approved_at: h.approved_at || "غير معروف",
+      });
+    });
+    await ctx.editMessageText(msg, {
+      reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+      parse_mode: "Markdown",
+    });
+  });
+
+  bot.callbackQuery("honor_new", async (ctx) => {
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.awaiting_honor_new_step = "student_id";
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(
+      ADMIN_TEXTS.honors.new_honor_prompt_student,
+      {
+        reply_markup: new InlineKeyboard().text("❌ إلغاء", "manage_honors"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // ============================================
+  // A14: إعادة ضبط النقاط (للمركزي فقط)
+  // ============================================
+  bot.callbackQuery("manage_reset_points", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    if (!perms.permissions.has("reset_points")) {
+      await ctx.editMessageText("❌ *ليست لديك صلاحية إعادة ضبط النقاط.*", {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+    await ctx.editMessageText(
+      ADMIN_TEXTS.honors.reset_prompt,
+      {
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.honors.btn_reset_global, "reset_global")
+          .row()
+          .text(ADMIN_TEXTS.honors.btn_reset_college, "reset_college")
+          .text(ADMIN_TEXTS.honors.btn_reset_specialty, "reset_specialty")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery(/reset_(global|college|specialty)/, async (ctx) => {
+    const scope = ctx.match[1];
+    await ctx.answerCallbackQuery();
+    const scopeLabels: Record<string, string> = {
+      global: "🌍 كل الطلاب",
+      college: "🏛 كلية محددة",
+      specialty: "📚 تخصص محدد",
+    };
+    // محاكاة الإحصائيات
+    const studentsCount = scope === "global" ? 1247 : scope === "college" ? 312 : 89;
+    const totalPoints = scope === "global" ? 15420 : scope === "college" ? 3210 : 890;
+    await ctx.editMessageText(
+      ADMIN_TEXTS.honors.reset_confirm(scopeLabels[scope], studentsCount, totalPoints),
+      {
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.honors.btn_confirm_reset, `confirm_reset_${scope}`)
+          .text(ADMIN_TEXTS.honors.btn_cancel_reset, "manage_reset_points")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery(/confirm_reset_(global|college|specialty)/, async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "✅ تم إعادة الضبط" });
+    await ctx.editMessageText(
+      ADMIN_TEXTS.honors.reset_success,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
@@ -1364,7 +1747,7 @@ export default {
         return new Response(
           JSON.stringify({
             status: "ok", bot: env.BOT_USERNAME, environment: env.ENVIRONMENT,
-            version: "3.0", timestamp: new Date().toISOString(),
+            version: "3.1", timestamp: new Date().toISOString(),
           }),
           { headers: { "Content-Type": "application/json" } }
         );
