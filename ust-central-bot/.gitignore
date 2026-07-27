@@ -75,3 +75,8 @@ coverage/
 .cache/
 .temp/
 tmp/
+
+# Lock files (يُعاد توليدها بعد npm install)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
