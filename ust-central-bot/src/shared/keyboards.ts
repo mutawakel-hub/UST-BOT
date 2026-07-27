@@ -78,7 +78,7 @@ export function collegesKeyboard(page = 0): InlineKeyboard {
 }
 
 // ============================================
-// S3: قائمة التخصصات لكلية معينة
+// S3: قائمة التخصصات لكلية معينة (مع زر قناة لجنة الكلية)
 // ============================================
 export function majorsKeyboard(collegeId: number, page = 0): InlineKeyboard {
   const specialties = getSpecialtiesByCollege(collegeId);
@@ -102,12 +102,15 @@ export function majorsKeyboard(collegeId: number, page = 0): InlineKeyboard {
     kb.row();
   }
 
+  // زر قناة اللجنة العلمية للكلية
+  kb.text("📢 قناة اللجنة العلمية - الكلية", `committee_college_${collegeId}`).row();
+
   kb.text(TEXTS.navigation.back_to_colleges, "back_to_colleges");
   return kb;
 }
 
 // ============================================
-// S4: قائمة المستويات
+// S4: قائمة المستويات (مع زر قناة اللجنة للتخصص)
 // ============================================
 export function levelsKeyboard(specialtyId: number): InlineKeyboard {
   const levels = getLevelsForSpecialty(specialtyId);
@@ -120,6 +123,9 @@ export function levelsKeyboard(specialtyId: number): InlineKeyboard {
     }
     kb.row();
   }
+
+  // زر قناة اللجنة العلمية للتخصص
+  kb.text("📢 قناة اللجنة العلمية", `committee_specialty_${specialtyId}`).row();
 
   // زر الخطة الاسترشادية
   kb.text("🗺 الخطة الاسترشادية", `plan_${specialtyId}`).row();

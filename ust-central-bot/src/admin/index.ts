@@ -1,32 +1,11 @@
 // ============================================
-// بوت الإدارة - جامعة العلوم والتكنولوجيا (محسّن)
+// بوت الإدارة - جامعة العلوم والتكنولوجيا
 // Mockup على Cloudflare Workers + grammY
-// 15 شاشة + وصول مباشر (للـ Mockup)
-// ============================================
-// ملاحظة: في الـ Mockup، كل من يفتح البوت يُعامل كمسؤول مركزي.
-// في الإنتاج، سيتم تطبيق نظام RBAC كامل (وراثة الصلاحيات)
-// بناءً على المنصب المرتبط بـ Telegram ID في قاعدة البيانات.
+// نظام RBAC كامل + 13 شاشة
 // ============================================
 
 import { Bot, webhookCallback, InlineKeyboard } from "grammy";
 import { TEXTS, ADMIN_TEXTS } from "../shared/texts";
-import {
-  adminDashboardKeyboard,
-  pendingListKeyboard,
-  reviewContributionKeyboard,
-  rejectReasonKeyboard,
-  rejectConfirmKeyboard,
-  filesMgmtKeyboard,
-  browseFilesKeyboard,
-  subjectsMgmtKeyboard,
-  broadcastKeyboard,
-  broadcastConfirmKeyboard,
-  manageAdminsKeyboard,
-  statisticsKeyboard,
-  customizeKeyboard,
-  leaderboardUpdateKeyboard,
-  breadcrumb,
-} from "../shared/keyboards";
 import {
   COLLEGES,
   getCollegeById,
@@ -38,71 +17,150 @@ import {
   SUBJECTS,
   getSubjectById,
   getSubjectsBySpecialtyLevelSemester,
-  getMockFilesForSubject,
 } from "../shared/data/subjects";
 import {
   MOCK_PENDING_CONTRIBUTIONS,
   MOCK_STATISTICS,
+  MOCK_POSITIONS,
+  MOCK_POSITION_HOLDERS,
+  MOCK_ADMIN_USERS,
+  MOCK_CONTENT,
+  MOCK_COMMITTEE_CHANNELS,
+  CONTENT_TYPES,
   type MockContribution,
+  type MockContent,
+  getMockContentById,
+  getMockContributionById,
+  getMockPositionById,
+  getMockAdminUser,
+  getContentTypeLabel,
+  getContentTypeEmoji,
+  getSubjectNameById,
 } from "../shared/data/admins";
+import {
+  getUserPermissions,
+  getUserPositions,
+  hasPermission,
+  getManageablePositions,
+  getManageableContent,
+  getPositionTitle,
+  getPositionScopeText,
+  getPositionLevelLabel,
+  isUserAdmin,
+  type UserPermissions,
+} from "../shared/rbac";
 
 // ============================================
-// نوع المسؤول الافتراضي (في الـ Mockup، الجميع مسؤولون مركزيون)
-// ============================================
-type AdminRole = "central";
-
-interface DefaultAdmin {
-  telegram_id: number;
-  name: string;
-  role: AdminRole;
-}
-
-// ============================================
-// حالة الجلسة لكل مسؤول
+// حالة الجلسة
 // ============================================
 interface AdminSession {
-  admin: DefaultAdmin;
-  awaiting_upload_step?: "major" | "level" | "semester" | "subject" | "type" | "file";
-  awaiting_broadcast_scope?: "all" | "college" | "major" | "level";
-  awaiting_broadcast_text?: string;
+  telegram_id: number;
+  first_name: string;
+  // للحفاظ على التجربة: في الـ Mockup كل المستخدمين يعاملون كمركزيين
+  // لكن يمكن للمستخدم تجربة أدوار مختلفة عبر Role Switcher
+  simulated_role?: "central" | "college_admin_5" | "level_rep_16_1";
+  // حالات الانتظار
+  awaiting_broadcast_text?: boolean;
+  awaiting_broadcast_scope?: string;
   awaiting_subject_add?: boolean;
   awaiting_text_edit?: string;
-  awaiting_text_value?: string;
+  awaiting_text_value?: boolean;
+  awaiting_upload_step?: string;
   upload_context?: any;
+  awaiting_content_edit?: number; // content_id
+  awaiting_content_delete?: number; // content_id
+  awaiting_position_assign?: { step: "name" | "telegram_id"; position_id: string; name?: string };
+  awaiting_position_revoke?: { position_id: string };
+  awaiting_channel_edit?: number; // channel_id
+  // فلتر استعراض المحتوى
+  content_filter?: { college_id?: number; specialty_id?: number; subject_id?: number; content_type?: string };
 }
 
 const adminSessions = new Map<number, AdminSession>();
 
-// قائمة المساهمات المعلقة (تبدأ من MOCK_PENDING_CONTRIBUTIONS)
 let pendingContributions: MockContribution[] = [...MOCK_PENDING_CONTRIBUTIONS];
-
-// النصوص المخصصة (محاكاة - في الذاكرة)
+let mockContent: MockContent[] = [...MOCK_CONTENT];
+let mockHolders = [...MOCK_POSITION_HOLDERS];
+let mockChannels = [...MOCK_COMMITTEE_CHANNELS];
 const customTexts = new Map<string, string>();
 
-function getPendingCount(): number {
-  return pendingContributions.length;
-}
-
-function getContributionById(id: number): MockContribution | undefined {
-  return pendingContributions.find((c) => c.id === id);
-}
-
-function removeContribution(id: number): void {
-  pendingContributions = pendingContributions.filter((c) => c.id !== id);
-}
-
-// الحصول على أو إنشاء جلسة المسؤول (وصول مباشر - لا تسجيل دخول)
 function getOrCreateSession(telegramId: number, firstName?: string): AdminSession {
   if (!adminSessions.has(telegramId)) {
     adminSessions.set(telegramId, {
-      admin: {
-        telegram_id: telegramId,
-        name: firstName || "مسؤول",
-        role: "central" as AdminRole,
-      },
+      telegram_id: telegramId,
+      first_name: firstName || "مسؤول",
     });
   }
   return adminSessions.get(telegramId)!;
+}
+
+// ============================================
+// الحصول على صلاحيات المستخدم الفعّالة (مع المحاكاة)
+// ============================================
+function getEffectivePermissions(telegramId: number, simulatedRole?: string): UserPermissions {
+  // لو فيه محاكاة دور، نستخدم telegram_id خاص بذلك الدور
+  if (simulatedRole === "college_admin_5") {
+    return getUserPermissions(1000002); // أ. سارة - مسؤولة كلية الحاسبات
+  }
+  if (simulatedRole === "level_rep_16_1") {
+    return getUserPermissions(1000004); // أ. فاطمة - مندوب IT مستوى 1
+  }
+  // الافتراضي: محاكاة كمسؤول مركزي
+  return getUserPermissions(1000001);
+}
+
+// ============================================
+// بناء الـ Dashboard ديناميكياً حسب الصلاحيات
+// ============================================
+function buildDynamicDashboard(perms: UserPermissions, pendingCount: number): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  const p = perms.permissions;
+
+  // صف 1: المساهمات + المحتوى
+  if (p.has("approve_level_contributions")) {
+    kb.text(ADMIN_TEXTS.dashboard.btn_pending(pendingCount), "pending");
+  }
+  if (p.has("manage_level_content")) {
+    kb.text("📁 إدارة المحتوى", "content_mgmt");
+  }
+  kb.row();
+
+  // صف 2: المواد + التعميم
+  if (p.has("manage_subjects")) {
+    kb.text("📖 إدارة المواد", "subjects_mgmt");
+  }
+  if (p.has("central_broadcast") || p.has("college_broadcast") || p.has("level_broadcast")) {
+    kb.text("📢 تعميم", "broadcast");
+  }
+  kb.row();
+
+  // صف 3: الإحصائيات + التخصيص
+  if (p.has("view_level_stats") || p.has("view_central_stats")) {
+    kb.text("📊 إحصائيات", "statistics");
+  }
+  if (p.has("system_settings")) {
+    kb.text("⚙️ تخصيص النصوص", "customize_texts");
+  }
+  kb.row();
+
+  // صف 4: المناصب + اللجان (للمركزي فقط)
+  if (p.has("manage_admins")) {
+    kb.text("👥 إدارة المناصب", "manage_admins");
+  }
+  if (p.has("manage_committee_channels")) {
+    kb.text("📢 قنوات اللجان", "manage_channels");
+  }
+  kb.row();
+
+  // صف 5: لوحة الشرف (للمركزي فقط)
+  if (perms.is_central) {
+    kb.text("🏆 لوحة الشرف", "leaderboard_update").row();
+  }
+
+  // Role Switcher (للمحاكاة فقط)
+  kb.text("🎭 تبديل الدور (للتجربة)", "role_switcher").row();
+
+  return kb;
 }
 
 // ============================================
@@ -111,108 +169,106 @@ function getOrCreateSession(telegramId: number, firstName?: string): AdminSessio
 export function createAdminBot(token: string): Bot {
   const bot = new Bot(token);
 
-  // ====== A1: /start - وصول مباشر للوحة الإدارة ======
+  // ====== /start ======
   bot.command("start", async (ctx) => {
     const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+
+    let roleLabel = "🛡 مسؤول مركزي (تجريبي)";
+    if (session.simulated_role === "college_admin_5") roleLabel = "🏛 مسؤول كلية الحاسبات (محاكاة)";
+    if (session.simulated_role === "level_rep_16_1") roleLabel = "📊 مندوب IT مستوى 1 (محاكاة)";
+
     await ctx.reply(
-      ADMIN_TEXTS.dashboard.title(
-        session.admin.name,
-        "🛡 مسؤول مركزي (تجريبي)",
-        getPendingCount()
-      ) + "\n\n" +
-      "ℹ️ *وضع التجربة:* يتم منحك صلاحية مسؤول مركزي تلقائياً.\n" +
-      "في الإنتاج، سيتم التحقق من منصبك في قاعدة البيانات وتطبيق صلاحيات RBAC.",
+      ADMIN_TEXTS.dashboard.title(session.first_name, roleLabel, pendingContributions.length) +
+      "\n\nℹ️ *وضع التجربة:* يتم منحك صلاحية *مسؤول مركزي* افتراضياً.\n" +
+      "استخدم زر *🎭 تبديل الدور* لتجربة صلاحيات مختلفة.\n\n" +
+      "_في الإنتاج، سيتم التحقق من منصبك في قاعدة البيانات تلقائياً._",
       {
-        reply_markup: adminDashboardKeyboard("central", getPendingCount()),
+        reply_markup: buildDynamicDashboard(perms, pendingContributions.length),
         parse_mode: "Markdown",
       }
     );
   });
 
-  // استقبال الرسائل النصية
-  bot.on(":text", async (ctx) => {
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-
-    // استقبال نص التعميم
-    if (session?.awaiting_broadcast_text === "awaiting") {
-      session.awaiting_broadcast_text = ctx.message.text;
-      const scopeLabel = {
-        all: "🌍 للجميع",
-        college: "🏛 لكلية محددة",
-        major: "📚 لتخصص محدد",
-        level: "📊 لمستوى محدد",
-      }[session.awaiting_broadcast_scope || "all"];
-
-      const recipientCount = {
-        all: 1247,
-        college: 312,
-        major: 89,
-        level: 23,
-      }[session.awaiting_broadcast_scope || "all"];
-
-      await ctx.reply(
-        ADMIN_TEXTS.broadcast.preview(ctx.message.text, scopeLabel, recipientCount),
-        {
-          reply_markup: broadcastConfirmKeyboard(),
-          parse_mode: "Markdown",
-        }
-      );
-      return;
-    }
-
-    // استقبال اسم مادة جديدة
-    if (session?.awaiting_subject_add) {
-      session.awaiting_subject_add = false;
-      await ctx.reply(ADMIN_TEXTS.subjects_mgmt.add_done(ctx.message.text), {
-        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
-        parse_mode: "Markdown",
-      });
-      return;
-    }
-
-    // استقبال نص مخصص جديد
-    if (session?.awaiting_text_value === "awaiting") {
-      const screenKey = session.awaiting_text_edit!;
-      session.awaiting_text_value = undefined;
-      session.awaiting_text_edit = undefined;
-      customTexts.set(screenKey, ctx.message.text);
-      await ctx.reply(ADMIN_TEXTS.customize.saved(ctx.message.text), {
-        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
-        parse_mode: "Markdown",
-      });
-      return;
-    }
-
-    // رسالة افتراضية
-    await ctx.reply(
-      "👋 استخدم الأزرار للتنقل، أو /start للعودة للوحة الإدارة."
-    );
-  });
-
-  // ====== A2: لوحة الإدارة ======
+  // ====== A2: العودة للوحة الإدارة ======
   bot.callbackQuery("back_to_dashboard", async (ctx) => {
     await ctx.answerCallbackQuery();
     const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    session.awaiting_upload_step = undefined;
+    // إعادة ضبط حالات الانتظار
     session.awaiting_broadcast_text = undefined;
-    session.awaiting_subject_add = false;
+    session.awaiting_subject_add = undefined;
     session.awaiting_text_edit = undefined;
     session.awaiting_text_value = undefined;
+    session.awaiting_upload_step = undefined;
     session.upload_context = undefined;
+    session.awaiting_content_edit = undefined;
+    session.awaiting_content_delete = undefined;
+    session.awaiting_position_assign = undefined;
+    session.awaiting_position_revoke = undefined;
+    session.awaiting_channel_edit = undefined;
+    session.content_filter = undefined;
+
+    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    let roleLabel = "🛡 مسؤول مركزي (تجريبي)";
+    if (session.simulated_role === "college_admin_5") roleLabel = "🏛 مسؤول كلية الحاسبات (محاكاة)";
+    if (session.simulated_role === "level_rep_16_1") roleLabel = "📊 مندوب IT مستوى 1 (محاكاة)";
+
     await ctx.editMessageText(
-      ADMIN_TEXTS.dashboard.title(
-        session.admin.name,
-        "🛡 مسؤول مركزي (تجريبي)",
-        getPendingCount()
-      ),
+      ADMIN_TEXTS.dashboard.title(session.first_name, roleLabel, pendingContributions.length),
       {
-        reply_markup: adminDashboardKeyboard("central", getPendingCount()),
+        reply_markup: buildDynamicDashboard(perms, pendingContributions.length),
         parse_mode: "Markdown",
       }
     );
   });
 
-  // ====== A3: قائمة المساهمات المعلقة ======
+  // ====== Role Switcher (للمحاكاة) ======
+  bot.callbackQuery("role_switcher", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(
+      "🎭 *تبديل الدور (للمحاكاة فقط)*\n\n" +
+      "اختر دوراً لتجربة واجهة المسؤول المختلفة:\n\n" +
+      "🛡 *مسؤول مركزي* — كل الصلاحيات\n" +
+      "🏛 *مسؤول كلية الحاسبات* — صلاحيات كلية محددة\n" +
+      "📊 *مندوب IT مستوى 1* — صلاحيات محدودة جداً\n\n" +
+      "_هذه الميزة لتجربة UX فقط — في الإنتاج يُحدّد الدور تلقائياً من قاعدة البيانات._",
+      {
+        reply_markup: new InlineKeyboard()
+          .text("🛡 مسؤول مركزي", "set_role_central")
+          .row()
+          .text("🏛 مسؤول كلية الحاسبات", "set_role_college")
+          .row()
+          .text("📊 مندوب IT مستوى 1", "set_role_level")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery(/set_role_(central|college|level)/, async (ctx) => {
+    const role = ctx.match[1];
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    if (role === "central") session.simulated_role = undefined;
+    else if (role === "college") session.simulated_role = "college_admin_5";
+    else if (role === "level") session.simulated_role = "level_rep_16_1";
+    await ctx.answerCallbackQuery({ text: "✅ تم تبديل الدور" });
+    // إعادة بناء الـ dashboard
+    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    let roleLabel = "🛡 مسؤول مركزي (تجريبي)";
+    if (session.simulated_role === "college_admin_5") roleLabel = "🏛 مسؤول كلية الحاسبات (محاكاة)";
+    if (session.simulated_role === "level_rep_16_1") roleLabel = "📊 مندوب IT مستوى 1 (محاكاة)";
+    await ctx.editMessageText(
+      ADMIN_TEXTS.dashboard.title(session.first_name, roleLabel, pendingContributions.length) +
+      "\n\nℹ️ لاحظ كيف تغيّرت الأزرار المتاحة حسب الدور.",
+      {
+        reply_markup: buildDynamicDashboard(perms, pendingContributions.length),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // ====== A3: المساهمات المعلقة ======
   bot.callbackQuery("pending", async (ctx) => {
     await ctx.answerCallbackQuery();
     if (pendingContributions.length === 0) {
@@ -222,31 +278,42 @@ export function createAdminBot(token: string): Bot {
       });
       return;
     }
-    await ctx.editMessageText(ADMIN_TEXTS.pending.title(pendingContributions.length), {
-      reply_markup: pendingListKeyboard(pendingContributions),
-      parse_mode: "Markdown",
+    await ctx.editMessageText(
+      ADMIN_TEXTS.pending.title(pendingContributions.length),
+      {
+        reply_markup: new InlineKeyboard()
+          .text(pendingContributions.map((c) => `#${c.id} • ${c.file_name.substring(0, 25)}`).join(" | ") || "لا يوجد",
+                `review_${pendingContributions[0].id}`)
+          .row(),
+        parse_mode: "Markdown",
+      }
+    );
+    // في الواقع، نبني الـ keyboard بشكل صحيح
+    const kb = new InlineKeyboard();
+    pendingContributions.forEach((c) => {
+      kb.text(`#${c.id} • ${c.file_name.substring(0, 25)}`, `review_${c.id}`).row();
     });
+    kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
+    await ctx.editMessageReplyMarkup({ reply_markup: kb });
   });
 
   bot.callbackQuery("back_to_pending", async (ctx) => {
     await ctx.answerCallbackQuery();
-    if (pendingContributions.length === 0) {
-      await ctx.editMessageText(ADMIN_TEXTS.pending.empty, {
-        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
-        parse_mode: "Markdown",
-      });
-      return;
-    }
-    await ctx.editMessageText(ADMIN_TEXTS.pending.title(pendingContributions.length), {
-      reply_markup: pendingListKeyboard(pendingContributions),
-      parse_mode: "Markdown",
+    const kb = new InlineKeyboard();
+    pendingContributions.forEach((c) => {
+      kb.text(`#${c.id} • ${c.file_name.substring(0, 25)}`, `review_${c.id}`).row();
     });
+    kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
+    await ctx.editMessageText(
+      ADMIN_TEXTS.pending.title(pendingContributions.length),
+      { reply_markup: kb, parse_mode: "Markdown" }
+    );
   });
 
   // ====== A4: مراجعة مساهمة ======
   bot.callbackQuery(/review_(\d+)/, async (ctx) => {
     const contribId = parseInt(ctx.match[1]);
-    const contrib = getContributionById(contribId);
+    const contrib = pendingContributions.find((c) => c.id === contribId);
     await ctx.answerCallbackQuery();
     if (!contrib) {
       await ctx.reply("⚠️ المساهمة غير موجودة أو تمت معالجتها.");
@@ -254,62 +321,30 @@ export function createAdminBot(token: string): Bot {
     }
     await ctx.editMessageText(
       ADMIN_TEXTS.review.title({
-        id: contrib.id,
-        fileName: contrib.file_name,
-        subjectName: contrib.subject_name,
-        userName: contrib.user_name,
-        uploadedAt: contrib.uploaded_at,
-        fileSizeMb: contrib.file_size_mb,
-        description: contrib.description,
+        id: contrib.id, fileName: contrib.file_name, subjectName: contrib.subject_name,
+        userName: contrib.user_name, uploadedAt: contrib.uploaded_at,
+        fileSizeMb: contrib.file_size_mb, description: contrib.description,
       }),
       {
-        reply_markup: reviewContributionKeyboard(contrib.id),
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.review.approve, `approve_${contribId}`)
+          .text(ADMIN_TEXTS.review.approve_starred, `approve_star_${contribId}`)
+          .row()
+          .text(ADMIN_TEXTS.review.reject, `reject_${contribId}`)
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
         parse_mode: "Markdown",
       }
     );
   });
 
-  bot.callbackQuery(/back_to_review_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/approve(?:_star)?_(\d+)/, async (ctx) => {
+    const isStarred = ctx.match[0].includes("star");
     const contribId = parseInt(ctx.match[1]);
-    const contrib = getContributionById(contribId);
-    await ctx.answerCallbackQuery();
-    if (!contrib) {
-      await ctx.answerCallbackQuery({ text: "تمت معالجة هذه المساهمة" });
-      return;
-    }
+    await ctx.answerCallbackQuery({ text: isStarred ? "⭐ تم الاعتماد المميز" : "✅ تم الاعتماد" });
+    pendingContributions = pendingContributions.filter((c) => c.id !== contribId);
     await ctx.editMessageText(
-      ADMIN_TEXTS.review.title({
-        id: contrib.id,
-        fileName: contrib.file_name,
-        subjectName: contrib.subject_name,
-        userName: contrib.user_name,
-        uploadedAt: contrib.uploaded_at,
-        fileSizeMb: contrib.file_size_mb,
-        description: contrib.description,
-      }),
-      {
-        reply_markup: reviewContributionKeyboard(contrib.id),
-        parse_mode: "Markdown",
-      }
-    );
-  });
-
-  // اعتماد
-  bot.callbackQuery(/approve_(\d+)/, async (ctx) => {
-    const contribId = parseInt(ctx.match[1]);
-    const contrib = getContributionById(contribId);
-    await ctx.answerCallbackQuery({ text: "✅ تم الاعتماد" });
-    if (!contrib) {
-      await ctx.reply("⚠️ المساهمة غير موجودة.");
-      return;
-    }
-    removeContribution(contribId);
-    await ctx.editMessageText(
-      `✅ *تم اعتماد المساهمة #${contribId}*\n\n` +
-        `📎 الملف: \`${contrib.file_name}\`\n` +
-        `📚 المادة: ${contrib.subject_name}\n` +
-        `👤 المساهم: ${contrib.user_name}\n\n` +
-        `تم نقل الملف لقناة التخزين ونشره للطلاب (محاكاة).`,
+      `${isStarred ? "⭐" : "✅"} *تم اعتماد المساهمة #${contribId}*\n\nتم نقل الملف لقناة التخزين ونشره للطلاب (محاكاة).`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
         parse_mode: "Markdown",
@@ -317,86 +352,35 @@ export function createAdminBot(token: string): Bot {
     );
   });
 
-  // اعتماد مميز
-  bot.callbackQuery(/approve_star_(\d+)/, async (ctx) => {
-    const contribId = parseInt(ctx.match[1]);
-    const contrib = getContributionById(contribId);
-    await ctx.answerCallbackQuery({ text: "⭐ تم الاعتماد المميز" });
-    if (!contrib) {
-      await ctx.reply("⚠️ المساهمة غير موجودة.");
-      return;
-    }
-    removeContribution(contribId);
-    await ctx.editMessageText(
-      `⭐ *تم اعتماد المساهمة #${contribId} كمحتوى مميز*\n\n` +
-        `📎 الملف: \`${contrib.file_name}\`\n` +
-        `📚 المادة: ${contrib.subject_name}\n` +
-        `👤 المساهم: ${contrib.user_name}\n\n` +
-        `تم نشر الملف مع علامة التميز ⭐ (محاكاة).`,
-      {
-        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
-        parse_mode: "Markdown",
-      }
-    );
-  });
-
-  // رفض → A4b
   bot.callbackQuery(/reject_(\d+)/, async (ctx) => {
     const contribId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
-    if (!getContributionById(contribId)) {
-      await ctx.reply("⚠️ المساهمة غير موجودة.");
-      return;
-    }
     await ctx.editMessageText(ADMIN_TEXTS.reject_reason.title, {
-      reply_markup: rejectReasonKeyboard(contribId),
+      reply_markup: new InlineKeyboard()
+        .text("♻️ مكرر", `reject_reason_dup_${contribId}`)
+        .text("👁 غير واضح", `reject_reason_bad_${contribId}`)
+        .row()
+        .text("🚫 لا يتعلق بالمادة", `reject_reason_irrelevant_${contribId}`)
+        .text("📝 غير مكتمل", `reject_reason_incomplete_${contribId}`)
+        .row()
+        .text("⏭ تخطي السبب", `reject_reason_skip_${contribId}`)
+        .row()
+        .text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
       parse_mode: "Markdown",
     });
   });
 
-  // اختيار سبب الرفض → تأكيد
   bot.callbackQuery(/reject_reason_(dup|bad|irrelevant|incomplete|skip)_(\d+)/, async (ctx) => {
     const reasonKey = ctx.match[1];
     const contribId = parseInt(ctx.match[2]);
-    await ctx.answerCallbackQuery();
-
-    const reasons = {
-      dup: "♻️ مكرر",
-      bad: "👁 غير واضح",
-      irrelevant: "🚫 لا يتعلق بالمادة",
-      incomplete: "📝 غير مكتمل",
-      skip: "بدون سبب محدد",
+    const reasons: Record<string, string> = {
+      dup: "♻️ مكرر", bad: "👁 غير واضح",
+      irrelevant: "🚫 لا يتعلق بالمادة", incomplete: "📝 غير مكتمل", skip: "بدون سبب محدد",
     };
-    const reason = reasons[reasonKey as keyof typeof reasons];
-
-    await ctx.editMessageText(ADMIN_TEXTS.reject_reason.confirm(reason, contribId), {
-      reply_markup: rejectConfirmKeyboard(contribId, reasonKey),
-      parse_mode: "Markdown",
-    });
-  });
-
-  // تأكيد الرفض
-  bot.callbackQuery(/confirm_reject_(\d+)_(\w+)/, async (ctx) => {
-    const contribId = parseInt(ctx.match[1]);
-    const reasonKey = ctx.match[2];
-    const contrib = getContributionById(contribId);
     await ctx.answerCallbackQuery({ text: "❌ تم الرفض" });
-    if (!contrib) {
-      await ctx.reply("⚠️ المساهمة غير موجودة.");
-      return;
-    }
-    removeContribution(contribId);
-    const reasons = {
-      dup: "♻️ مكرر",
-      bad: "👁 غير واضح",
-      irrelevant: "🚫 لا يتعلق بالمادة",
-      incomplete: "📝 غير مكتمل",
-      skip: "بدون سبب محدد",
-    };
-    const reason = reasons[reasonKey as keyof typeof reasons] || reasonKey;
+    pendingContributions = pendingContributions.filter((c) => c.id !== contribId);
     await ctx.editMessageText(
-      ADMIN_TEXTS.reject_reason.done(reason, contribId) +
-        `\n\n📎 الملف: \`${contrib.file_name}\`\n👤 المساهم: ${contrib.user_name}`,
+      `✅ *تم رفض المساهمة #${contribId}*\n\nالسبب: ${reasons[reasonKey]}`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
         parse_mode: "Markdown",
@@ -404,284 +388,238 @@ export function createAdminBot(token: string): Bot {
     );
   });
 
-  // ====== A5: إدارة الملفات ======
-  bot.callbackQuery("files_mgmt", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.editMessageText(ADMIN_TEXTS.files_mgmt.title, {
-      reply_markup: filesMgmtKeyboard(),
-      parse_mode: "Markdown",
-    });
-  });
-
-  bot.callbackQuery("back_to_files_mgmt", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.editMessageText(ADMIN_TEXTS.files_mgmt.title, {
-      reply_markup: filesMgmtKeyboard(),
-      parse_mode: "Markdown",
-    });
-  });
-
-  // A5a: معالج رفع الملفات (مع شريط تقدّم)
-  bot.callbackQuery("upload_file", async (ctx) => {
+  // ====== A5: إدارة المحتوى ======
+  bot.callbackQuery("content_mgmt", async (ctx) => {
     await ctx.answerCallbackQuery();
     const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (session) {
-      session.awaiting_upload_step = "major";
-      session.upload_context = {};
+    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+
+    let kb = new InlineKeyboard()
+      .text(ADMIN_TEXTS.content_mgmt.btn_browse, "browse_content")
+      .text(ADMIN_TEXTS.content_mgmt.btn_upload, "upload_content")
+      .row();
+
+    if (perms.is_central) {
+      kb.text(ADMIN_TEXTS.content_mgmt.btn_filter, "filter_content").row();
     }
-    const bc = breadcrumb("📁 إدارة الملفات", "📤 رفع ملف", "1/6");
-    const kb = new InlineKeyboard();
-    COLLEGES.forEach((c) => kb.text(`${c.emoji} ${c.short_name}`, `upload_col_${c.id}`).row());
-    kb.text("❌ إلغاء", "back_to_files_mgmt");
-    await ctx.editMessageText(`${bc}\n\n${ADMIN_TEXTS.upload_wizard.start}`, {
+    kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
+
+    await ctx.editMessageText(ADMIN_TEXTS.content_mgmt.title, {
       reply_markup: kb,
       parse_mode: "Markdown",
     });
   });
 
-  bot.callbackQuery(/upload_col_(\d+)/, async (ctx) => {
-    const collegeId = parseInt(ctx.match[1]);
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (!session) return;
-    session.upload_context = { ...session.upload_context, college_id: collegeId };
-    session.awaiting_upload_step = "level";
+  bot.callbackQuery("browse_content", async (ctx) => {
     await ctx.answerCallbackQuery();
-
-    const college = getCollegeById(collegeId);
-    const specialties = getSpecialtiesByCollege(collegeId);
-    const bc = breadcrumb("📁 إدارة الملفات", "📤 رفع ملف", `2/6 • ${college?.emoji} ${college?.short_name}`);
-
-    const kb = new InlineKeyboard();
-    specialties.forEach((s) => kb.text(s.short_name, `upload_major_${s.id}`).row());
-    kb.text("🔙 الكليات", "upload_file");
-    await ctx.editMessageText(`${bc}\n\n${ADMIN_TEXTS.upload_wizard.select_major}`, {
-      reply_markup: kb,
-      parse_mode: "Markdown",
-    });
-  });
-
-  bot.callbackQuery(/upload_major_(\d+)/, async (ctx) => {
-    const specId = parseInt(ctx.match[1]);
     const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (!session) return;
-    session.upload_context = { ...session.upload_context, specialty_id: specId };
-    session.awaiting_upload_step = "semester";
-    await ctx.answerCallbackQuery();
-
-    const spec = getSpecialtyById(specId);
-    const levels = getLevelsForSpecialty(specId);
-    const bc = breadcrumb("📁 إدارة الملفات", "📤 رفع ملف", `3/6 • ${spec?.short_name}`);
-
-    const kb = new InlineKeyboard();
-    for (let i = 0; i < levels.length; i += 3) {
-      for (let j = 0; j < 3 && i + j < levels.length; j++) {
-        kb.text(`مستوى ${levels[i + j]}`, `upload_level_${levels[i + j]}`);
-      }
-      kb.row();
-    }
-    kb.text("🔙 التخصصات", `upload_col_${session.upload_context?.college_id}`);
-    await ctx.editMessageText(`${bc}\n\n${ADMIN_TEXTS.upload_wizard.select_level}`, {
-      reply_markup: kb,
-      parse_mode: "Markdown",
-    });
-  });
-
-  bot.callbackQuery(/upload_level_(\d+)/, async (ctx) => {
-    const level = parseInt(ctx.match[1]);
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (!session || !session.upload_context?.specialty_id) return;
-    session.upload_context = { ...session.upload_context, level };
-    session.awaiting_upload_step = "subject";
-    await ctx.answerCallbackQuery();
-
-    const spec = getSpecialtyById(session.upload_context.specialty_id);
-    const bc = breadcrumb("📁 إدارة الملفات", "📤 رفع ملف", `4/6 • ${spec?.short_name} • مستوى ${level}`);
-
-    const kb = new InlineKeyboard();
-    kb.text("🍂 الفصل الأول", "upload_sem_1").row();
-    kb.text("🌸 الفصل الثاني", "upload_sem_2").row();
-    kb.text("🔙 المستويات", `upload_major_${session.upload_context?.specialty_id}`);
-    await ctx.editMessageText(`${bc}\n\n${ADMIN_TEXTS.upload_wizard.select_semester}`, {
-      reply_markup: kb,
-      parse_mode: "Markdown",
-    });
-  });
-
-  bot.callbackQuery(/upload_sem_(\d+)/, async (ctx) => {
-    const semester = parseInt(ctx.match[1]);
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (!session || !session.upload_context?.specialty_id || !session.upload_context?.level) return;
-    session.upload_context.semester = semester;
-    session.awaiting_upload_step = "type";
-    await ctx.answerCallbackQuery();
-
-    const spec = getSpecialtyById(session.upload_context.specialty_id);
-    const bc = breadcrumb(
-      "📁 إدارة الملفات",
-      "📤 رفع ملف",
-      `5/6 • ${spec?.short_name} • مستوى ${session.upload_context.level} • فصل ${semester}`
+    const manageableContent = getManageableContent(
+      ctx.from.id === 1000001 ? 1000001 : (session.simulated_role === "college_admin_5" ? 1000002 : 1000004),
+      session.content_filter
     );
 
-    const subjects = getSubjectsBySpecialtyLevelSemester(
-      session.upload_context.specialty_id,
-      session.upload_context.level,
-      semester as 1 | 2
-    );
-    const kb = new InlineKeyboard();
-    if (subjects.length === 0) {
-      kb.text("➕ إضافة مادة", "add_subject").row();
-    } else {
-      subjects.forEach((s) => kb.text(s.name, `upload_subj_${s.id}`).row());
-    }
-    kb.text("🔙 الفصول", `upload_level_${session.upload_context?.level}`);
-    await ctx.editMessageText(`${bc}\n\n${ADMIN_TEXTS.upload_wizard.select_subject}`, {
-      reply_markup: kb,
-      parse_mode: "Markdown",
-    });
-  });
-
-  bot.callbackQuery(/upload_subj_(\d+)/, async (ctx) => {
-    const subjectId = parseInt(ctx.match[1]);
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (!session) return;
-    session.upload_context = { ...session.upload_context, subject_id: subjectId };
-    session.awaiting_upload_step = "file";
-    await ctx.answerCallbackQuery();
-
-    const subject = getSubjectById(subjectId);
-    const bc = breadcrumb("📁 إدارة الملفات", "📤 رفع ملف", `6/6 • ${subject?.name}`);
-
-    const kb = new InlineKeyboard();
-    kb.text("📘 المقرر (نظري)", "upload_type_book_theory");
-    if (subject?.has_practical) kb.text("📗 المقرر (عملي)", "upload_type_book_practical");
-    kb.row();
-    kb.text("📑 نماذج اختبارات", "upload_type_exam");
-    kb.text("📝 ملخصات", "upload_type_summary");
-    kb.row();
-    kb.text("🔙 المواد", `upload_sem_${session.upload_context?.semester}`);
-    await ctx.editMessageText(`${bc}\n\n${ADMIN_TEXTS.upload_wizard.select_type}`, {
-      reply_markup: kb,
-      parse_mode: "Markdown",
-    });
-  });
-
-  bot.callbackQuery(/upload_type_(.+)/, async (ctx) => {
-    const type = ctx.match[1];
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (!session) return;
-    session.upload_context = { ...session.upload_context, category: type };
-    session.awaiting_upload_step = "file";
-    await ctx.answerCallbackQuery();
-
-    const subject = getSubjectById(session.upload_context?.subject_id || 0);
-    const typeLabels: Record<string, string> = {
-      book_theory: "📘 المقرر (نظري)",
-      book_practical: "📗 المقرر (عملي)",
-      exam: "📑 نماذج اختبارات",
-      summary: "📝 ملخصات",
-    };
-    await ctx.editMessageText(
-      ADMIN_TEXTS.upload_wizard.confirm(
-        "(سيُحدد عند الرفع)",
-        subject?.name || "غير معروف",
-        typeLabels[type] || type
-      ),
-      {
-        reply_markup: new InlineKeyboard().text("🔙 التصنيفات", `upload_subj_${session.upload_context?.subject_id}`),
-        parse_mode: "Markdown",
-      }
-    );
-    await ctx.reply(ADMIN_TEXTS.upload_wizard.awaiting_file, {
-      reply_markup: new InlineKeyboard().text("❌ إلغاء", "back_to_files_mgmt"),
-      parse_mode: "Markdown",
-    });
-  });
-
-  bot.on(":document", async (ctx) => {
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (session?.awaiting_upload_step === "file") {
-      const doc = ctx.message.document;
-      session.awaiting_upload_step = undefined;
-      await ctx.reply(ADMIN_TEXTS.upload_wizard.success, {
+    if (manageableContent.length === 0) {
+      await ctx.editMessageText(ADMIN_TEXTS.content_mgmt.empty, {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
       });
+      return;
     }
-  });
 
-  // A5b: استعراض الملفات
-  bot.callbackQuery("browse_files", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.editMessageText(ADMIN_TEXTS.browse_files.title, {
-      reply_markup: browseFilesKeyboard(),
-      parse_mode: "Markdown",
+    let msg = ADMIN_TEXTS.browse_content.title(manageableContent.length);
+    const kb = new InlineKeyboard();
+    manageableContent.slice(0, 8).forEach((c) => {
+      const icon = c.is_starred ? "⭐" : getContentTypeEmoji(c.content_type);
+      kb.text(`${icon} ${c.title.substring(0, 30)} (${c.download_count}⬇️)`, `content_detail_${c.id}`).row();
     });
+    if (manageableContent.length > 8) {
+      msg += `\n\n📋 عرض أول 8 من ${manageableContent.length} عنصر.`;
+    }
+    kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
+    await ctx.editMessageText(msg, { reply_markup: kb, parse_mode: "Markdown" });
   });
 
-  bot.callbackQuery("browse_all", async (ctx) => {
+  // ====== A5c: تفاصيل المحتوى ======
+  bot.callbackQuery(/content_detail_(\d+)/, async (ctx) => {
+    const contentId = parseInt(ctx.match[1]);
+    const content = mockContent.find((c) => c.id === contentId);
     await ctx.answerCallbackQuery();
-    let msg = ADMIN_TEXTS.browse_files.files_header(SUBJECTS.length * 4);
-    let count = 0;
-    for (const subject of SUBJECTS.slice(0, 5)) {
-      const cats = ["book_theory", "exam", "summary"];
-      for (const cat of cats) {
-        const files = getMockFilesForSubject(subject.id, cat);
-        for (const f of files) {
-          if (count >= 8) break;
-          msg += ADMIN_TEXTS.browse_files.file_entry({
-            id: f.id,
-            name: f.file_name,
-            subject: subject.name,
-            size: f.file_size_mb,
-            downloads: f.download_count,
-          });
-          count++;
-        }
-      }
+    if (!content) {
+      await ctx.reply("⚠️ المحتوى غير موجود.");
+      return;
     }
-    msg += `\n📋 إظهار أول 8 ملفات من إجمالي ${SUBJECTS.length * 4} ملف.`;
+
+    const subject = getSubjectById(content.subject_id);
+    const specialty = getSpecialtyById(content.specialty_id);
+    const college = getCollegeById(content.college_id);
+    const adderUser = getMockAdminUser(content.added_by_telegram_id);
+
+    const msg = ADMIN_TEXTS.content_detail.title +
+      ADMIN_TEXTS.content_detail.details({
+        title: content.title,
+        type_label: getContentTypeLabel(content.content_type),
+        subject_name: subject?.name || "غير معروف",
+        specialty_name: specialty?.short_name || "غير معروف",
+        college_name: college?.short_name || "غير معروف",
+        level: content.level,
+        semester: content.semester,
+        file_size: content.file_size_mb,
+        download_count: content.download_count,
+        is_starred: content.is_starred,
+        added_by: adderUser?.first_name || "غير معروف",
+        added_at: content.added_at,
+        academic_year: content.academic_year,
+      });
+
+    const kb = new InlineKeyboard()
+      .text(ADMIN_TEXTS.content_detail.btn_edit, `edit_content_${contentId}`)
+      .text(ADMIN_TEXTS.content_detail.btn_move, `move_content_${contentId}`)
+      .row()
+      .text(ADMIN_TEXTS.content_detail.btn_delete, `delete_content_${contentId}`)
+      .text(content.is_starred ? ADMIN_TEXTS.content_detail.btn_unstar : ADMIN_TEXTS.content_detail.btn_star,
+            content.is_starred ? `unstar_content_${contentId}` : `star_content_${contentId}`)
+      .row()
+      .text("🔙 استعراض المحتوى", "browse_content")
+      .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
+
+    await ctx.editMessageText(msg, { reply_markup: kb, parse_mode: "Markdown" });
+  });
+
+  // تمييز/إلغاء تمييز المحتوى
+  bot.callbackQuery(/(star|unstar)_content_(\d+)/, async (ctx) => {
+    const action = ctx.match[1];
+    const contentId = parseInt(ctx.match[2]);
+    const content = mockContent.find((c) => c.id === contentId);
+    if (!content) return;
+    content.is_starred = action === "star";
+    content.last_modified_at = new Date().toISOString();
+    content.last_modified_by = ctx.from.id;
+    await ctx.answerCallbackQuery({ text: action === "star" ? "⭐ تم التمييز" : "☆ تم إلغاء التمييز" });
+    // إعادة عرض التفاصيل
+    await ctx.callbackQuery?.data && (await bot.api.answerCallbackQuery(ctx.update.callback_query.id));
+    // نعيد بناء الشاشة بنفس المنطق
+    const subject = getSubjectById(content.subject_id);
+    const specialty = getSpecialtyById(content.specialty_id);
+    const college = getCollegeById(content.college_id);
+    const adderUser = getMockAdminUser(content.added_by_telegram_id);
+    const msg = ADMIN_TEXTS.content_detail.title +
+      ADMIN_TEXTS.content_detail.details({
+        title: content.title,
+        type_label: getContentTypeLabel(content.content_type),
+        subject_name: subject?.name || "غير معروف",
+        specialty_name: specialty?.short_name || "غير معروف",
+        college_name: college?.short_name || "غير معروف",
+        level: content.level,
+        semester: content.semester,
+        file_size: content.file_size_mb,
+        download_count: content.download_count,
+        is_starred: content.is_starred,
+        added_by: adderUser?.first_name || "غير معروف",
+        added_at: content.added_at,
+        academic_year: content.academic_year,
+      });
     await ctx.editMessageText(msg, {
       reply_markup: new InlineKeyboard()
-        .text("⬅️ السابق", "noop")
-        .text("➡️ التالي", "noop")
+        .text(ADMIN_TEXTS.content_detail.btn_edit, `edit_content_${contentId}`)
+        .text(ADMIN_TEXTS.content_detail.btn_move, `move_content_${contentId}`)
         .row()
-        .text(ADMIN_TEXTS.navigation.back_to_files_mgmt, "back_to_files_mgmt"),
+        .text(ADMIN_TEXTS.content_detail.btn_delete, `delete_content_${contentId}`)
+        .text(content.is_starred ? ADMIN_TEXTS.content_detail.btn_unstar : ADMIN_TEXTS.content_detail.btn_star,
+              content.is_starred ? `unstar_content_${contentId}` : `star_content_${contentId}`)
+        .row()
+        .text("🔙 استعراض المحتوى", "browse_content")
+        .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
       parse_mode: "Markdown",
     });
   });
 
-  bot.callbackQuery("noop", async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "ℹ️ Pagination في الإنتاج" });
-  });
-
-  bot.callbackQuery("browse_by_college", async (ctx) => {
+  // حذف المحتوى (تأكيد)
+  bot.callbackQuery(/delete_content_(\d+)/, async (ctx) => {
+    const contentId = parseInt(ctx.match[1]);
+    const content = mockContent.find((c) => c.id === contentId);
     await ctx.answerCallbackQuery();
-    const kb = new InlineKeyboard();
-    COLLEGES.forEach((c) => kb.text(`${c.emoji} ${c.short_name}`, `noop`).row());
-    kb.text(ADMIN_TEXTS.navigation.back_to_files_mgmt, "back_to_files_mgmt");
-    await ctx.editMessageText("🏛 *اختر الكلية للفلترة:*\n\n(محاكاة - في الإنتاج ستظهر ملفات الكلية)", {
-      reply_markup: kb,
-      parse_mode: "Markdown",
-    });
-  });
-
-  bot.callbackQuery("browse_by_specialty", async (ctx) => {
-    await ctx.answerCallbackQuery();
+    if (!content) return;
     await ctx.editMessageText(
-      "📚 *فلترة بالتخصص*\n\n(محاكاة - في الإنتاج ستظهر قائمة التخصصات ثم الملفات)",
+      ADMIN_TEXTS.content_detail.delete_confirm(content.title),
       {
-        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_files_mgmt, "back_to_files_mgmt"),
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.content_detail.btn_confirm_delete, `confirm_delete_content_${contentId}`)
+          .text(ADMIN_TEXTS.content_detail.btn_cancel_delete, `content_detail_${contentId}`)
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
       }
     );
   });
 
-  bot.callbackQuery("browse_search", async (ctx) => {
+  // تأكيد الحذف
+  bot.callbackQuery(/confirm_delete_content_(\d+)/, async (ctx) => {
+    const contentId = parseInt(ctx.match[1]);
+    mockContent = mockContent.filter((c) => c.id !== contentId);
+    await ctx.answerCallbackQuery({ text: "🗑 تم الحذف" });
+    await ctx.editMessageText(
+      ADMIN_TEXTS.content_detail.delete_success,
+      {
+        reply_markup: new InlineKeyboard()
+          .text("🔙 استعراض المحتوى", "browse_content")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // تعديل المحتوى (طالب جديد للعنوان)
+  bot.callbackQuery(/edit_content_(\d+)/, async (ctx) => {
+    const contentId = parseInt(ctx.match[1]);
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.awaiting_content_edit = contentId;
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(ADMIN_TEXTS.content_detail.edit_prompt, {
+      reply_markup: new InlineKeyboard().text("❌ إلغاء", `content_detail_${contentId}`),
+      parse_mode: "Markdown",
+    });
+  });
+
+  // نقل المحتوى (محاكاة)
+  bot.callbackQuery(/move_content_(\d+)/, async (ctx) => {
+    const contentId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(
-      "🔍 *البحث في الملفات*\n\n(محاكاة - في الإنتاج: أرسل كلمة بحثية)",
+      ADMIN_TEXTS.content_detail.move_prompt + "\n\n_في الإنتاج: سيُطلب منك اختيار الكلية/التخصص/المادة/المستوى الجديد._",
       {
-        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_files_mgmt, "back_to_files_mgmt"),
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard")
+          .row()
+          .text("🔙 تفاصيل المحتوى", `content_detail_${contentId}`),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // ====== A5a: رفع محتوى جديد (محاكاة مبسّطة) ======
+  bot.callbackQuery("upload_content", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const kb = new InlineKeyboard();
+    CONTENT_TYPES.forEach((t) => {
+      kb.text(`${t.emoji} ${t.name}`, `upload_type_${t.id}`).row();
+    });
+    kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
+    await ctx.editMessageText(
+      "📤 *رفع محتوى جديد*\n\nاختر نوع المحتوى:\n\n_في الإنتاج: سيُطلب منك اختيار المادة ثم رفع الملف._",
+      { reply_markup: kb, parse_mode: "Markdown" }
+    );
+  });
+
+  bot.callbackQuery(/upload_type_(.+)/, async (ctx) => {
+    const typeId = ctx.match[1];
+    const type = CONTENT_TYPES.find((t) => t.id === typeId);
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(
+      `✅ *تم اختيار النوع:* ${type?.emoji} ${type?.name}\n\n_في الإنتاج: سيُطلب منك اختيار المادة ثم رفع الملف._`,
+      {
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
       }
     );
@@ -690,25 +628,28 @@ export function createAdminBot(token: string): Bot {
   // ====== A6: إدارة المواد ======
   bot.callbackQuery("subjects_mgmt", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(ADMIN_TEXTS.subjects_mgmt.title, {
-      reply_markup: subjectsMgmtKeyboard(),
-      parse_mode: "Markdown",
-    });
-  });
-
-  bot.callbackQuery("back_to_subjects_mgmt", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.editMessageText(ADMIN_TEXTS.subjects_mgmt.title, {
-      reply_markup: subjectsMgmtKeyboard(),
-      parse_mode: "Markdown",
-    });
+    await ctx.editMessageText(
+      ADMIN_TEXTS.subjects_mgmt.title,
+      {
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.subjects_mgmt.btn_add, "add_subject")
+          .text(ADMIN_TEXTS.subjects_mgmt.btn_list, "list_subjects")
+          .row()
+          .text(ADMIN_TEXTS.subjects_mgmt.btn_edit, "edit_subject")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
   });
 
   bot.callbackQuery("add_subject", async (ctx) => {
     await ctx.answerCallbackQuery();
     const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (session) session.awaiting_subject_add = true;
-    await ctx.editMessageText(ADMIN_TEXTS.subjects_mgmt.add_prompt, { parse_mode: "Markdown" });
+    session.awaiting_subject_add = true;
+    await ctx.editMessageText(ADMIN_TEXTS.subjects_mgmt.add_prompt, {
+      parse_mode: "Markdown",
+    });
   });
 
   bot.callbackQuery("list_subjects", async (ctx) => {
@@ -717,9 +658,9 @@ export function createAdminBot(token: string): Bot {
     SUBJECTS.slice(0, 10).forEach((s) => {
       msg += `📖 ${s.name} (مستوى ${s.level}, فصل ${s.semester})\n`;
     });
-    msg += `\n📋 إظهار أول 10 مواد من ${SUBJECTS.length}.`;
+    msg += `\n📋 عرض أول 10 مواد من ${SUBJECTS.length}.`;
     await ctx.editMessageText(msg, {
-      reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_subjects_mgmt, "back_to_subjects_mgmt"),
+      reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
       parse_mode: "Markdown",
     });
   });
@@ -729,7 +670,7 @@ export function createAdminBot(token: string): Bot {
     await ctx.editMessageText(
       "✏️ *تعديل/حذف مادة*\n\nاختر التخصص أولاً (محاكاة - متاح كاملاً في الإنتاج):",
       {
-        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_subjects_mgmt, "back_to_subjects_mgmt"),
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
       }
     );
@@ -738,152 +679,281 @@ export function createAdminBot(token: string): Bot {
   // ====== A7: التعميم ======
   bot.callbackQuery("broadcast", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(ADMIN_TEXTS.broadcast.title, {
-      reply_markup: broadcastKeyboard(),
-      parse_mode: "Markdown",
-    });
-  });
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
 
-  bot.callbackQuery("back_to_broadcast", async (ctx) => {
-    await ctx.answerCallbackQuery();
+    const kb = new InlineKeyboard();
+    if (perms.permissions.has("central_broadcast")) {
+      kb.text("🌍 للجميع", "broadcast_all");
+    }
+    if (perms.permissions.has("college_broadcast")) {
+      kb.text("🏛 لكلية", "broadcast_college").row();
+    }
+    if (perms.permissions.has("level_broadcast")) {
+      kb.text("📊 لمستوى", "broadcast_level");
+    }
+    kb.row();
+    kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
+
     await ctx.editMessageText(ADMIN_TEXTS.broadcast.title, {
-      reply_markup: broadcastKeyboard(),
+      reply_markup: kb,
       parse_mode: "Markdown",
     });
   });
 
   bot.callbackQuery(/broadcast_(all|college|major|level)/, async (ctx) => {
-    const scope = ctx.match[1] as "all" | "college" | "major" | "level";
+    const scope = ctx.match[1];
     const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (session) {
-      session.awaiting_broadcast_scope = scope;
-      session.awaiting_broadcast_text = "awaiting";
-    }
+    session.awaiting_broadcast_scope = scope;
+    session.awaiting_broadcast_text = true;
     await ctx.answerCallbackQuery();
-    const scopeLabels = {
-      all: "🌍 للجميع",
-      college: "🏛 لكلية محددة",
-      major: "📚 لتخصص محدد",
-      level: "📊 لمستوى محدد",
+    const scopeLabels: Record<string, string> = {
+      all: "🌍 للجميع", college: "🏛 لكلية", major: "📚 لتخصص", level: "📊 لمستوى",
     };
-    await ctx.editMessageText(ADMIN_TEXTS.broadcast.prompt_text(scopeLabels[scope]), {
-      reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_broadcast, "broadcast"),
-      parse_mode: "Markdown",
-    });
+    await ctx.editMessageText(
+      ADMIN_TEXTS.broadcast.prompt_text(scopeLabels[scope]),
+      {
+        reply_markup: new InlineKeyboard().text("broadcast", "broadcast"),
+        parse_mode: "Markdown",
+      }
+    );
   });
 
   bot.callbackQuery("confirm_broadcast", async (ctx) => {
     const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (!session) return;
-    const text = session.awaiting_broadcast_text || "";
     const scope = session.awaiting_broadcast_scope || "all";
-    const recipientCounts = { all: 1247, college: 312, major: 89, level: 23 };
+    const recipientCounts: Record<string, number> = { all: 1247, college: 312, major: 89, level: 23 };
     const count = recipientCounts[scope];
     session.awaiting_broadcast_text = undefined;
     session.awaiting_broadcast_scope = undefined;
     await ctx.answerCallbackQuery({ text: "📢 تم الإرسال" });
-    await ctx.editMessageText(ADMIN_TEXTS.broadcast.sent(count), {
+    await ctx.editMessageText(
+      ADMIN_TEXTS.broadcast.sent(count),
+      {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // ====== A8: إدارة المناصب ======
+  bot.callbackQuery("manage_admins", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(
+        "❌ *ليست لديك صلاحية إدارة المناصب.*\n\nهذه الميزة متاحة فقط للمسؤول المركزي.",
+        {
+          reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    await ctx.editMessageText(
+      ADMIN_TEXTS.positions.title,
+      {
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.positions.btn_list_positions, "list_positions")
+          .row()
+          .text(ADMIN_TEXTS.positions.btn_my_positions, "my_positions")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery("list_positions", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const manageablePositions = getManageablePositions(
+      session.simulated_role === "college_admin_5" ? 1000002 :
+      session.simulated_role === "level_rep_16_1" ? 1000004 : 1000001
+    );
+
+    if (manageablePositions.length === 0) {
+      await ctx.editMessageText(
+        ADMIN_TEXTS.positions.empty,
+        {
+          reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    let msg = ADMIN_TEXTS.positions.list_title(manageablePositions.length);
+    const kb = new InlineKeyboard();
+    manageablePositions.forEach((p) => {
+      const holder = mockHolders.find((h) => h.position_id === p.id && h.is_active);
+      const holderUser = holder ? getMockAdminUser(holder.user_telegram_id) : null;
+      msg += ADMIN_TEXTS.positions.position_entry({
+        title: p.title,
+        scope: getPositionScopeText(p),
+        holder_name: holderUser?.first_name,
+        is_vacant: !holder,
+      });
+      kb.text(`${p.title.substring(0, 25)}...`, `position_detail_${p.id}`).row();
+    });
+    kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
+    await ctx.editMessageText(msg, { reply_markup: kb, parse_mode: "Markdown" });
+  });
+
+  bot.callbackQuery(/position_detail_(.+)/, async (ctx) => {
+    const positionId = ctx.match[1];
+    const position = getMockPositionById(positionId);
+    await ctx.answerCallbackQuery();
+    if (!position) {
+      await ctx.reply("⚠️ المنصب غير موجود.");
+      return;
+    }
+    const holder = mockHolders.find((h) => h.position_id === positionId && h.is_active);
+    const holderUser = holder ? getMockAdminUser(holder.user_telegram_id) : null;
+
+    let msg = `💼 *تفاصيل المنصب*\n\n`;
+    msg += `👤 *العنوان:* ${position.title}\n`;
+    msg += `📝 *الوصف:* ${position.description}\n`;
+    msg += `📍 *النطاق:* ${getPositionScopeText(position)}\n\n`;
+    if (holderUser) {
+      msg += `✅ *الشاغل الحالي:* ${holderUser.first_name}\n`;
+      msg += `🆔 *معرّفه:* \`${holderUser.telegram_id}\`\n`;
+      msg += `📅 *منذ:* ${holder?.assigned_at}\n`;
+    } else {
+      msg += `⚠️ *المنصب شاغر*\n`;
+    }
+
+    const kb = new InlineKeyboard();
+    if (holderUser) {
+      kb.text(ADMIN_TEXTS.positions.btn_revoke, `revoke_position_${positionId}`);
+    } else {
+      kb.text(ADMIN_TEXTS.positions.btn_assign, `assign_position_${positionId}`);
+    }
+    kb.row();
+    kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
+
+    await ctx.editMessageText(msg, { reply_markup: kb, parse_mode: "Markdown" });
+  });
+
+  // تعيين شاغل منصب
+  bot.callbackQuery(/assign_position_(.+)/, async (ctx) => {
+    const positionId = ctx.match[1];
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.awaiting_position_assign = { step: "name", position_id: positionId };
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(
+      ADMIN_TEXTS.positions.assign_prompt_name,
+      {
+        reply_markup: new InlineKeyboard().text("❌ إلغاء", `position_detail_${positionId}`),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery(/revoke_position_(.+)/, async (ctx) => {
+    const positionId = ctx.match[1];
+    const position = getMockPositionById(positionId);
+    const holder = mockHolders.find((h) => h.position_id === positionId && h.is_active);
+    const holderUser = holder ? getMockAdminUser(holder.user_telegram_id) : null;
+    await ctx.answerCallbackQuery();
+    if (!holder || !holderUser || !position) {
+      await ctx.reply("⚠️ المنصب غير مشغول أو غير موجود.");
+      return;
+    }
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.awaiting_position_revoke = { position_id: positionId };
+    await ctx.editMessageText(
+      ADMIN_TEXTS.positions.revoke_confirm(holderUser.first_name, position.title),
+      {
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.positions.btn_confirm_revoke, `confirm_revoke_${positionId}`)
+          .text(ADMIN_TEXTS.positions.btn_cancel_revoke, `position_detail_${positionId}`)
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery(/confirm_revoke_(.+)/, async (ctx) => {
+    const positionId = ctx.match[1];
+    mockHolders = mockHolders.map((h) =>
+      h.position_id === positionId ? { ...h, is_active: false } : h
+    );
+    await ctx.answerCallbackQuery({ text: "✅ تم الإزالة" });
+    await ctx.editMessageText(
+      ADMIN_TEXTS.positions.revoke_success,
+      {
+        reply_markup: new InlineKeyboard()
+          .text("📋 قائمة المناصب", "list_positions")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery("my_positions", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const simulatedId = session.simulated_role === "college_admin_5" ? 1000002 :
+                        session.simulated_role === "level_rep_16_1" ? 1000004 : 1000001;
+    const myPositions = getUserPositions(simulatedId);
+
+    if (myPositions.length === 0) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.my_positions_empty, {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    let msg = ADMIN_TEXTS.positions.my_positions_title(myPositions.length);
+    myPositions.forEach((p) => {
+      msg += `• ${p.title}\n  📍 ${getPositionScopeText(p as any)}\n\n`;
+    });
+    await ctx.editMessageText(msg, {
       reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
       parse_mode: "Markdown",
     });
   });
 
-  // ====== A8: إدارة المسؤولين ======
-  // ملاحظة: في الـ Mockup، هذه الشاشة معطّلة لأنه لا يوجد نظام صلاحيات.
-  // في الإنتاج، ستتيح إدارة المناصب (تعيين/إزالة مسؤول من منصب).
-  bot.callbackQuery("manage_admins", async (ctx) => {
+  // ====== A9: الإحصائيات ======
+  bot.callbackQuery("statistics", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(
-      "👥 *إدارة المسؤولين*\n\n" +
-      "ℹ️ *وضع التجربة:* نظام إدارة المناصب سيُفعّل في الإنتاج.\n\n" +
-      "في الإنتاج سيتيح هذا القسم:\n" +
-      "• 📋 قائمة المناصب (مع شاغل كل منصب)\n" +
-      "• ➕ تعيين مسؤول على منصب معين\n" +
-      "• ➖ إزالة مسؤول من منصبه\n" +
-      "• 🔄 تغيير شاغل المنصب\n\n" +
-      "_النظام يعتمد على المناصب وليس الأشخاص — يمكنك تغيير شاغل أي منصب دون التأثير على بنية النظام._",
-      {
-        reply_markup: new InlineKeyboard().text(
-          ADMIN_TEXTS.navigation.back_to_dashboard,
-          "back_to_dashboard"
-        ),
-        parse_mode: "Markdown",
-      }
-    );
-  });
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
 
-  bot.callbackQuery("back_to_manage_admins", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.editMessageText(ADMIN_TEXTS.manage_admins.title, {
-      reply_markup: manageAdminsKeyboard(),
+    let statsText = ADMIN_TEXTS.statistics.title;
+    if (perms.is_central) {
+      statsText += ADMIN_TEXTS.statistics.content(MOCK_STATISTICS);
+    } else {
+      // إحصائيات محدودة للنطاق
+      statsText += `📊 *إحصائيات نطاقك:*\n\n`;
+      statsText += `📁 إجمالي الملفات: ${mockContent.length}\n`;
+      statsText += `📥 المساهمات المعلقة: ${pendingContributions.length}\n`;
+    }
+    await ctx.editMessageText(statsText, {
+      reply_markup: new InlineKeyboard()
+        .text(ADMIN_TEXTS.statistics.refresh, "stats_refresh")
+        .row()
+        .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
       parse_mode: "Markdown",
     });
   });
 
-  bot.callbackQuery("list_admins", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.editMessageText(
-      "📋 *قائمة المناصب*\n\n" +
-      "ℹ️ في الإنتاج، ستظهر هنا قائمة بالمناصب التالية مع شاغل كل منها:\n\n" +
-      "🛡 *رئيس اللجنة العلمية* (مركزي)\n" +
-      "🏛 *مسؤولو الكليات* (7 مناصب — واحدة لكل كلية)\n" +
-      "📊 *مندوبو المستويات* (لكل تخصص × مستوى)\n\n" +
-      "_النظام يعتمد على المناصب وليس الأشخاص._",
-      {
-        reply_markup: new InlineKeyboard().text(
-          ADMIN_TEXTS.navigation.back_to_dashboard,
-          "back_to_dashboard"
-        ),
-        parse_mode: "Markdown",
-      }
-    );
-  });
-
-  bot.callbackQuery("add_admin", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.editMessageText(
-      "➕ *تعيين مسؤول على منصب*\n\n" +
-      "ℹ️ هذه الميزة ستُفعّل في الإنتاج ضمن نظام RBAC.\n\n" +
-      "_في الإنتاج: ستختار منصباً شاغراً، ثم تُحدّد Telegram ID للمستخدم الذي سيشغله، وسيحصل تلقائياً على صلاحيات المنصب._",
-      {
-        reply_markup: new InlineKeyboard().text(
-          ADMIN_TEXTS.navigation.back_to_dashboard,
-          "back_to_dashboard"
-        ),
-        parse_mode: "Markdown",
-      }
-    );
-  });
-
-  // handlers قديمة معطّلة (للحفاظ على التوافق مع الأزرار القديمة)
-  bot.callbackQuery(/new_admin_role_(central|college|specialty|level)/, async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "ℹ️ سيُفعّل في الإنتاج" });
-  });
-
-  // ====== A9: الإحصائيات ======
-  bot.callbackQuery("statistics", async (ctx) => {
-    await ctx.answerCallbackQuery();
+  bot.callbackQuery("stats_refresh", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "✅ تم التحديث" });
     await ctx.editMessageText(
       ADMIN_TEXTS.statistics.title + ADMIN_TEXTS.statistics.content(MOCK_STATISTICS),
       {
-        reply_markup: statisticsKeyboard(),
-        parse_mode: "Markdown",
-      }
-    );
-  });
-
-  bot.callbackQuery("stats_refresh", async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "✅ تم التحديث" });
-    const updatedStats = {
-      ...MOCK_STATISTICS,
-      total_users: MOCK_STATISTICS.total_users + Math.floor(Math.random() * 5),
-      active_today: MOCK_STATISTICS.active_today + Math.floor(Math.random() * 20),
-      total_downloads: MOCK_STATISTICS.total_downloads + Math.floor(Math.random() * 50),
-    };
-    await ctx.editMessageText(
-      ADMIN_TEXTS.statistics.title + ADMIN_TEXTS.statistics.content(updatedStats),
-      {
-        reply_markup: statisticsKeyboard(),
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.statistics.refresh, "stats_refresh")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
       }
     );
@@ -892,72 +962,58 @@ export function createAdminBot(token: string): Bot {
   // ====== A10: تخصيص النصوص ======
   bot.callbackQuery("customize_texts", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(ADMIN_TEXTS.customize.title, {
-      reply_markup: customizeKeyboard(),
-      parse_mode: "Markdown",
-    });
-  });
-
-  bot.callbackQuery("back_to_customize", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.editMessageText(ADMIN_TEXTS.customize.title, {
-      reply_markup: customizeKeyboard(),
-      parse_mode: "Markdown",
-    });
+    await ctx.editMessageText(
+      ADMIN_TEXTS.customize.title,
+      {
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.customize.btn_main_menu, "custom_screen_main_menu")
+          .text(ADMIN_TEXTS.customize.btn_choose_college, "custom_screen_choose_college")
+          .row()
+          .text(ADMIN_TEXTS.customize.btn_subject_menu, "custom_screen_subject_menu")
+          .text(ADMIN_TEXTS.customize.btn_search, "custom_screen_search")
+          .row()
+          .text("↩️ استعادة الافتراضي", "reset_default")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
   });
 
   bot.callbackQuery(/custom_screen_(.+)/, async (ctx) => {
     const screenKey = ctx.match[1];
     const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (session) {
-      session.awaiting_text_edit = screenKey;
-      session.awaiting_text_value = "awaiting";
-    }
+    session.awaiting_text_edit = screenKey;
+    session.awaiting_text_value = true;
     await ctx.answerCallbackQuery();
-
     const currentTexts: Record<string, string> = {
       main_menu: customTexts.get("main_menu") || TEXTS.main_menu.welcome,
       choose_college: customTexts.get("choose_college") || TEXTS.choose_college.title,
-      subject_menu: customTexts.get("subject_menu") || "(ديناميكي - يعرض اسم المادة + خيارات)",
+      subject_menu: customTexts.get("subject_menu") || "(ديناميكي)",
       search: customTexts.get("search") || TEXTS.search.intro,
     };
-    const current = currentTexts[screenKey] || "(نص افتراضي)";
-
-    await ctx.editMessageText(ADMIN_TEXTS.customize.edit_prompt(current), {
-      reply_markup: new InlineKeyboard().text("↩️ استعادة الافتراضي", "reset_default").row().text(ADMIN_TEXTS.navigation.back_to_customize, "back_to_customize"),
-      parse_mode: "Markdown",
-    });
+    await ctx.editMessageText(
+      ADMIN_TEXTS.customize.edit_prompt(currentTexts[screenKey] || "(نص افتراضي)"),
+      {
+        reply_markup: new InlineKeyboard()
+          .text("↩️ استعادة الافتراضي", "reset_default")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
   });
 
   bot.callbackQuery("reset_default", async (ctx) => {
     await ctx.answerCallbackQuery();
     const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (session?.awaiting_text_edit) {
+    if (session.awaiting_text_edit) {
       customTexts.delete(session.awaiting_text_edit);
       session.awaiting_text_edit = undefined;
       session.awaiting_text_value = undefined;
     }
-    await ctx.editMessageText(ADMIN_TEXTS.customize.reset, {
-      reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_customize, "back_to_customize"),
-      parse_mode: "Markdown",
-    });
-  });
-
-  // ====== A11: تحديث لوحة الشرف ======
-  bot.callbackQuery("leaderboard_update", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.editMessageText(ADMIN_TEXTS.leaderboard_update.title, {
-      reply_markup: leaderboardUpdateKeyboard(),
-      parse_mode: "Markdown",
-    });
-  });
-
-  bot.callbackQuery(/leader_(global|college|specialty)/, async (ctx) => {
-    const scope = ctx.match[1];
-    await ctx.answerCallbackQuery({ text: "✅ تم التحديث" });
-    const scopeLabels = { global: "العالمية", college: "الكليات", specialty: "التخصصات" };
     await ctx.editMessageText(
-      ADMIN_TEXTS.leaderboard_update.refresh_done(scopeLabels[scope as keyof typeof scopeLabels]),
+      ADMIN_TEXTS.customize.reset,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
@@ -965,37 +1021,320 @@ export function createAdminBot(token: string): Bot {
     );
   });
 
-  // ====== معالجة الأخطاء (مهم: لا تُرجع 500، فقط سجّل) ======
+  // ====== A11: لوحة الشرف ======
+  bot.callbackQuery("leaderboard_update", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(
+      ADMIN_TEXTS.leaderboard_update.title,
+      {
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.leaderboard_update.btn_global, "leader_global")
+          .text(ADMIN_TEXTS.leaderboard_update.btn_college, "leader_college")
+          .row()
+          .text(ADMIN_TEXTS.leaderboard_update.btn_specialty, "leader_specialty")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery(/leader_(global|college|specialty)/, async (ctx) => {
+    const scope = ctx.match[1];
+    await ctx.answerCallbackQuery({ text: "✅ تم التحديث" });
+    const scopeLabels: Record<string, string> = { global: "العالمية", college: "الكليات", specialty: "التخصصات" };
+    await ctx.editMessageText(
+      ADMIN_TEXTS.leaderboard_update.refresh_done(scopeLabels[scope]),
+      {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // ====== A12: إدارة روابط قنوات اللجان ======
+  bot.callbackQuery("manage_channels", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+
+    if (!perms.permissions.has("manage_committee_channels")) {
+      await ctx.editMessageText(
+        "❌ *ليست لديك صلاحية إدارة قنوات اللجان.*",
+        {
+          reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    await ctx.editMessageText(
+      ADMIN_TEXTS.channels.title,
+      {
+        reply_markup: new InlineKeyboard()
+          .text(ADMIN_TEXTS.channels.btn_central, "channels_central")
+          .row()
+          .text(ADMIN_TEXTS.channels.btn_colleges, "channels_colleges")
+          .row()
+          .text(ADMIN_TEXTS.channels.btn_levels, "channels_levels")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery("channels_central", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const central = mockChannels.find((c) => c.scope_type === "central");
+    if (!central) {
+      await ctx.editMessageText(ADMIN_TEXTS.channels.empty, {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.channels.btn_back_to_channels, "manage_channels"),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+    await ctx.editMessageText(
+      ADMIN_TEXTS.channels.central_title +
+      ADMIN_TEXTS.channels.channel_entry({ display_name: central.display_name, channel_url: central.channel_url }),
+      {
+        reply_markup: new InlineKeyboard()
+          .url(ADMIN_TEXTS.channels.btn_open, central.channel_url)
+          .row()
+          .text(ADMIN_TEXTS.channels.btn_edit, `edit_channel_${central.id}`)
+          .row()
+          .text(ADMIN_TEXTS.channels.btn_back_to_channels, "manage_channels"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery("channels_colleges", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const collegeChannels = mockChannels.filter((c) => c.scope_type === "college");
+    let msg = ADMIN_TEXTS.channels.colleges_title;
+    const kb = new InlineKeyboard();
+    collegeChannels.forEach((c) => {
+      const college = getCollegeById(c.college_id!);
+      msg += ADMIN_TEXTS.channels.channel_entry({ display_name: c.display_name, channel_url: c.channel_url });
+      kb.text(`${college?.emoji || "🏛"} ${college?.short_name.substring(0, 20)}`, `edit_channel_${c.id}`).row();
+    });
+    kb.text(ADMIN_TEXTS.channels.btn_back_to_channels, "manage_channels");
+    await ctx.editMessageText(msg, { reply_markup: kb, parse_mode: "Markdown" });
+  });
+
+  bot.callbackQuery("channels_levels", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const levelChannels = mockChannels.filter((c) => c.scope_type === "specialty_level");
+    if (levelChannels.length === 0) {
+      await ctx.editMessageText(ADMIN_TEXTS.channels.empty, {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.channels.btn_back_to_channels, "manage_channels"),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+    let msg = ADMIN_TEXTS.channels.levels_title;
+    levelChannels.forEach((c) => {
+      msg += ADMIN_TEXTS.channels.channel_entry({ display_name: c.display_name, channel_url: c.channel_url });
+    });
+    const kb = new InlineKeyboard();
+    levelChannels.forEach((c) => {
+      kb.text(`📊 ${c.display_name.substring(0, 30)}`, `edit_channel_${c.id}`).row();
+    });
+    kb.text(ADMIN_TEXTS.channels.btn_back_to_channels, "manage_channels");
+    await ctx.editMessageText(msg, { reply_markup: kb, parse_mode: "Markdown" });
+  });
+
+  bot.callbackQuery(/edit_channel_(\d+)/, async (ctx) => {
+    const channelId = parseInt(ctx.match[1]);
+    const channel = mockChannels.find((c) => c.id === channelId);
+    await ctx.answerCallbackQuery();
+    if (!channel) return;
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.awaiting_channel_edit = channelId;
+    await ctx.editMessageText(
+      ADMIN_TEXTS.channels.edit_prompt(channel.display_name),
+      {
+        reply_markup: new InlineKeyboard().text("❌ إلغاء", "manage_channels"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // ====== استقبال الرسائل النصية ======
+  bot.on(":text", async (ctx) => {
+    const session = adminSessions.get(ctx.from.id);
+    if (!session) {
+      await ctx.reply("👋 أرسل /start للبدء.");
+      return;
+    }
+
+    // استقبال نص التعميم
+    if (session.awaiting_broadcast_text) {
+      session.awaiting_broadcast_text = false;
+      const scopeLabels: Record<string, string> = {
+        all: "🌍 للجميع", college: "🏛 لكلية", major: "📚 لتخصص", level: "📊 لمستوى",
+      };
+      const recipientCounts: Record<string, number> = { all: 1247, college: 312, major: 89, level: 23 };
+      const scope = session.awaiting_broadcast_scope || "all";
+      const count = recipientCounts[scope];
+      await ctx.reply(
+        ADMIN_TEXTS.broadcast.preview(ctx.message.text, scopeLabels[scope], count),
+        {
+          reply_markup: new InlineKeyboard()
+            .text(ADMIN_TEXTS.broadcast.btn_send, "confirm_broadcast")
+            .text(ADMIN_TEXTS.broadcast.btn_cancel, "broadcast"),
+          parse_mode: "Markdown",
+        }
+      );
+      // حفظ النص مؤقتاً (في الإنتاج سيكون في DB)
+      session.awaiting_broadcast_text = false;
+      // نعيد تفعيل القيمة في confirm_broadcast
+      (session as any)._lastBroadcastText = ctx.message.text;
+      return;
+    }
+
+    // استقبال اسم مادة جديدة
+    if (session.awaiting_subject_add) {
+      session.awaiting_subject_add = false;
+      await ctx.reply(ADMIN_TEXTS.subjects_mgmt.add_done(ctx.message.text), {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    // استقبال نص مخصص جديد
+    if (session.awaiting_text_value) {
+      const screenKey = session.awaiting_text_edit!;
+      session.awaiting_text_value = false;
+      session.awaiting_text_edit = undefined;
+      customTexts.set(screenKey, ctx.message.text);
+      await ctx.reply(ADMIN_TEXTS.customize.saved(ctx.message.text), {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    // استقبال تعديل عنوان محتوى
+    if (session.awaiting_content_edit) {
+      const contentId = session.awaiting_content_edit;
+      const content = mockContent.find((c) => c.id === contentId);
+      if (content) {
+        content.title = ctx.message.text;
+        content.last_modified_at = new Date().toISOString();
+        content.last_modified_by = ctx.from.id;
+      }
+      session.awaiting_content_edit = undefined;
+      await ctx.reply(ADMIN_TEXTS.content_detail.edit_success, {
+        reply_markup: new InlineKeyboard()
+          .text("📄 تفاصيل المحتوى", `content_detail_${contentId}`)
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    // استقبال تعيين شاغل منصب
+    if (session.awaiting_position_assign) {
+      const assign = session.awaiting_position_assign;
+      if (assign.step === "name") {
+        assign.name = ctx.message.text;
+        assign.step = "telegram_id";
+        await ctx.reply(
+          ADMIN_TEXTS.positions.assign_prompt_id(assign.name),
+          {
+            reply_markup: new InlineKeyboard().text("❌ إلغاء", `position_detail_${assign.position_id}`),
+            parse_mode: "Markdown",
+          }
+        );
+        return;
+      }
+      if (assign.step === "telegram_id") {
+        const tid = parseInt(ctx.message.text);
+        if (isNaN(tid)) {
+          await ctx.reply("⚠️ المعرّف يجب أن يكون رقماً. أعد المحاولة:");
+          return;
+        }
+        // محاكاة التعيين
+        mockHolders = mockHolders.map((h) =>
+          h.position_id === assign.position_id ? { ...h, is_active: false } : h
+        );
+        mockHolders.push({
+          position_id: assign.position_id,
+          user_telegram_id: tid,
+          assigned_at: new Date().toISOString().substring(0, 10),
+          assigned_by: ctx.from.id,
+          is_active: true,
+        });
+        // إضافة المستخدم للقائمة (محاكاة)
+        const position = getMockPositionById(assign.position_id);
+        const successMsg = ADMIN_TEXTS.positions.assign_success(assign.name || "المستخدم", position?.title || "المنصب");
+        session.awaiting_position_assign = undefined;
+        await ctx.reply(successMsg, {
+          reply_markup: new InlineKeyboard()
+            .text("📋 قائمة المناصب", "list_positions")
+            .row()
+            .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+          parse_mode: "Markdown",
+        });
+        return;
+      }
+    }
+
+    // استقبال رابط قناة جديد
+    if (session.awaiting_channel_edit) {
+      const channelId = session.awaiting_channel_edit;
+      const channel = mockChannels.find((c) => c.id === channelId);
+      if (channel) {
+        channel.channel_url = ctx.message.text;
+        channel.updated_at = new Date().toISOString().substring(0, 10);
+      }
+      session.awaiting_channel_edit = undefined;
+      await ctx.reply(ADMIN_TEXTS.channels.edit_success, {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.channels.btn_back_to_channels, "manage_channels"),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    // رسالة افتراضية
+    await ctx.reply("👋 استخدم الأزرار للتنقل، أو /start للعودة للوحة الإدارة.");
+  });
+
+  // ====== استقبال ملفات (رفع محتوى) ======
+  bot.on(":document", async (ctx) => {
+    // محاكاة رفع المحتوى
+    const doc = ctx.message.document;
+    await ctx.reply(
+      `✅ *تم استلام الملف!*\n\n📄 *الاسم:* ${doc.file_name}\n📊 *الحجم:* ${(doc.file_size / 1024 / 1024).toFixed(2)} MB\n\n_في الإنتاج: سيُرفع الملف لقناة التخزين ويُسجّل في قاعدة البيانات._`,
+      {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // ====== معالجة الأخطاء ======
   bot.catch(async (err) => {
     const e = err.error as any;
     const ctx = err.ctx;
     console.error("Admin bot error:", e?.message || e);
-
     const ignorableMessages = [
-      "query is too old",
-      "message is not modified",
-      "chat not found",
-      "message to edit not found",
-      "message to delete not found",
-      "QUERY_ID_INVALID",
-      "MESSAGE_ID_INVALID",
+      "query is too old", "message is not modified", "chat not found",
+      "message to edit not found", "message to delete not found",
+      "QUERY_ID_INVALID", "MESSAGE_ID_INVALID",
     ];
     const errMsg = (e?.message || "").toLowerCase();
-    const isIgnorable = ignorableMessages.some((m) => errMsg.includes(m.toLowerCase()));
-    if (isIgnorable) {
-      return;
-    }
-
+    if (ignorableMessages.some((m) => errMsg.includes(m.toLowerCase()))) return;
     try {
       if (ctx?.chat?.id) {
-        await ctx.api.sendMessage(
-          ctx.chat.id,
-          "⚠️ حدث خطأ أثناء معالجة طلبك. حاول مرة أخرى بكتابة /start"
-        );
+        await ctx.api.sendMessage(ctx.chat.id, "⚠️ حدث خطأ. حاول مرة أخرى بكتابة /start");
       }
-    } catch {
-      // تجاهل
-    }
+    } catch { /* ignore */ }
   });
 
   return bot;
@@ -1024,33 +1363,29 @@ export default {
       if (url.pathname === "/health") {
         return new Response(
           JSON.stringify({
-            status: "ok",
-            bot: env.BOT_USERNAME,
-            environment: env.ENVIRONMENT,
-            version: "2.2",
-            timestamp: new Date().toISOString(),
+            status: "ok", bot: env.BOT_USERNAME, environment: env.ENVIRONMENT,
+            version: "3.0", timestamp: new Date().toISOString(),
           }),
           { headers: { "Content-Type": "application/json" } }
         );
       }
 
       if (url.pathname === "/webhook") {
-        // معالجة الـ webhook بشكل آمن - إرجاع 200 دائماً لمنع إعادة المحاولة
         try {
           const callback = webhookCallback(botInstance, "cloudflare-mod");
           return await callback(request);
         } catch (err) {
-          console.error("Webhook handler error (returning 200 to stop retries):", err?.message || err);
+          console.error("Webhook handler error:", err);
           return new Response("", { status: 200 });
         }
       }
 
       return new Response(
-        "🛡 UST Admin Bot v2.0 - Mockup\n\nWebhook: /webhook\nHealth: /health\nBot: @" + env.BOT_USERNAME,
+        "🛡 UST Admin Bot v3.0 - RBAC Mockup\n\nWebhook: /webhook\nBot: @" + env.BOT_USERNAME,
         { headers: { "Content-Type": "text/plain; charset=utf-8" } }
       );
     } catch (error) {
-      console.error("Worker fetch error:", error);
+      console.error("Worker error:", error);
       return new Response("Internal Server Error", { status: 500 });
     }
   },

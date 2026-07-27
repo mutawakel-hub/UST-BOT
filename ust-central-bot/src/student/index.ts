@@ -26,6 +26,7 @@ import {
   getLeaderboardByCollege,
   getLeaderboardBySpecialty,
 } from "../shared/data/leaderboard";
+import { MOCK_COMMITTEE_CHANNELS } from "../shared/data/admins";
 import { TEXTS } from "../shared/texts";
 import {
   mainMenuKeyboard,
@@ -986,12 +987,86 @@ export function createStudentBot(token: string): Bot {
   // ====== قناة اللجنة + تواصل ======
   bot.callbackQuery("menu_committee", async (ctx) => {
     await ctx.answerCallbackQuery();
+    const centralChannel = MOCK_COMMITTEE_CHANNELS.find((c) => c.scope_type === "central");
+    const channelUrl = centralChannel?.channel_url || "https://t.me/+ust_central_committee";
     await ctx.editMessageText(
       "📢 *قناة اللجنة العلمية المركزية*\n\n" +
-        "للحصول على آخر التحديثات والإعلانات:\n\n" +
-        "🔗 [انضم لقناة اللجنة](https://t.me/+ust_central_committee)",
+        "للحصول على آخر التحديثات والإعلانات المركزية:\n\n" +
+        `🔗 ${channelUrl}`,
       {
-        reply_markup: new InlineKeyboard().url("🔗 انضم الآن", "https://t.me/+ust_central_committee").row().text(TEXTS.navigation.back_to_main, "back_to_main"),
+        reply_markup: new InlineKeyboard()
+          .url("🔗 انضم الآن", channelUrl)
+          .row()
+          .text(TEXTS.navigation.back_to_main, "back_to_main"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // ====== قناة لجنة الكلية (زر جديد في شاشة التخصصات) ======
+  bot.callbackQuery(/committee_college_(\d+)/, async (ctx) => {
+    const collegeId = parseInt(ctx.match[1]);
+    const college = getCollegeById(collegeId);
+    await ctx.answerCallbackQuery();
+    const channel = MOCK_COMMITTEE_CHANNELS.find(
+      (c) => c.scope_type === "college" && c.college_id === collegeId
+    );
+    if (!channel) {
+      await ctx.reply("⚠️ لا توجد قناة لجنة مسجّلة لهذه الكلية بعد.");
+      return;
+    }
+    await ctx.reply(
+      `📢 *قناة اللجنة العلمية - ${college?.name}*\n\n` +
+        `🔗 ${channel.channel_url}\n\n` +
+        "انضم لقناة اللجنة لتصلك آخر إعلانات الكلية.",
+      {
+        reply_markup: new InlineKeyboard()
+          .url("🔗 انضم الآن", channel.channel_url)
+          .row()
+          .text("🔙 التخصصات", `back_to_college_majors_${collegeId}`),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // العودة لتخصصات كلية محددة (مساعد لزر اللجنة)
+  bot.callbackQuery(/back_to_college_majors_(\d+)/, async (ctx) => {
+    const collegeId = parseInt(ctx.match[1]);
+    const college = getCollegeById(collegeId);
+    await ctx.answerCallbackQuery();
+    const bc = breadcrumb("🏛 الكليات", `${college?.emoji} ${college?.short_name}`);
+    await ctx.editMessageText(`${bc}\n\n${TEXTS.choose_major.title}`, {
+      reply_markup: majorsKeyboard(collegeId, 0),
+      parse_mode: "Markdown",
+    });
+  });
+
+  // ====== قناة لجنة التخصص (زر جديد في شاشة المستويات) ======
+  bot.callbackQuery(/committee_specialty_(\d+)/, async (ctx) => {
+    const specialtyId = parseInt(ctx.match[1]);
+    const specialty = getSpecialtyById(specialtyId);
+    await ctx.answerCallbackQuery();
+    // البحث عن أي قناة مستوى لهذا التخصص
+    const channel = MOCK_COMMITTEE_CHANNELS.find(
+      (c) => c.scope_type === "specialty_level" && c.specialty_id === specialtyId
+    );
+    if (!channel) {
+      await ctx.reply(
+        `⚠️ لا توجد قناة لجنة مسجّلة لتخصص *${specialty?.name}* بعد.\n\n` +
+          "_في الإنتاج: سيتم توفير قناة لكل مستوى لكل تخصص._",
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
+    await ctx.reply(
+      `📢 *قناة اللجنة العلمية - ${specialty?.name}*\n\n` +
+        `🔗 ${channel.channel_url}\n\n` +
+        "انضم لقناة اللجنة لتصلك آخر إعلانات التخصص.",
+      {
+        reply_markup: new InlineKeyboard()
+          .url("🔗 انضم الآن", channel.channel_url)
+          .row()
+          .text(TEXTS.navigation.back_to_levels, `back_to_levels_${specialtyId}`),
         parse_mode: "Markdown",
       }
     );

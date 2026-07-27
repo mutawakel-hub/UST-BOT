@@ -446,7 +446,146 @@ export const ADMIN_TEXTS = {
     back_to_files_mgmt: "🔙 إدارة الملفات",
     back_to_subjects_mgmt: "🔙 إدارة المواد",
     back_to_broadcast: "🔙 التعميم",
-    back_to_manage_admins: "🔙 إدارة المسؤولين",
+    back_to_manage_admins: "🔙 إدارة المناصب",
     back_to_customize: "🔙 تخصيص النصوص",
+    back_to_content_mgmt: "🔙 إدارة المحتوى",
+    back_to_positions: "🔙 المناصب",
+    back_to_channels: "🔙 قنوات اللجان",
+  },
+
+  // ====== شاشة A5: Content Management (جديدة) ======
+  content_mgmt: {
+    title: "📁 *إدارة المحتوى*\n\nاختر الإجراء:",
+    btn_browse: "📂 استعراض المحتوى",
+    btn_upload: "📤 رفع محتوى جديد",
+    btn_filter: "🔍 فلترة المحتوى",
+    empty: "📭 لا يوجد محتوى ضمن نطاق صلاحياتك حالياً.",
+  },
+
+  // ====== شاشة A5b: Browse Content ======
+  browse_content: {
+    title: (count: number) => `📂 *المحتوى (${count})*\n\nاختر عنصراً للعرض:`,
+    filter_prompt: "🔍 اختر معيار الفلترة:",
+    btn_by_college: "🏛 بالكلية",
+    btn_by_specialty: "📚 بالتخصص",
+    btn_by_subject: "📖 بالمادة",
+    btn_by_type: "🏷 بالنوع",
+    btn_all: "📋 عرض الكل",
+    filter_active: (filterLabel: string) =>
+      `🔍 *الفلترة الحالية:* ${filterLabel}\n\nاختر عنصراً:`,
+  },
+
+  // ====== شاشة A5c: Content Detail ======
+  content_detail: {
+    title: "📄 *تفاصيل المحتوى*\n\n",
+    details: (c: {
+      title: string;
+      type_label: string;
+      subject_name: string;
+      specialty_name: string;
+      college_name: string;
+      level: number;
+      semester: number;
+      file_size: number;
+      download_count: number;
+      is_starred: boolean;
+      added_by: string;
+      added_at: string;
+      academic_year: string;
+    }) => {
+      let msg = "";
+      msg += `📝 *العنوان:* ${c.title}\n`;
+      msg += `🏷 *النوع:* ${c.type_label}\n`;
+      msg += `📚 *المادة:* ${c.subject_name}\n`;
+      msg += `🏛 *الكلية:* ${c.specialty_name} - ${c.college_name}\n`;
+      msg += `📊 *المستوى:* ${c.level} | 📅 *الفصل:* ${c.semester}\n`;
+      msg += `📈 *السنة الدراسية:* ${c.academic_year}\n\n`;
+      msg += `📊 *الحجم:* ${c.file_size.toFixed(2)} MB\n`;
+      msg += `⬇️ *التحميلات:* ${c.download_count}\n`;
+      msg += `${c.is_starred ? "⭐ *محتوى مميز*\n" : ""}`;
+      msg += `👤 *رافعه:* ${c.added_by}\n`;
+      msg += `📅 *تاريخ الرفع:* ${c.added_at}\n`;
+      return msg;
+    },
+    btn_edit: "✏️ تعديل",
+    btn_move: "🔄 نقل",
+    btn_delete: "🗑 حذف",
+    btn_star: "⭐ تمييز",
+    btn_unstar: "☆ إلغاء التمييز",
+    btn_view_file: "👁 معاينة الملف",
+    delete_confirm: (title: string) =>
+      `⚠️ *تأكيد الحذف*\n\nسيتم حذف:\n📄 *${title}*\n\n+ حذف المنشور من قناة التخزين.\n\nهل أنت متأكد؟`,
+    btn_confirm_delete: "✅ نعم، احذف",
+    btn_cancel_delete: "❌ إلغاء",
+    delete_success: "✅ تم حذف المحتوى بنجاح.\n\nالمنشور محذوف من القناة.",
+    move_prompt: "🔄 *نقل المحتوى*\n\nاختر الوجهة الجديدة:",
+    move_success: "✅ تم نقل المحتوى بنجاح.",
+    edit_prompt: "✏️ أرسل العنوان الجديد للمحتوى:",
+    edit_success: "✅ تم تحديث العنوان.",
+  },
+
+  // ====== شاشة A8: Positions Management (جديدة كلياً) ======
+  positions: {
+    title: "👥 *إدارة المناصب*\n\nاختر القسم:",
+    btn_list_positions: "📋 قائمة المناصب",
+    btn_assign_position: "➕ تعيين شاغل منصب",
+    btn_my_positions: "👤 مناصبي الحالية",
+    empty: "⚠️ لا توجد مناصب ضمن نطاقك.",
+    list_title: (count: number) => `📋 *قائمة المناصب (${count})*\n\n`,
+    position_entry: (p: {
+      title: string;
+      scope: string;
+      holder_name?: string;
+      is_vacant: boolean;
+    }) => {
+      let line = `• ${p.title}\n`;
+      line += `  📍 ${p.scope}\n`;
+      if (p.is_vacant) {
+        line += `  ⚠️ *شاغر* (غير مشغول)\n\n`;
+      } else {
+        line += `  👤 *شاغل المنصب:* ${p.holder_name}\n\n`;
+      }
+      return line;
+    },
+    position_actions: (positionId: string, isVacant: boolean) =>
+      isVacant
+        ? `اختر الإجراء للمنصب:`
+        : `اختر الإجراء للمنصب:`,
+    btn_assign: "➕ تعيين شاغل",
+    btn_revoke: "❌ إزالة الشاغل",
+    btn_view_audit: "📜 سجل التغييرات",
+    assign_prompt_name: "👤 أرسل اسم الشخص الذي سيشغل المنصب:",
+    assign_prompt_id: (name: string) =>
+      `🆔 أرسل معرّف تلجرام لـ *${name}*:\n\n💡 للحصول على المعرّف: توجّه إلى @userinfobot`,
+    assign_success: (name: string, positionTitle: string) =>
+      `✅ *تم التعيين بنجاح!*\n\n👤 *الاسم:* ${name}\n💼 *المنصب:* ${positionTitle}\n\nسيظهر لوحة الإدارة تلقائياً عند دخوله البوت.`,
+    revoke_confirm: (name: string, positionTitle: string) =>
+      `⚠️ *تأكيد الإزالة*\n\nسيتم إزالة:\n👤 ${name}\nمن منصب:\n💼 ${positionTitle}\n\nسيخسر جميع صلاحيات هذا المنصب فوراً.`,
+    btn_confirm_revoke: "✅ نعم، أزِل",
+    btn_cancel_revoke: "❌ إلغاء",
+    revoke_success: "✅ تم إزالة الشاغل من المنصب.\n\nفقد جميع الصلاحيات المرتبطة.",
+    my_positions_empty: "⚠️ لا تشغل أي منصب حالياً.",
+    my_positions_title: (count: number) => `👤 *مناصبي الحالية (${count})*\n\n`,
+  },
+
+  // ====== شاشة A12: Committee Channels (جديدة) ======
+  channels: {
+    title: "📢 *إدارة روابط اللجان العلمية*\n\nاختر القسم:",
+    btn_central: "🛡 اللجنة المركزية",
+    btn_colleges: "🏛 لجان الكليات",
+    btn_levels: "📊 لجان المستويات",
+    btn_add: "➕ إضافة رابط جديد",
+    central_title: "🛡 *قناة اللجنة العلمية المركزية*\n\n",
+    colleges_title: "🏛 *لجان الكليات (7)*\n\n",
+    levels_title: "📊 *لجان المستويات*\n\n",
+    channel_entry: (c: { display_name: string; channel_url: string }) =>
+      `${c.display_name}\n🔗 ${c.channel_url}\n\n`,
+    edit_prompt: (channelName: string) =>
+      `🔗 أرسل الرابط الجديد لـ:\n*${channelName}*\n\n💡 الصيغة: \`https://t.me/+xxxxx\``,
+    edit_success: "✅ تم تحديث الرابط بنجاح.",
+    btn_edit: "✏️ تعديل الرابط",
+    btn_open: "🔗 فتح القناة",
+    btn_back_to_channels: "🔙 قنوات اللجان",
+    empty: "⚠️ لا توجد روابط مسجّلة في هذا القسم.",
   },
 } as const;
