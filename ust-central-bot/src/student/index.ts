@@ -42,7 +42,6 @@ import {
   searchResultsKeyboard,
   leaderboardKeyboard,
   profileKeyboard,
-  mySubscriptionsKeyboard,
   breadcrumb,
 } from "../shared/keyboards";
 
@@ -83,7 +82,6 @@ interface UserState {
   current_level?: number;
   total_downloads: number;
   accepted_contributions: number;
-  subscriptions: Set<number>;
   recent_downloads: DownloadHistoryEntry[];
   my_contributions: ContributionEntry[];
   awaiting_contribution_for_subject?: number;
@@ -104,7 +102,6 @@ function getUserState(telegramId: number, firstName?: string, username?: string)
       username,
       total_downloads: 12 + (seed % 30),
       accepted_contributions: 1 + (seed % 4),
-      subscriptions: new Set([102]), // مشترك في برمجة Python افتراضياً
       recent_downloads: [
         {
           file_name: "مقدمة في تقنية المعلومات - المقرر النظري.pdf",
@@ -347,8 +344,6 @@ export function createStudentBot(token: string): Bot {
       await ctx.reply("⚠️ المادة غير موجودة.");
       return;
     }
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
-    const isSubscribed = userState.subscriptions.has(subjectId);
     const spec = getSpecialtyById(subject.specialty_id);
     const college = getCollegeById(spec?.college_id || 0);
 
@@ -363,8 +358,8 @@ export function createStudentBot(token: string): Bot {
         )
       : `📖 *${subject.name}*`;
 
-    await ctx.editMessageText(`${bc}\n\n${TEXTS.subject_menu.title(subject.name, isSubscribed)}`, {
-      reply_markup: subjectMenuKeyboard(subjectId, subject.has_practical, isSubscribed),
+    await ctx.editMessageText(`${bc}\n\n${TEXTS.subject_menu.title(subject.name)}`, {
+      reply_markup: subjectMenuKeyboard(subjectId, subject.has_practical),
       parse_mode: "Markdown",
     });
   });
@@ -618,29 +613,6 @@ export function createStudentBot(token: string): Bot {
     });
   });
 
-  // الاشتراك/إلغاء الاشتراك
-  bot.callbackQuery(/subscribe_(\d+)/, async (ctx) => {
-    const subjectId = parseInt(ctx.match[1]);
-    const subject = getSubjectByIdWithFallback(subjectId);
-    await ctx.answerCallbackQuery({ text: TEXTS.common.subscribed });
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
-    userState.subscriptions.add(subjectId);
-    await ctx.editMessageReplyMarkup({
-      reply_markup: subjectMenuKeyboard(subjectId, subject?.has_practical || false, true),
-    });
-  });
-
-  bot.callbackQuery(/unsubscribe_(\d+)/, async (ctx) => {
-    const subjectId = parseInt(ctx.match[1]);
-    const subject = getSubjectByIdWithFallback(subjectId);
-    await ctx.answerCallbackQuery({ text: TEXTS.common.unsubscribed });
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
-    userState.subscriptions.delete(subjectId);
-    await ctx.editMessageReplyMarkup({
-      reply_markup: subjectMenuKeyboard(subjectId, subject?.has_practical || false, false),
-    });
-  });
-
   // S10: البحث
   bot.callbackQuery("menu_search", async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -825,7 +797,6 @@ export function createStudentBot(token: string): Bot {
         total_downloads: userState.total_downloads,
         accepted_contributions: userState.accepted_contributions,
         pending_contributions: pending,
-        subscriptions_count: userState.subscriptions.size,
         current_college: college,
         current_specialty: specialty,
         current_level: userState.current_level,
@@ -874,30 +845,6 @@ export function createStudentBot(token: string): Bot {
     });
   });
 
-  bot.callbackQuery("my_subscriptions", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
-    let msg = "🔔 *اشتراكاتي*\n\n";
-    const subs = Array.from(userState.subscriptions)
-      .map((id) => {
-        const s = getSubjectByIdWithFallback(id);
-        return s ? { id, name: s.name } : null;
-      })
-      .filter(Boolean) as Array<{ id: number; name: string }>;
-
-    if (subs.length === 0) {
-      msg += TEXTS.profile.no_subscriptions;
-    } else {
-      subs.forEach((s, i) => {
-        msg += `${i + 1}. 🔔 ${s.name}\n`;
-      });
-    }
-    await ctx.editMessageText(msg, {
-      reply_markup: mySubscriptionsKeyboard(subs),
-      parse_mode: "Markdown",
-    });
-  });
-
   bot.callbackQuery("change_major", async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(
@@ -922,7 +869,6 @@ export function createStudentBot(token: string): Bot {
         total_downloads: userState.total_downloads,
         accepted_contributions: userState.accepted_contributions,
         pending_contributions: pending,
-        subscriptions_count: userState.subscriptions.size,
         current_college: college,
         current_specialty: specialty,
         current_level: userState.current_level,
@@ -1025,10 +971,8 @@ export function createStudentBot(token: string): Bot {
     const subject = getSubjectByIdWithFallback(subjectId);
     await ctx.answerCallbackQuery();
     if (!subject) return;
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
-    const isSubscribed = userState.subscriptions.has(subjectId);
-    await ctx.editMessageText(TEXTS.subject_menu.title(subject.name, isSubscribed), {
-      reply_markup: subjectMenuKeyboard(subjectId, subject.has_practical, isSubscribed),
+    await ctx.editMessageText(TEXTS.subject_menu.title(subject.name), {
+      reply_markup: subjectMenuKeyboard(subjectId, subject.has_practical),
       parse_mode: "Markdown",
     });
   });

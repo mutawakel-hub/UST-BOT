@@ -1,7 +1,7 @@
 {
   "name": "ust-central-bot",
-  "version": "2.1.0",
-  "description": "UST Central Bot - Telegram bot system for University of Science and Technology (Yemen) - Mockup v2.1",
+  "version": "2.2.0",
+  "description": "UST Central Bot - Telegram bot system for University of Science and Technology (Yemen) - Mockup v2.2",
   "private": true,
   "scripts": {
     "setup": "node scripts/setup.js",

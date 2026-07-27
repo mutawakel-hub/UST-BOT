@@ -184,8 +184,7 @@ export function subjectsKeyboard(
 // ============================================
 export function subjectMenuKeyboard(
   subjectId: number,
-  hasPractical: boolean,
-  isSubscribed: boolean
+  hasPractical: boolean
 ): InlineKeyboard {
   const kb = new InlineKeyboard();
 
@@ -204,11 +203,6 @@ export function subjectMenuKeyboard(
   kb.text(TEXTS.subject_menu.btn_summaries(summariesCount), `type_summaries_${subjectId}`);
   kb.row();
   kb.text(TEXTS.subject_menu.btn_contribute, `contribute_${subjectId}`);
-  if (isSubscribed) {
-    kb.text(TEXTS.subject_menu.btn_unsubscribe, `unsubscribe_${subjectId}`);
-  } else {
-    kb.text(TEXTS.subject_menu.btn_subscribe, `subscribe_${subjectId}`);
-  }
   kb.row();
   kb.text(TEXTS.navigation.back_to_subjects, `back_to_subjects_from_${subjectId}`);
   return kb;
@@ -309,7 +303,6 @@ export function profileKeyboard(): InlineKeyboard {
   kb.text(TEXTS.profile.btn_my_contributions, "my_contributions");
   kb.text(TEXTS.profile.btn_my_downloads, "my_downloads");
   kb.row();
-  kb.text(TEXTS.profile.btn_my_subscriptions, "my_subscriptions");
   kb.text(TEXTS.profile.btn_change_major, "change_major").row();
   kb.text(TEXTS.navigation.back_to_main, "back_to_main");
   return kb;
@@ -320,21 +313,6 @@ export function profileKeyboard(): InlineKeyboard {
 // ============================================
 export function backOnlyKeyboard(callbackData: string, label?: string): InlineKeyboard {
   return new InlineKeyboard().text(label || TEXTS.navigation.back_to_main, callbackData);
-}
-
-// ============================================
-// شاشة الاشتراكات في الحساب
-// ============================================
-export function mySubscriptionsKeyboard(subscriptions: Array<{ id: number; name: string }>): InlineKeyboard {
-  const kb = new InlineKeyboard();
-  for (const s of subscriptions) {
-    kb.text(`🔔 ${s.name}`, `subj_${s.id}`).row();
-  }
-  if (subscriptions.length === 0) {
-    // فارغ
-  }
-  kb.text(TEXTS.navigation.back_to_main, "back_to_main");
-  return kb;
 }
 
 // ============================================

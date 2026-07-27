@@ -59,17 +59,14 @@ export const TEXTS = {
 
   // ====== شاشة S7: SubjectMenu ======
   subject_menu: {
-    title: (subjectName: string, isSubscribed: boolean) =>
+    title: (subjectName: string) =>
       `📖 *${subjectName}*\n\n` +
-      (isSubscribed ? "🔔 *أنت مشترك في هذه المادة*\n\n" : "") +
       "اختر نوع المحتوى:",
     btn_book_theory: (count: number) => `📘 المقرر (نظري) — ${count}`,
     btn_book_practical: (count: number) => `📗 المقرر (عملي) — ${count}`,
     btn_exams: (count: number) => `📑 نماذج اختبارات — ${count}`,
     btn_summaries: (count: number) => `📝 ملخصات — ${count}`,
     btn_contribute: "💡 مساهمة",
-    btn_subscribe: "🔔 اشتراك",
-    btn_unsubscribe: "🔕 إلغاء الاشتراك",
     no_files_in_category: "لا توجد ملفات",
   },
 
@@ -176,7 +173,6 @@ export const TEXTS = {
       total_downloads: number;
       accepted_contributions: number;
       pending_contributions: number;
-      subscriptions_count: number;
       current_college?: string;
       current_specialty?: string;
       current_level?: number;
@@ -184,8 +180,7 @@ export const TEXTS = {
       let msg = "📊 *إحصائياتي:*\n";
       msg += `• 📥 إجمالي التحميلات: ${stats.total_downloads}\n`;
       msg += `• ✅ المساهمات المقبولة: ${stats.accepted_contributions}\n`;
-      msg += `• ⏳ المساهمات المعلقة: ${stats.pending_contributions}\n`;
-      msg += `• 🔔 الاشتراكات النشطة: ${stats.subscriptions_count}\n\n`;
+      msg += `• ⏳ المساهمات المعلقة: ${stats.pending_contributions}\n\n`;
       msg += "🎯 *تخصصي الحالي:*\n";
       msg += `• 🏛 الكلية: ${stats.current_college || "غير محدد"}\n`;
       msg += `• 📚 التخصص: ${stats.current_specialty || "غير محدد"}\n`;
@@ -194,12 +189,10 @@ export const TEXTS = {
     },
     btn_my_contributions: "📋 مساهماتي",
     btn_my_downloads: "📥 آخر تحميلاتي",
-    btn_my_subscriptions: "🔔 اشتراكاتي",
     btn_change_major: "🔄 تغيير التخصص",
     btn_back: "🔙 رجوع",
     no_contributions: "📚 لا توجد مساهمات بعد.\nابدأ المساهمة من قائمة أي مادة!",
     no_downloads: "📥 لا توجد تحميلات بعد.\nابدأ التصفّح من القائمة الرئيسية!",
-    no_subscriptions: "🔔 لا توجد اشتراكات بعد.\nاشترك في أي مادة لتصلك إشعاراتها!",
   },
 
   // ====== أزرار التنقل العامة ======
@@ -223,8 +216,6 @@ export const TEXTS = {
     file_sent: "✅ تم إرسال الملف بنجاح!",
     file_sent_with_caption:
       "✅ *تم التحميل!*\n\n📄 {fileName}\n📚 {subjectName}\n\nشكراً لاستخدامك البوت. إن أعجبك المحتوى، شاركه مع زملائك!",
-    subscribed: "🔔 تم الاشتراك! ستصلك إشعارات الملفات الجديدة.",
-    unsubscribed: "🔕 تم إلغاء الاشتراك.",
     mockup_pdf_caption:
       "📄 *ملف تجريبي (Mockup)*\n\nفي الإنتاج سيصلك الملف الفعلي من قناة التخزين الخاصة بالكلية.",
   },
