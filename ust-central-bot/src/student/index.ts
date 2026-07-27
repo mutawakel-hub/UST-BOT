@@ -1078,7 +1078,7 @@ export default {
             status: "ok",
             bot: env.BOT_USERNAME,
             environment: env.ENVIRONMENT,
-            version: "2.1",
+            version: "2.2",
             timestamp: new Date().toISOString(),
           }),
           { headers: { "Content-Type": "application/json" } }

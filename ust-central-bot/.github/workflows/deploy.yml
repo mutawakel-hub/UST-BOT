@@ -1,0 +1,141 @@
+# ============================================
+# 🚀 UST Central Bot - Auto-Deploy to Cloudflare Workers
+# ============================================
+# هذا الـ Workflow يُشغّل تلقائياً عند كل push على branch main
+# وينشر البوتين على Cloudflare Workers
+# ============================================
+
+name: 🚀 Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # يسمح بالتشغيل اليدوي من GitHub UI
+
+jobs:
+  # ============================================
+  # فحص الكود قبل النشر
+  # ============================================
+  typecheck:
+    name: 🔍 Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: 🔍 TypeScript type check
+        run: npx tsc --noEmit
+
+  # ============================================
+  # نشر بوت الطالب
+  # ============================================
+  deploy-student-bot:
+    name: 🎓 Deploy Student Bot
+    needs: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: 🚀 Deploy Student Bot to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --config wrangler.student.toml
+
+  # ============================================
+  # نشر بوت الإدارة
+  # ============================================
+  deploy-admin-bot:
+    name: 🛡 Deploy Admin Bot
+    needs: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: 🚀 Deploy Admin Bot to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --config wrangler.admin.toml
+
+  # ============================================
+  # نشر PDF Server (للملفات التجريبية)
+  # ============================================
+  deploy-pdf-server:
+    name: 📄 Deploy PDF Server
+    needs: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: 🚀 Deploy PDF Server to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --config pdf-server/wrangler.toml
+
+  # ============================================
+  # ملخص النشر
+  # ============================================
+  summary:
+    name: ✅ Deployment Summary
+    needs: [deploy-student-bot, deploy-admin-bot, deploy-pdf-server]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: 📊 Status Summary
+        run: |
+          echo "============================================"
+          echo "🎉 Deployment Summary - UST Central Bot"
+          echo "============================================"
+          echo ""
+          echo "Student Bot: ${{ needs.deploy-student-bot.result }}"
+          echo "Admin Bot:   ${{ needs.deploy-admin-bot.result }}"
+          echo "PDF Server:  ${{ needs.deploy-pdf-server.result }}"
+          echo ""
+          if [ "${{ needs.deploy-student-bot.result }}" = "success" ] && \
+             [ "${{ needs.deploy-admin-bot.result }}" = "success" ] && \
+             [ "${{ needs.deploy-pdf-server.result }}" = "success" ]; then
+            echo "✅ All deployments succeeded!"
+          else
+            echo "⚠️ Some deployments failed. Check the logs above."
+            exit 1
+          fi

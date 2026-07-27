@@ -1,7 +1,18 @@
-# 🎓 UST Central Bot — Mockup v2.1
+# 🎓 UST Central Bot — Mockup v2.2
 
 > **البوت العلمي المركزي لجامعة العلوم والتكنولوجيا - اليمن**
 > منشور على Cloudflare Workers + Telegram Webhooks (مجاني 100%)
+
+---
+
+## 📚 التوثيق
+
+| الملف | الوصف |
+|---|---|
+| 📖 **[README.md](README.md)** | هذا الملف — نظرة عامة ودليل سريع |
+| 🚀 **[DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md)** | دليل النشر والانتقال للإنتاج (بوتات رسمية، تغيير Cloudflare، Supabase) |
+| 🏗 **[ARCHITECTURE.md](ARCHITECTURE.md)** | شرح البنية التقنية |
+| 📋 **[CHANGELOG.md](CHANGELOG.md)** | سجل التغييرات بين الإصدارات |
 
 ---
 
@@ -96,6 +107,37 @@ ust-central-bot/
     ├── generate_mock_pdf.py      # توليد PDF تجريبي
     └── mockup_sample.pdf         # ملف PDF التجريبي
 ```
+
+---
+
+## 🤖 النشر التلقائي (GitHub Actions)
+
+المشروع مُعدّ للنشر التلقائي على Cloudflare Workers عبر GitHub Actions:
+
+```
+git push origin main
+        │
+        ▼
+GitHub Actions يُشغّل تلقائياً
+        │
+        ├─ 🔍 فحص TypeScript
+        ├─ 🎓 نشر Student Bot
+        ├─ 🛡 نشر Admin Bot
+        └─ 📄 نشر PDF Server
+        │
+        ▼
+البوت يتحدّث خلال 60 ثانية ✅
+```
+
+### الإعداد المطلوب (مرة واحدة فقط)
+
+تم إضافة الـ Secrets التالية للمستودع:
+- `CLOUDFLARE_API_TOKEN` ✅
+- `CLOUDFLARE_ACCOUNT_ID` ✅
+
+### تتبّع الـ deployments
+
+- **GitHub Actions**: https://github.com/mutawakel-hub/UST-BOT/actions
 
 ---
 
