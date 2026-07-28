@@ -26,7 +26,7 @@ import {
   getLeaderboardByCollege,
   getLeaderboardBySpecialty,
 } from "../shared/data/leaderboard";
-import { MOCK_COMMITTEE_CHANNELS, MOCK_STUDENT_NOTIFICATIONS, type MockStudentNotification } from "../shared/data/admins";
+import { MOCK_COMMITTEE_CHANNELS, MOCK_STUDENT_NOTIFICATIONS, MOCK_CONTENT, type MockStudentNotification } from "../shared/data/admins";
 import { TEXTS } from "../shared/texts";
 import {
   mainMenuKeyboard,
@@ -615,20 +615,56 @@ export function createStudentBot(token: string): Bot {
     });
     if (userState.recent_downloads.length > 5) userState.recent_downloads.pop();
 
-    // إرسال ملف PDF فعلي عبر URL
-    try {
-      await ctx.replyWithDocument(MOCK_PDF_URL, {
-        caption: TEXTS.common.file_sent_with_caption
-          .replace("{fileName}", file.file_name)
-          .replace("{subjectName}", subject.name),
-        parse_mode: "Markdown",
-      });
-    } catch (err) {
-      console.error("File send error:", err);
-      await ctx.reply(
-        `✅ *تم تسجيل تحميلك للملف*\n\n📄 ${file.file_name}\n📚 ${subject.name}\n\n⚠️ تعذّر إرسال الملف تلقائياً، أعد المحاولة لاحقاً.`,
-        { parse_mode: "Markdown" }
+    // محاولة إرسال الملف من قناة التخزين (forwardMessage)
+    // إن كانت الكلية لها قناة تخزين + الملف له message_id
+    const college = getCollegeById(subject.specialty_id === 16 ? 5 : subject.specialty_id === 1 ? 1 : 0);
+    const storageChannelId = college?.storage_channel_id;
+
+    let fileSent = false;
+    if (storageChannelId && file.id) {
+      // البحث عن المحتوى الحقيقي في MOCK_CONTENT للحصول على message_id
+      const mockContent = MOCK_CONTENT.find((c) =>
+        c.subject_id === subjectId &&
+        c.content_type === category &&
+        c.college_id === (subject.specialty_id === 16 ? 5 : 1)
       );
+      if (mockContent?.telegram_message_id) {
+        try {
+          // forwardMessage من قناة التخزين للمستخدم
+          await ctx.api.forwardMessage(
+            ctx.chat.id,
+            storageChannelId,
+            mockContent.telegram_message_id
+          );
+          fileSent = true;
+          await ctx.reply(
+            TEXTS.common.file_sent_with_caption
+              .replace("{fileName}", file.file_name)
+              .replace("{subjectName}", subject.name),
+            { parse_mode: "Markdown" }
+          );
+        } catch (err) {
+          console.error("forwardMessage error:", err);
+        }
+      }
+    }
+
+    // لو فشل forwardMessage أو لا توجد قناة تخزين → fallback للـ PDF Server
+    if (!fileSent) {
+      try {
+        await ctx.replyWithDocument(MOCK_PDF_URL, {
+          caption: TEXTS.common.file_sent_with_caption
+            .replace("{fileName}", file.file_name)
+            .replace("{subjectName}", subject.name),
+          parse_mode: "Markdown",
+        });
+      } catch (err) {
+        console.error("File send error:", err);
+        await ctx.reply(
+          `✅ *تم تسجيل تحميلك للملف*\n\n📄 ${file.file_name}\n📚 ${subject.name}\n\n⚠️ تعذّر إرسال الملف تلقائياً، أعد المحاولة لاحقاً.`,
+          { parse_mode: "Markdown" }
+        );
+      }
     }
 
     // زر العودة
@@ -1634,7 +1670,7 @@ export default {
             status: "ok",
             bot: env.BOT_USERNAME,
             environment: env.ENVIRONMENT,
-            version: "2.4",
+            version: "2.5",
             timestamp: new Date().toISOString(),
           }),
           { headers: { "Content-Type": "application/json" } }

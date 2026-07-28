@@ -283,13 +283,24 @@ export function getContentTypeEmoji(typeId: string): string {
 
 // ============================================
 // المحتوى الوهمي (Mock Content)
+// ملاحظة: المحتوى المرتبط بكلية الطب أو الحاسبات له message_id حقيقي
+// من قناة التخزين (تم رفع ملف تجريبي مسبقاً)
 // ============================================
+
+// message_id للملف التجريبي المرفوع في كل قناة
+const STORAGE_MESSAGE_IDS: Record<number, number> = {
+  1: 4,   // كلية الطب - message_id=4
+  5: 2,   // كلية الحاسبات - message_id=2
+};
+
 export const MOCK_CONTENT: MockContent[] = [
-  // مقدمة في تقنية المعلومات
+  // مقدمة في تقنية المعلومات (كلية الحاسبات - message_id=2)
   {
     id: 1, subject_id: 101, specialty_id: 16, college_id: 5, level: 1, semester: 1,
     content_type: "book_theory", title: "مقدمة في تقنية المعلومات - المقرر النظري",
     file_name: "intro_it_theory.pdf", file_size_mb: 4.2,
+    telegram_message_id: STORAGE_MESSAGE_IDS[5], // ← message_id حقيقي من قناة الحاسبات
+    telegram_file_id: "BQACAgQAAyEGAATeKAPyAAMCamf27c_B9s_Wt6oiZM5wkq2J9U",
     added_by_position_id: "college_admin_5", added_by_telegram_id: 1000002,
     added_at: "2026-01-15", is_starred: true, download_count: 142,
     is_active: true, academic_year: "2025-2026",
@@ -298,6 +309,8 @@ export const MOCK_CONTENT: MockContent[] = [
     id: 2, subject_id: 101, specialty_id: 16, college_id: 5, level: 1, semester: 1,
     content_type: "book_practical", title: "مقدمة في تقنية المعلومات - دليل العملي",
     file_name: "intro_it_practical.pdf", file_size_mb: 1.8,
+    telegram_message_id: STORAGE_MESSAGE_IDS[5], // ← يستخدم نفس الملف التجريبي
+    telegram_file_id: "BQACAgQAAyEGAATeKAPyAAMCamf27c_B9s_Wt6oiZM5wkq2J9U",
     added_by_position_id: "college_admin_5", added_by_telegram_id: 1000002,
     added_at: "2026-01-16", is_starred: false, download_count: 67,
     is_active: true, academic_year: "2025-2026",
@@ -306,15 +319,19 @@ export const MOCK_CONTENT: MockContent[] = [
     id: 3, subject_id: 101, specialty_id: 16, college_id: 5, level: 1, semester: 1,
     content_type: "exam", title: "اختبار منتصف الفصل 1445",
     file_name: "intro_it_midterm.pdf", file_size_mb: 0.5,
+    telegram_message_id: STORAGE_MESSAGE_IDS[5],
+    telegram_file_id: "BQACAgQAAyEGAATeKAPyAAMCamf27c_B9s_Wt6oiZM5wkq2J9U",
     added_by_position_id: "college_admin_5", added_by_telegram_id: 1000002,
     added_at: "2026-01-20", is_starred: false, download_count: 234,
     is_active: true, academic_year: "2025-2026",
   },
-  // برمجة Python
+  // برمجة Python (كلية الحاسبات)
   {
     id: 4, subject_id: 102, specialty_id: 16, college_id: 5, level: 1, semester: 1,
     content_type: "book_theory", title: "برمجة Python - المقرر النظري",
     file_name: "python_theory.pdf", file_size_mb: 5.1,
+    telegram_message_id: STORAGE_MESSAGE_IDS[5],
+    telegram_file_id: "BQACAgQAAyEGAATeKAPyAAMCamf27c_B9s_Wt6oiZM5wkq2J9U",
     added_by_position_id: "college_admin_5", added_by_telegram_id: 1000002,
     added_at: "2026-01-15", is_starred: true, download_count: 312,
     is_active: true, academic_year: "2025-2026",
@@ -323,33 +340,42 @@ export const MOCK_CONTENT: MockContent[] = [
     id: 5, subject_id: 102, specialty_id: 16, college_id: 5, level: 1, semester: 1,
     content_type: "summary", title: "ملخص Python شامل",
     file_name: "python_summary.pdf", file_size_mb: 0.9,
+    telegram_message_id: STORAGE_MESSAGE_IDS[5],
+    telegram_file_id: "BQACAgQAAyEGAATeKAPyAAMCamf27c_B9s_Wt6oiZM5wkq2J9U",
     added_by_position_id: "college_admin_5", added_by_telegram_id: 1000002,
     added_at: "2026-01-18", is_starred: false, download_count: 156,
     is_active: true, academic_year: "2025-2026",
   },
+  // قواعد البيانات (كلية الحاسبات)
   {
-    id: 6, subject_id: 102, specialty_id: 16, college_id: 5, level: 1, semester: 1,
-    content_type: "video", title: "شرح أساسيات Python",
-    file_name: "python_video_intro.mp4", file_size_mb: 45.2,
-    added_by_position_id: "college_admin_5", added_by_telegram_id: 1000002,
-    added_at: "2026-01-22", is_starred: false, download_count: 89,
-    is_active: true, academic_year: "2025-2026",
-  },
-  // قواعد البيانات
-  {
-    id: 7, subject_id: 108, specialty_id: 16, college_id: 5, level: 1, semester: 2,
+    id: 6, subject_id: 108, specialty_id: 16, college_id: 5, level: 1, semester: 2,
     content_type: "book_theory", title: "قواعد البيانات (1) - المقرر",
     file_name: "db_theory.pdf", file_size_mb: 3.8,
+    telegram_message_id: STORAGE_MESSAGE_IDS[5],
+    telegram_file_id: "BQACAgQAAyEGAATeKAPyAAMCamf27c_B9s_Wt6oiZM5wkq2J9U",
     added_by_position_id: "college_admin_5", added_by_telegram_id: 1000002,
     added_at: "2026-02-10", is_starred: true, download_count: 198,
     is_active: true, academic_year: "2025-2026",
   },
+  // محتوى تجريبي لكلية الطب (message_id=4)
   {
-    id: 8, subject_id: 108, specialty_id: 16, college_id: 5, level: 1, semester: 2,
-    content_type: "exam", title: "اختبار نهائي قواعد بيانات 1444",
-    file_name: "db_final.pdf", file_size_mb: 0.6,
-    added_by_position_id: "college_admin_5", added_by_telegram_id: 1000002,
-    added_at: "2026-02-15", is_starred: false, download_count: 287,
+    id: 7, subject_id: 101, specialty_id: 1, college_id: 1, level: 1, semester: 1,
+    content_type: "book_theory", title: "مقدمة في الطب - المقرر النظري",
+    file_name: "med_intro.pdf", file_size_mb: 5.5,
+    telegram_message_id: STORAGE_MESSAGE_IDS[1], // ← message_id حقيقي من قناة الطب
+    telegram_file_id: "BQACAgQAAyEGAAMBBo8vyAADBGpn9uxqRyi-dZUPKcq0Aaaf_W",
+    added_by_position_id: "college_admin_1", added_by_telegram_id: 1000005,
+    added_at: "2026-01-20", is_starred: true, download_count: 89,
+    is_active: true, academic_year: "2025-2026",
+  },
+  {
+    id: 8, subject_id: 101, specialty_id: 1, college_id: 1, level: 1, semester: 1,
+    content_type: "exam", title: "اختبار تشريحي - منتصف الفصل",
+    file_name: "anatomy_midterm.pdf", file_size_mb: 0.8,
+    telegram_message_id: STORAGE_MESSAGE_IDS[1],
+    telegram_file_id: "BQACAgQAAyEGAAMBBo8vyAADBGpn9uxqRyi-dZUPKcq0Aaaf_W",
+    added_by_position_id: "college_admin_1", added_by_telegram_id: 1000005,
+    added_at: "2026-02-01", is_starred: false, download_count: 145,
     is_active: true, academic_year: "2025-2026",
   },
 ];
@@ -474,12 +500,14 @@ export function getMockAdminUser(telegramId: number): MockAdminUser | undefined 
 
 // مساعد: الحصول على اسم المادة من subject_id
 export function getSubjectNameById(subjectId: number): string {
-  // سيُستبدل لاحقاً باستعلام من SUBJECTS
   const names: Record<number, string> = {
     101: "مقدمة في تقنية المعلومات",
     102: "برمجة حاسوب (1) - Python",
     108: "قواعد البيانات (1)",
     208: "الخوارزميات",
+    301: "مقدمة في الطب",
+    302: "التشريح البشري",
+    303: "الكيمياء الحيوية",
   };
   return names[subjectId] || "مادة غير معروفة";
 }

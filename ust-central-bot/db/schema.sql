@@ -370,6 +370,10 @@ INSERT INTO colleges (id, name, name_normalized, short_name, emoji, display_orde
   (6, 'كلية العلوم الإدارية', 'كلية العلوم الإدارية', 'العلوم الإدارية', '📊', 6),
   (7, 'كلية العلوم الإنسانية والاجتماعية', 'كلية العلوم الإنسانية', 'العلوم الإنسانية والاجتماعية', '📚', 7);
 
+-- تحديث قنوات التخزين الفعلية (للكليات التي تم إنشاء قنوات لها)
+UPDATE colleges SET storage_channel_id = '-1004405014472' WHERE id = 1; -- كلية الطب
+UPDATE colleges SET storage_channel_id = '-1003727164402' WHERE id = 5; -- كلية الحاسبات
+
 -- التخصصات الـ 34
 INSERT INTO specialties (id, college_id, name, name_normalized, short_name, levels_count) VALUES
   (1, 1, 'طب وجراحة', 'طب وجراحة', 'طب وجراحة', 6),

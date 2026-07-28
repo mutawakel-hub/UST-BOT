@@ -46,8 +46,17 @@ const IT_SUBJECTS: Subject[] = [
   { id: 210, specialty_id: 16, level: 2, semester: 2, name: "اللغة الإنجليزية (4)", has_theory: true, has_practical: false },
 ];
 
-// قائمة بكل المواد (IT فقط في البداية)
-export const SUBJECTS: Subject[] = [...IT_SUBJECTS];
+// مواد تخصص طب وجراحة (specialty_id=1) - المستوى الأول
+const MED_SUBJECTS: Subject[] = [
+  { id: 301, specialty_id: 1, level: 1, semester: 1, name: "مقدمة في الطب", has_theory: true, has_practical: true },
+  { id: 302, specialty_id: 1, level: 1, semester: 1, name: "التشريح البشري", has_theory: true, has_practical: true },
+  { id: 303, specialty_id: 1, level: 1, semester: 1, name: "الكيمياء الحيوية", has_theory: true, has_practical: false },
+  { id: 304, specialty_id: 1, level: 1, semester: 1, name: "علم الأنسجة", has_theory: true, has_practical: false },
+  { id: 305, specialty_id: 1, level: 1, semester: 1, name: "اللغة الإنجليزية الطبية", has_theory: true, has_practical: false },
+];
+
+// قائمة بكل المواد (IT + الطب)
+export const SUBJECTS: Subject[] = [...IT_SUBJECTS, ...MED_SUBJECTS];
 
 // ============================================
 // ملفات وهمية لكل مادة وتصنيف
@@ -203,8 +212,8 @@ export function getSubjectsBySpecialtyLevelSemester(
     (s) => s.specialty_id === specialtyId && s.level === level && s.semester === semester
   );
 
-  // إن لم تكن مواد موجودة (غير IT)، أضف مادة تجريبية واحدة
-  if (subjects.length === 0 && specialtyId !== 16) {
+  // إن لم تكن مواد موجودة (غير IT والطب)، أضف مادة تجريبية واحدة
+  if (subjects.length === 0 && specialtyId !== 16 && specialtyId !== 1) {
     subjects = [
       {
         id: 9000 + specialtyId * 100 + level * 10 + semester,
