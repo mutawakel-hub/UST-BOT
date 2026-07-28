@@ -733,9 +733,9 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION award_contribution_points(
   p_student_telegram_id BIGINT,
   p_contribution_id BIGINT,
-  p_points INT DEFAULT 10,
   p_awarded_by_telegram_id BIGINT,
-  p_awarded_by_position_id TEXT
+  p_awarded_by_position_id TEXT,
+  p_points INT DEFAULT 10
 ) RETURNS VOID AS $$
 BEGIN
   -- إضافة سجل النقاط
@@ -830,6 +830,7 @@ CREATE INDEX idx_subscriptions_specialty ON student_subscriptions(scope_college_
 -- ============================================
 -- Function: الحصول على مستلمي التعميم
 -- ============================================
+-- ملاحظة: المعاملات بدون default تأتي أولاً (p_scope_type إلزامي)
 CREATE OR REPLACE FUNCTION get_broadcast_recipients(
   p_scope_type TEXT,
   p_college_id INT DEFAULT NULL,
@@ -838,10 +839,8 @@ CREATE OR REPLACE FUNCTION get_broadcast_recipients(
 ) RETURNS TABLE (telegram_id BIGINT) AS $$
 BEGIN
   IF p_scope_type = 'all' THEN
-    -- كل الطلاب المسجّلين
     RETURN QUERY SELECT telegram_id FROM students WHERE is_blocked = FALSE;
   ELSIF p_scope_type = 'college' THEN
-    -- كل طلاب الكلية (أي تخصص/مستوى)
     RETURN QUERY
     SELECT s.telegram_id FROM students s
     JOIN student_subscriptions sub ON s.telegram_id = sub.student_telegram_id
@@ -849,7 +848,6 @@ BEGIN
       AND sub.scope_college_id = p_college_id
       AND s.is_blocked = FALSE;
   ELSIF p_scope_type = 'specialty' THEN
-    -- كل طلاب التخصص (أي مستوى)
     RETURN QUERY
     SELECT s.telegram_id FROM students s
     JOIN student_subscriptions sub ON s.telegram_id = sub.student_telegram_id
@@ -858,7 +856,6 @@ BEGIN
       AND sub.scope_specialty_id = p_specialty_id
       AND s.is_blocked = FALSE;
   ELSIF p_scope_type = 'level' THEN
-    -- طلاب مستوى محدد في تخصص محدد
     RETURN QUERY
     SELECT s.telegram_id FROM students s
     JOIN student_subscriptions sub ON s.telegram_id = sub.student_telegram_id
