@@ -86,16 +86,24 @@ export function initRbac(supabase: SupabaseClient, cacheKv: KVNamespace): void {
 // المستخدم لديه عدة مناصب. نُجمّعها هنا في UserPermissions واحدة.
 // ============================================
 export async function getUserPermissions(telegramId: number): Promise<UserPermissions> {
+  console.log(`🔍 [RBAC] getUserPermissions(${telegramId}) called`);
+
   // 1. حاول قراءة من cache أولاً
   const cacheKey = `perms:${telegramId}`;
   const cached = await cacheStore.get(cacheKey);
   if (cached) {
-    return deserializePermissions(cached);
+    console.log(`✅ [RBAC] Cache HIT for user ${telegramId}`);
+    console.log(`   Cache content:`, JSON.stringify(cached).substring(0, 200));
+    const result = deserializePermissions(cached);
+    console.log(`   Deserialized: positions=${result.positions.length}, permissions=${result.permissions.size}, is_central=${result.is_central}`);
+    return result;
   }
+  console.log(`❌ [RBAC] Cache MISS for user ${telegramId}`);
 
   // 2. اقرأ من Supabase عبر View `user_permissions`
   let rows: any[] = [];
   try {
+    console.log(`📡 [RBAC] Querying user_permissions view for ${telegramId}...`);
     const result = await supabaseClient.select<{
       position_id: string;
       position_level: PositionLevel;
@@ -110,18 +118,20 @@ export async function getUserPermissions(telegramId: number): Promise<UserPermis
       filter: `user_telegram_id=eq.${telegramId}`,
     });
     rows = Array.isArray(result) ? result : [];
+    console.log(`📊 [RBAC] Query returned ${rows.length} rows`);
+    if (rows.length > 0) {
+      console.log(`   First row:`, JSON.stringify(rows[0]));
+    }
   } catch (e: any) {
     // تشخيص مفصل للأخطاء
     const errMsg = String(e?.message || e);
+    console.error(`❌ [RBAC] Supabase error for user ${telegramId}:`, errMsg);
     if (errMsg.includes("404") || errMsg.includes("Does not exist") || errMsg.includes("schema cache")) {
-      console.error("❌ View 'user_permissions' not found in database!");
+      console.error("   → View 'user_permissions' not found in database!");
       console.error("   → Apply db/schema.sql to Supabase via SQL Editor");
-      console.error("   → OR run: psql $SUPABASE_DB_URL -f db/schema.sql");
     } else if (errMsg.includes("permission denied")) {
-      console.error("❌ Permission denied on 'user_permissions' view");
+      console.error("   → Permission denied on 'user_permissions' view");
       console.error("   → Check RLS policies or use service_role key");
-    } else {
-      console.error("❌ getUserPermissions: Supabase error:", errMsg);
     }
     return emptyPermissions();
   }
