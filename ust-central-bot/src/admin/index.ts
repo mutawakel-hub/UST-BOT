@@ -28,6 +28,8 @@ import {
   MOCK_COMMITTEE_CHANNELS,
   MOCK_HONORS,
   MOCK_STUDENTS,
+  ALL_MOCK_STUDENTS,
+  MOCK_SUBSCRIPTIONS,
   CONTENT_TYPES,
   type MockContribution,
   type MockContent,
@@ -40,6 +42,8 @@ import {
   getContentTypeEmoji,
   getSubjectNameById,
   getTopContributors,
+  getBroadcastRecipients,
+  getStudentCountByScope,
 } from "../shared/data/admins";
 import {
   getUserPermissions,
@@ -82,6 +86,10 @@ interface AdminSession {
   awaiting_honor_new_data?: { student_id?: number; title?: string };
   // فلتر استعراض المحتوى
   content_filter?: { college_id?: number; specialty_id?: number; subject_id?: number; content_type?: string };
+  // سياق التعميم الحالي (يحفظ النطاق + عدد المستلمين)
+  broadcast_context?: { scope_type: string; scope_college_id?: number; scope_specialty_id?: number; scope_level?: number; scope_label: string; count: number };
+  // نص التعميم المؤقت (يُحفظ عند المعاينة)
+  pending_broadcast_text?: string;
 }
 
 const adminSessions = new Map<number, AdminSession>();
@@ -214,6 +222,9 @@ export function createAdminBot(token: string): Bot {
     const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     // إعادة ضبط حالات الانتظار
     session.awaiting_broadcast_text = undefined;
+    session.awaiting_broadcast_scope = undefined;
+    session.broadcast_context = undefined;
+    session.pending_broadcast_text = undefined;
     session.awaiting_subject_add = undefined;
     session.awaiting_text_edit = undefined;
     session.awaiting_text_value = undefined;
@@ -224,6 +235,9 @@ export function createAdminBot(token: string): Bot {
     session.awaiting_position_assign = undefined;
     session.awaiting_position_revoke = undefined;
     session.awaiting_channel_edit = undefined;
+    session.awaiting_honor_reject = undefined;
+    session.awaiting_honor_new_step = undefined;
+    session.awaiting_honor_new_data = undefined;
     session.content_filter = undefined;
 
     const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
@@ -694,46 +708,267 @@ export function createAdminBot(token: string): Bot {
     );
   });
 
-  // ====== A7: التعميم ======
+  // ====== A7: التعميم (ديناميكي حسب الصلاحية) ======
   bot.callbackQuery("broadcast", async (ctx) => {
     await ctx.answerCallbackQuery();
     const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
     const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
 
     const kb = new InlineKeyboard();
-    if (perms.permissions.has("central_broadcast")) {
-      kb.text("🌍 للجميع", "broadcast_all");
+    let title: string = ADMIN_TEXTS.broadcast.title;
+
+    if (perms.is_central) {
+      // المركزي: 4 خيارات
+      title = ADMIN_TEXTS.broadcast.title_for_central;
+      kb.text(ADMIN_TEXTS.broadcast.btn_all, "broadcast_scope_all").row();
+      kb.text("🏛 لكلية محددة", "broadcast_select_college").row();
+      kb.text("📚 لتخصص محدد", "broadcast_select_specialty").row();
+      kb.text("📊 لمستوى محدد", "broadcast_select_level").row();
+    } else if (perms.positions.some((p) => p.level === "college")) {
+      // مسؤول الكلية: 3 خيارات (كلّيته + تخصص في كليته + مستوى في تخصص كليته)
+      const collegePos = perms.positions.find((p) => p.level === "college");
+      const college = getCollegeById(collegePos?.college_id || 0);
+      const collegeCount = getStudentCountByScope({ scope_type: "college", scope_college_id: collegePos?.college_id });
+      title = ADMIN_TEXTS.broadcast.title_for_college(college?.name || "");
+      kb.text(ADMIN_TEXTS.broadcast.btn_my_college(college?.short_name || "", collegeCount), `broadcast_scope_college_${collegePos?.college_id}`).row();
+      kb.text("📚 لتخصص محدد في كليتي", "broadcast_select_specialty_in_my_college").row();
+      kb.text("📊 لمستوى محدد في كليتي", "broadcast_select_level_in_my_college").row();
+    } else if (perms.positions.some((p) => p.level === "level")) {
+      // مسؤول الدفعة: 1 خيار (مستواه فقط)
+      const levelPos = perms.positions.find((p) => p.level === "level");
+      const spec = getSpecialtyById(levelPos?.specialty_id || 0);
+      const levelCount = getStudentCountByScope({
+        scope_type: "level",
+        scope_college_id: levelPos?.college_id,
+        scope_specialty_id: levelPos?.specialty_id,
+        scope_level: levelPos?.level_num,
+      });
+      title = ADMIN_TEXTS.broadcast.title_for_level(spec?.short_name || "", levelPos?.level_num || 0);
+      kb.text(
+        ADMIN_TEXTS.broadcast.btn_my_level(spec?.short_name || "", levelPos?.level_num || 0, levelCount),
+        `broadcast_scope_level_${levelPos?.college_id}_${levelPos?.specialty_id}_${levelPos?.level_num}`
+      ).row();
     }
-    if (perms.permissions.has("college_broadcast")) {
-      kb.text("🏛 لكلية", "broadcast_college").row();
-    }
-    if (perms.permissions.has("level_broadcast")) {
-      kb.text("📊 لمستوى", "broadcast_level");
-    }
-    kb.row();
     kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
 
-    await ctx.editMessageText(ADMIN_TEXTS.broadcast.title, {
+    await ctx.editMessageText(title, {
       reply_markup: kb,
       parse_mode: "Markdown",
     });
   });
 
-  bot.callbackQuery(/broadcast_(all|college|major|level)/, async (ctx) => {
-    const scope = ctx.match[1];
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    session.awaiting_broadcast_scope = scope;
-    session.awaiting_broadcast_text = true;
+  // المركزي: اختيار الكلية للتعاميم
+  bot.callbackQuery("broadcast_select_college", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const scopeLabels: Record<string, string> = {
-      all: "🌍 للجميع", college: "🏛 لكلية", major: "📚 لتخصص", level: "📊 لمستوى",
-    };
+    const kb = new InlineKeyboard();
+    COLLEGES.forEach((c) => {
+      const count = getStudentCountByScope({ scope_type: "college", scope_college_id: c.id });
+      kb.text(`${c.emoji} ${c.short_name} (${count})`, `broadcast_scope_college_${c.id}`).row();
+    });
+    kb.text("🔙 التعميم", "broadcast");
+    await ctx.editMessageText(ADMIN_TEXTS.broadcast.select_college, {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  });
+
+  // المركزي: اختيار التخصص للتعاميم (أولاً يختار الكلية)
+  bot.callbackQuery("broadcast_select_specialty", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const kb = new InlineKeyboard();
+    COLLEGES.forEach((c) => {
+      kb.text(`${c.emoji} ${c.short_name}`, `broadcast_spec_select_college_${c.id}`).row();
+    });
+    kb.text("🔙 التعميم", "broadcast");
+    await ctx.editMessageText("📚 اختر الكلية أولاً:", {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  });
+
+  bot.callbackQuery(/broadcast_spec_select_college_(\d+)/, async (ctx) => {
+    const collegeId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+    const college = getCollegeById(collegeId);
+    const specialties = getSpecialtiesByCollege(collegeId);
+    const kb = new InlineKeyboard();
+    specialties.forEach((s) => {
+      const count = getStudentCountByScope({ scope_type: "specialty", scope_college_id: collegeId, scope_specialty_id: s.id });
+      kb.text(`${s.short_name} (${count})`, `broadcast_scope_specialty_${collegeId}_${s.id}`).row();
+    });
+    kb.text("🔙 الكليات", "broadcast_select_specialty");
+    await ctx.editMessageText(ADMIN_TEXTS.broadcast.select_specialty(college?.name || ""), {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  });
+
+  // مسؤول الكلية: اختيار التخصص في كليته
+  bot.callbackQuery("broadcast_select_specialty_in_my_college", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    const collegePos = perms.positions.find((p) => p.level === "college");
+    const college = getCollegeById(collegePos?.college_id || 0);
+    const specialties = getSpecialtiesByCollege(collegePos?.college_id || 0);
+    const kb = new InlineKeyboard();
+    specialties.forEach((s) => {
+      const count = getStudentCountByScope({
+        scope_type: "specialty",
+        scope_college_id: collegePos?.college_id,
+        scope_specialty_id: s.id,
+      });
+      kb.text(`${s.short_name} (${count})`, `broadcast_scope_specialty_${collegePos?.college_id}_${s.id}`).row();
+    });
+    kb.text("🔙 التعميم", "broadcast");
+    await ctx.editMessageText(ADMIN_TEXTS.broadcast.select_specialty(college?.name || ""), {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  });
+
+  // المركزي + مسؤول الكلية: اختيار المستوى (أولاً يختار التخصص)
+  bot.callbackQuery("broadcast_select_level", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const kb = new InlineKeyboard();
+    COLLEGES.forEach((c) => {
+      kb.text(`${c.emoji} ${c.short_name}`, `broadcast_lvl_select_college_${c.id}`).row();
+    });
+    kb.text("🔙 التعميم", "broadcast");
+    await ctx.editMessageText("📊 اختر الكلية أولاً:", {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  });
+
+  bot.callbackQuery(/broadcast_lvl_select_college_(\d+)/, async (ctx) => {
+    const collegeId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+    const college = getCollegeById(collegeId);
+    const specialties = getSpecialtiesByCollege(collegeId);
+    const kb = new InlineKeyboard();
+    specialties.forEach((s) => {
+      kb.text(s.short_name, `broadcast_lvl_select_spec_${collegeId}_${s.id}`).row();
+    });
+    kb.text("🔙 الكليات", "broadcast_select_level");
+    await ctx.editMessageText(`📊 اختر التخصص في ${college?.name}:`, {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  });
+
+  bot.callbackQuery(/broadcast_lvl_select_spec_(\d+)_(\d+)/, async (ctx) => {
+    const collegeId = parseInt(ctx.match[1]);
+    const specId = parseInt(ctx.match[2]);
+    await ctx.answerCallbackQuery();
+    const spec = getSpecialtyById(specId);
+    const levels = getLevelsForSpecialty(specId);
+    const kb = new InlineKeyboard();
+    for (let i = 0; i < levels.length; i += 3) {
+      for (let j = 0; j < 3 && i + j < levels.length; j++) {
+        const lvl = levels[i + j];
+        const count = getStudentCountByScope({
+          scope_type: "level",
+          scope_college_id: collegeId,
+          scope_specialty_id: specId,
+          scope_level: lvl,
+        });
+        kb.text(`مستوى ${lvl} (${count})`, `broadcast_scope_level_${collegeId}_${specId}_${lvl}`);
+      }
+      kb.row();
+    }
+    kb.text("🔙 التخصصات", `broadcast_lvl_select_college_${collegeId}`);
+    await ctx.editMessageText(ADMIN_TEXTS.broadcast.select_level(spec?.short_name || ""), {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  });
+
+  // مسؤول الكلية: اختيار المستوى في كليته
+  bot.callbackQuery("broadcast_select_level_in_my_college", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    const collegePos = perms.positions.find((p) => p.level === "college");
+    const specialties = getSpecialtiesByCollege(collegePos?.college_id || 0);
+    const kb = new InlineKeyboard();
+    specialties.forEach((s) => {
+      kb.text(s.short_name, `broadcast_lvl_select_spec_${collegePos?.college_id}_${s.id}`).row();
+    });
+    kb.text("🔙 التعميم", "broadcast");
+    await ctx.editMessageText("📊 اختر التخصص في كليتك:", {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  });
+
+  // عند اختيار النطاق النهائي → طلب نص/صورة/ملف التعميم
+  bot.callbackQuery(/broadcast_scope_all/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const count = getStudentCountByScope({ scope_type: "all" });
+    session.awaiting_broadcast_scope = "all";
+    session.awaiting_broadcast_text = true;
+    session.broadcast_context = { scope_type: "all", scope_label: "🌍 كل الطلاب", count };
     await ctx.editMessageText(
-      ADMIN_TEXTS.broadcast.prompt_text(scopeLabels[scope]) +
-      "\n\n💡 *يمكنك إرسال:*\n" +
-      "📝 نص عادي (اكتب فقط)\n" +
-      "🖼 صورة (مع أو بدون تعليق)\n" +
-      "📎 ملف (PDF/DOCX/...)",
+      ADMIN_TEXTS.broadcast.prompt_text("🌍 كل الطلاب", count),
+      {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery(/broadcast_scope_college_(\d+)/, async (ctx) => {
+    const collegeId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+    const college = getCollegeById(collegeId);
+    const count = getStudentCountByScope({ scope_type: "college", scope_college_id: collegeId });
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.awaiting_broadcast_scope = "college";
+    session.awaiting_broadcast_text = true;
+    session.broadcast_context = { scope_type: "college", scope_college_id: collegeId, scope_label: `🏛 ${college?.name}`, count };
+    await ctx.editMessageText(
+      ADMIN_TEXTS.broadcast.prompt_text(`🏛 ${college?.name}`, count),
+      {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery(/broadcast_scope_specialty_(\d+)_(\d+)/, async (ctx) => {
+    const collegeId = parseInt(ctx.match[1]);
+    const specId = parseInt(ctx.match[2]);
+    await ctx.answerCallbackQuery();
+    const spec = getSpecialtyById(specId);
+    const count = getStudentCountByScope({ scope_type: "specialty", scope_college_id: collegeId, scope_specialty_id: specId });
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.awaiting_broadcast_scope = "specialty";
+    session.awaiting_broadcast_text = true;
+    session.broadcast_context = { scope_type: "specialty", scope_college_id: collegeId, scope_specialty_id: specId, scope_label: `📚 ${spec?.name}`, count };
+    await ctx.editMessageText(
+      ADMIN_TEXTS.broadcast.prompt_text(`📚 ${spec?.name}`, count),
+      {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  bot.callbackQuery(/broadcast_scope_level_(\d+)_(\d+)_(\d+)/, async (ctx) => {
+    const collegeId = parseInt(ctx.match[1]);
+    const specId = parseInt(ctx.match[2]);
+    const level = parseInt(ctx.match[3]);
+    await ctx.answerCallbackQuery();
+    const spec = getSpecialtyById(specId);
+    const count = getStudentCountByScope({ scope_type: "level", scope_college_id: collegeId, scope_specialty_id: specId, scope_level: level });
+    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.awaiting_broadcast_scope = "level";
+    session.awaiting_broadcast_text = true;
+    session.broadcast_context = { scope_type: "level", scope_college_id: collegeId, scope_specialty_id: specId, scope_level: level, scope_label: `📊 ${spec?.short_name} - مستوى ${level}`, count };
+    await ctx.editMessageText(
+      ADMIN_TEXTS.broadcast.prompt_text(`📊 ${spec?.short_name} - مستوى ${level}`, count),
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
@@ -743,14 +978,15 @@ export function createAdminBot(token: string): Bot {
 
   bot.callbackQuery("confirm_broadcast", async (ctx) => {
     const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const scope = session.awaiting_broadcast_scope || "all";
-    const recipientCounts: Record<string, number> = { all: 1247, college: 312, major: 89, level: 23 };
-    const count = recipientCounts[scope];
+    const ctxData = session.broadcast_context || { scope_label: "غير محدد", count: 0 };
+    const text = session.pending_broadcast_text || "(بدون نص)";
     session.awaiting_broadcast_text = undefined;
     session.awaiting_broadcast_scope = undefined;
+    session.broadcast_context = undefined;
+    session.pending_broadcast_text = undefined;
     await ctx.answerCallbackQuery({ text: "📢 تم الإرسال" });
     await ctx.editMessageText(
-      ADMIN_TEXTS.broadcast.sent(count),
+      ADMIN_TEXTS.broadcast.sent(ctxData.count, ctxData.scope_label),
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
@@ -1192,17 +1428,13 @@ export function createAdminBot(token: string): Bot {
       return;
     }
 
-    // استقبال نص التعميم
-    if (session.awaiting_broadcast_text) {
+    // استقبال نص التعميم (مع عرض المعاينة)
+    if (session.awaiting_broadcast_text && session.broadcast_context) {
       session.awaiting_broadcast_text = false;
-      const scopeLabels: Record<string, string> = {
-        all: "🌍 للجميع", college: "🏛 لكلية", major: "📚 لتخصص", level: "📊 لمستوى",
-      };
-      const recipientCounts: Record<string, number> = { all: 1247, college: 312, major: 89, level: 23 };
-      const scope = session.awaiting_broadcast_scope || "all";
-      const count = recipientCounts[scope];
+      session.pending_broadcast_text = ctx.message.text;
+      const ctxData = session.broadcast_context;
       await ctx.reply(
-        ADMIN_TEXTS.broadcast.preview(ctx.message.text, scopeLabels[scope], count),
+        ADMIN_TEXTS.broadcast.preview(ctx.message.text, ctxData.scope_label, ctxData.count),
         {
           reply_markup: new InlineKeyboard()
             .text(ADMIN_TEXTS.broadcast.btn_send, "confirm_broadcast")
@@ -1210,10 +1442,6 @@ export function createAdminBot(token: string): Bot {
           parse_mode: "Markdown",
         }
       );
-      // حفظ النص مؤقتاً (في الإنتاج سيكون في DB)
-      session.awaiting_broadcast_text = false;
-      // نعيد تفعيل القيمة في confirm_broadcast
-      (session as any)._lastBroadcastText = ctx.message.text;
       return;
     }
 
@@ -1411,20 +1639,18 @@ export function createAdminBot(token: string): Bot {
     await ctx.reply("👋 استخدم الأزرار للتنقل، أو /start للعودة للوحة الإدارة.");
   });
 
-  // ====== استقبال ملفات (رفع محتوى) ======
+  // ====== استقبال ملفات (للتعميمات + رفع محتوى) ======
   bot.on(":document", async (ctx) => {
     const session = adminSessions.get(ctx.from.id);
 
     // استقبال ملف للتعميم
-    if (session?.awaiting_broadcast_text && session.awaiting_broadcast_scope) {
+    if (session?.awaiting_broadcast_text && session.broadcast_context) {
+      const ctxData = session.broadcast_context;
       session.awaiting_broadcast_text = false;
+      session.broadcast_context = undefined;
       const doc = ctx.message.document;
-      const scope = session.awaiting_broadcast_scope;
-      session.awaiting_broadcast_scope = undefined;
-      const recipientCounts: Record<string, number> = { all: 1247, college: 312, major: 89, level: 23 };
-      const count = recipientCounts[scope] || 100;
       await ctx.reply(
-        `✅ *تم إرسال التعميم بنجاح!*\n\n📎 الملف: \`${doc.file_name}\`\n👥 المستلمون: ${count}\n📝 النوع: ملف`,
+        ADMIN_TEXTS.broadcast.sent_file(doc.file_name, ctxData.count, ctxData.scope_label),
         {
           reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
           parse_mode: "Markdown",
@@ -1447,16 +1673,14 @@ export function createAdminBot(token: string): Bot {
   // ====== استقبال صور (للتعميمات بصورة) ======
   bot.on(":photo", async (ctx) => {
     const session = adminSessions.get(ctx.from.id);
-    if (session?.awaiting_broadcast_text && session.awaiting_broadcast_scope) {
+    if (session?.awaiting_broadcast_text && session.broadcast_context) {
+      const ctxData = session.broadcast_context;
       session.awaiting_broadcast_text = false;
-      const scope = session.awaiting_broadcast_scope;
-      session.awaiting_broadcast_scope = undefined;
-      const recipientCounts: Record<string, number> = { all: 1247, college: 312, major: 89, level: 23 };
-      const count = recipientCounts[scope] || 100;
+      session.broadcast_context = undefined;
       const photo = ctx.message.photo[ctx.message.photo.length - 1];
       const caption = ctx.message.caption || "(بدون تعليق)";
       await ctx.reply(
-        `✅ *تم إرسال التعميم بنجاح!*\n\n🖼 صورة بحجم ${photo.width}×${photo.height}\n📝 التعليق: ${caption}\n👥 المستلمون: ${count}`,
+        ADMIN_TEXTS.broadcast.sent_photo(caption, ctxData.count, ctxData.scope_label),
         {
           reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
           parse_mode: "Markdown",
@@ -1747,7 +1971,7 @@ export default {
         return new Response(
           JSON.stringify({
             status: "ok", bot: env.BOT_USERNAME, environment: env.ENVIRONMENT,
-            version: "3.1", timestamp: new Date().toISOString(),
+            version: "3.2", timestamp: new Date().toISOString(),
           }),
           { headers: { "Content-Type": "application/json" } }
         );

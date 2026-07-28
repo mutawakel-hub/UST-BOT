@@ -612,6 +612,141 @@ export const MOCK_STUDENTS: MockStudent[] = [
   { telegram_id: 555999000, first_name: "محمد باوزير", total_points: 72, accepted_contributions: 6, specialty_id: 16, college_id: 5 },
 ];
 
+// ============================================
+// 100 طالب وهمي (للاختبار الواقعي للتعاميم)
+// ============================================
+const FIRST_NAMES = [
+  "أحمد", "محمد", "عبدالله", "يوسف", "خالد", "عمر", "سعد", "فهد", "إبراهيم", "ناصر",
+  "سارة", "فاطمة", "نورة", "ريم", "هند", "العنود", "مها", "لمى", "دلال", "أمل",
+  "عبدالرحمن", "ماجد", "تركي", "بدر", "نايف", "سلطان", "فaisal", "غانم", "زياد", "هاني",
+  "ابتسام", "أسماء", "جواهر", "روان", "شهد", "عالية", "لميس", "مريم", "نوف", "وفاء",
+  "أنس", "بلال", "ثامر", "حمد", "خالد", "روان", "سلمان", "طاهر", "عادل", "غسان",
+  "ليلى", "مونية", "نادية", "هبة", "إيمان", "بشرى", "جنان", "خديجة", "رنا", "سمية",
+  "وليد", "ياسر", "زاهر", "ناصر", "هشام", "كريم", "لؤي", "مازن", "نزار", "وسيم",
+  "آلاء", "بسمة", "تالا", "جنى", "حلا", "ربى", "سجا", "ضحى", "عفراء", "قمر",
+  "إياد", "بسام", "تامر", "جمال", "حاتم", "ربيع", "سامي", "صابر", "عاصم", "غيث",
+  "ميس", "نور", "هارون", "وسن", "يارا", "آية", "بشير", "حسام", "ربيع", "سحاب"
+];
+
+const LAST_NAMES = [
+  "العولقي", "الحداد", "الشريف", "الكثيري", "باوزير", "الجندي", "السقاف", "العزي",
+  "الحبشي", "الأهدل", "المخلافي", "الزرقة", "بامحمود", "الصبري", "الحيمد", "الشعبي",
+  "البطاطي", "العمراني", "الصالح", "الحمادي"
+];
+
+// توليد 100 طالب وهمي بشكل ثابت (لا Math.random)
+function generateMockStudents(): MockStudent[] {
+  const students: MockStudent[] = [];
+  // توزيع الطلاب على الكليات والتخصصات والمستويات
+  const distribution = [
+    { college_id: 5, specialty_id: 16, count: 25 }, // IT (الأكثر)
+    { college_id: 5, specialty_id: 18, count: 12 }, // AI
+    { college_id: 5, specialty_id: 19, count: 10 }, // الأمن السيبراني
+    { college_id: 4, specialty_id: 10, count: 8 },  // مدنية
+    { college_id: 4, specialty_id: 12, count: 7 },  // حاسوب وأنظمة
+    { college_id: 1, specialty_id: 1, count: 8 },   // طب
+    { college_id: 2, specialty_id: 5, count: 6 },   // أسنان
+    { college_id: 3, specialty_id: 6, count: 8 },   // صيدلة
+    { college_id: 6, specialty_id: 23, count: 9 },  // إدارة أعمال
+    { college_id: 7, specialty_id: 28, count: 7 },  // ترجمة
+  ];
+
+  let id = 600000000;
+  let nameIdx = 0;
+  for (const dist of distribution) {
+    for (let i = 0; i < dist.count; i++) {
+      const firstName = FIRST_NAMES[nameIdx % FIRST_NAMES.length];
+      const lastName = LAST_NAMES[(nameIdx * 3) % LAST_NAMES.length];
+      const level = (i % 4) + 1; // مستويات 1-4
+      students.push({
+        telegram_id: id++,
+        first_name: `${firstName} ${lastName}`,
+        total_points: (i * 7) % 50,
+        accepted_contributions: (i * 3) % 8,
+        specialty_id: dist.specialty_id,
+        college_id: dist.college_id,
+      });
+      nameIdx++;
+    }
+  }
+  return students;
+}
+
+// إضافة الـ 100 طالب للقائمة الموجودة (5 طلاب أساسيين + 100 = 105)
+export const ALL_MOCK_STUDENTS: MockStudent[] = [
+  ...MOCK_STUDENTS,
+  ...generateMockStudents(),
+];
+
+// ============================================
+// الاشتراكات (مشتقة من بيانات الطلاب)
+// ============================================
+export interface MockSubscription {
+  student_telegram_id: number;
+  scope_type: "level";
+  scope_college_id: number;
+  scope_specialty_id: number;
+  scope_level: number;
+  is_active: boolean;
+}
+
+export const MOCK_SUBSCRIPTIONS: MockSubscription[] = ALL_MOCK_STUDENTS.map((s) => ({
+  student_telegram_id: s.telegram_id,
+  scope_type: "level" as const,
+  scope_college_id: s.college_id!,
+  scope_specialty_id: s.specialty_id!,
+  scope_level: ((s.telegram_id % 4) + 1), // مستوى 1-4
+  is_active: true,
+}));
+
+// ============================================
+// Function: الحصول على مستلمي التعميم
+// ============================================
+export function getBroadcastRecipients(scope: {
+  scope_type: "all" | "college" | "specialty" | "level";
+  scope_college_id?: number;
+  scope_specialty_id?: number;
+  scope_level?: number;
+}): number[] {
+  if (scope.scope_type === "all") {
+    return ALL_MOCK_STUDENTS.map((s) => s.telegram_id);
+  }
+  return MOCK_SUBSCRIPTIONS
+    .filter((sub) => {
+      if (!sub.is_active) return false;
+      if (scope.scope_type === "college") {
+        return sub.scope_college_id === scope.scope_college_id;
+      }
+      if (scope.scope_type === "specialty") {
+        return (
+          sub.scope_college_id === scope.scope_college_id &&
+          sub.scope_specialty_id === scope.scope_specialty_id
+        );
+      }
+      if (scope.scope_type === "level") {
+        return (
+          sub.scope_college_id === scope.scope_college_id &&
+          sub.scope_specialty_id === scope.scope_specialty_id &&
+          sub.scope_level === scope.scope_level
+        );
+      }
+      return false;
+    })
+    .map((sub) => sub.student_telegram_id);
+}
+
+// ============================================
+// Function: عدد المسجلين حسب النطاق
+// ============================================
+export function getStudentCountByScope(scope: {
+  scope_type: "all" | "college" | "specialty" | "level";
+  scope_college_id?: number;
+  scope_specialty_id?: number;
+  scope_level?: number;
+}): number {
+  return getBroadcastRecipients(scope).length;
+}
+
 export function getTopContributors(specialtyId?: number, collegeId?: number, limit = 5): MockStudent[] {
   let students = [...MOCK_STUDENTS];
   if (specialtyId) {

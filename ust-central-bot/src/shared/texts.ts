@@ -14,6 +14,12 @@ export const TEXTS = {
       "• 🏆 شاهد أبرز المساهمين من زملائك\n" +
       "• 👤 تابع نشاطك (تحميلات + مساهمات)\n" +
       "• 🌟 ساهم في إثراء المحتوى",
+    welcome_registered: (name: string, college: string, specialty: string, level: number) =>
+      `🎓 *مرحباً بك ${name}!*\n` +
+      `*جامعة العلوم والتكنولوجيا - اليمن*\n\n` +
+      `📌 *تخصصك الحالي:*\n` +
+      `🏛 ${college}\n📚 ${specialty}\n📊 المستوى ${level}\n\n` +
+      "اختر الخدمة المطلوبة:",
     btn_colleges: "🏛 الكليات",
     btn_search: "🔍 بحث",
     btn_leaderboard: "🏆 لوحة الشرف",
@@ -21,6 +27,38 @@ export const TEXTS = {
     btn_committee: "📢 قناة اللجنة",
     btn_contact: "📞 تواصل معنا",
     btn_contribute: "🌟 المساهمة",
+  },
+
+  // ====== شاشة S0: التسجيل الإلزامي (لمستخدمي البوت الجدد) ======
+  registration: {
+    intro:
+      "👋 *مرحباً بك في البوت العلمي المركزي!*\n\n" +
+      "🚀 لإكمال تسجيلك والاستفادة من جميع الميزات، نحتاج لمعرفة تخصصك.\n\n" +
+      "📋 *لماذا نحتاج هذه المعلومات؟*\n" +
+      "• 📢 لتصلك تعاميم اللجنة العلمية الخاصة بتخصصك\n" +
+      "• 📊 لإحصائك ضمن لوحة الشرف\n" +
+      "• 🎯 لعرض محتوى تخصصك أولاً\n\n" +
+      "_العملية تستغرق 30 ثانية فقط._",
+    btn_start: "🚀 ابدأ التسجيل",
+    btn_later: "⏭ لاحقاً (تصفّح فقط)",
+    step: (step: number, total: number, label: string) =>
+      `📝 *التسجيل - خطوة ${step}/${total}*\n\n${label}`,
+    select_college: "اختر كليتك:",
+    select_specialty: "اختر تخصصك:",
+    select_level: "اختر مستواك الدراسي:",
+    complete: (name: string, college: string, specialty: string, level: number) =>
+      `✅ *تم التسجيل بنجاح!*\n\n` +
+      `👤 *الاسم:* ${name}\n` +
+      `🏛 *الكلية:* ${college}\n` +
+      `📚 *التخصص:* ${specialty}\n` +
+      `📊 *المستوى:* ${level}\n\n` +
+      "🎉 يمكنك الآن استخدام البوت بالكامل.\n" +
+      "📢 ستصلك تعاميم اللجنة العلمية لتخصصك تلقائياً.\n\n" +
+      "_يمكنك تغيير تخصصك لاحقاً من: 👤 حسابي → 🔄 تغيير التخصص_",
+    later_notice:
+      "⚠️ *التسجيل مؤجل*\n\n" +
+      "يمكنك تصفّح البوت بحرية، لكن لن تصلك تعاميم اللجنة العلمية.\n\n" +
+      "💡 يمكنك التسجيل لاحقاً من: 👤 حسابي → 📌 تحديد تخصصي",
   },
 
   // ====== شاشة S2: ChooseCollege ======
@@ -415,23 +453,58 @@ export const ADMIN_TEXTS = {
   // ====== شاشة A7: Broadcast ======
   broadcast: {
     title: "📢 *التعميم*\n\nاختر نطاق التعميم:",
-    btn_all: "🌍 للكل",
-    btn_college: "🏛 لكلية",
-    btn_major: "📚 لتخصص",
-    btn_level: "📊 لمستوى",
-    prompt_text: (scope: string) =>
-      `📝 *التعميم - ${scope}*\n\nأرسل نص التعميم الآن:`,
+    title_for_central: "📢 *التعميم (مسؤول مركزي)*\n\nاختر نطاق التعميم:",
+    title_for_college: (collegeName: string) =>
+      `📢 *التعميم (مسؤول ${collegeName})*\n\nاختر نطاق التعميم:`,
+    title_for_level: (specialtyName: string, level: number) =>
+      `📢 *التعميم (مسؤول دفعة ${specialtyName} - مستوى ${level})*\n\nاختر النطاق:`,
+    btn_all: "🌍 لكل الطلاب",
+    btn_college: (count: number) => "🏛 لكلية محددة",
+    btn_my_college: (collegeName: string, count: number) => `🏛 ${collegeName} (${count} طالب)`,
+    btn_specialty: (count: number) => "📚 لتخصص محدد",
+    btn_my_specialty: (specialtyName: string, count: number) => `📚 ${specialtyName} (${count} طالب)`,
+    btn_level: (count: number) => "📊 لمستوى محدد",
+    btn_my_level: (specialtyName: string, level: number, count: number) =>
+      `📊 ${specialtyName} - مستوى ${level} (${count} طالب)`,
+    select_college: "🏛 اختر الكلية للتعاميم:",
+    select_specialty: (collegeName: string) => `📚 اختر التخصص في ${collegeName}:`,
+    select_level: (specialtyName: string) => `📊 اختر المستوى في ${specialtyName}:`,
+    recipient_preview: (scopeLabel: string, count: number) =>
+      `📍 *النطاق:* ${scopeLabel}\n👥 *المستلمون:* ${count} طالب\n\n`,
+    prompt_text: (scopeLabel: string, count: number) =>
+      `📢 *التعميم*\n\n` +
+      `📍 النطاق: ${scopeLabel}\n` +
+      `👥 المستلمون: ${count} طالب\n\n` +
+      "💡 *يمكنك إرسال:*\n" +
+      "📝 نص عادي (اكتب فقط)\n" +
+      "🖼 صورة (مع أو بدون تعليق)\n" +
+      "📎 ملف (PDF/DOCX/...)",
     preview: (text: string, scope: string, recipientCount: number) =>
       `👀 *معاينة التعميم*\n\n` +
       `📍 النطاق: ${scope}\n` +
-      `👥 المستلمون المتوقعون: ${recipientCount}\n\n` +
+      `👥 المستلمون: ${recipientCount}\n\n` +
       `📝 *النص:*\n${text}\n\n` +
       "هل تريد الإرسال؟",
     btn_send: "✅ إرسال",
     btn_cancel: "❌ إلغاء",
-    sent: (count: number) =>
-      `✅ *تم إرسال التعميم*\n\n` +
-      `👥 عدد المستلمين: ${count}\n` +
+    sent: (count: number, scope: string) =>
+      `✅ *تم إرسال التعميم بنجاح!*\n\n` +
+      `📍 النطاق: ${scope}\n` +
+      `👥 المستلمون: ${count} طالب\n` +
+      `⏱ وقت الإرسال: ${new Date().toLocaleString("ar")}\n\n` +
+      "_في الإنتاج: سيتم الإرسال الفعلي عبر Cloudflare Queues._",
+    sent_file: (fileName: string, count: number, scope: string) =>
+      `✅ *تم إرسال التعميم بنجاح!*\n\n` +
+      `📎 الملف: \`${fileName}\`\n` +
+      `📍 النطاق: ${scope}\n` +
+      `👥 المستلمون: ${count} طالب\n` +
+      `⏱ وقت الإرسال: ${new Date().toLocaleString("ar")}`,
+    sent_photo: (caption: string, count: number, scope: string) =>
+      `✅ *تم إرسال التعميم بنجاح!*\n\n` +
+      `🖼 صورة\n` +
+      `📝 التعليق: ${caption}\n` +
+      `📍 النطاق: ${scope}\n` +
+      `👥 المستلمون: ${count} طالب\n` +
       `⏱ وقت الإرسال: ${new Date().toLocaleString("ar")}`,
   },
 

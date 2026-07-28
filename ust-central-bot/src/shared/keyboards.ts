@@ -46,9 +46,9 @@ export function mainMenuKeyboard(): InlineKeyboard {
 }
 
 // ============================================
-// S2: قائمة الكليات (مع Pagination)
+// S2: قائمة الكليات (مع Pagination + prefix اختياري للتسجيل)
 // ============================================
-export function collegesKeyboard(page = 0): InlineKeyboard {
+export function collegesKeyboard(page = 0, prefix = "col"): InlineKeyboard {
   const kb = new InlineKeyboard();
   const start = page * PAGE_SIZE;
   const end = Math.min(start + PAGE_SIZE, COLLEGES.length);
@@ -56,9 +56,9 @@ export function collegesKeyboard(page = 0): InlineKeyboard {
   for (let i = start; i < end; i += 2) {
     const c1 = COLLEGES[i];
     const c2 = COLLEGES[i + 1];
-    kb.text(`${c1.emoji} ${c1.short_name}`, `col_${c1.id}`);
+    kb.text(`${c1.emoji} ${c1.short_name}`, `${prefix}_${c1.id}`);
     if (c2) {
-      kb.text(`${c2.emoji} ${c2.short_name}`, `col_${c2.id}`);
+      kb.text(`${c2.emoji} ${c2.short_name}`, `${prefix}_${c2.id}`);
     }
     kb.row();
   }
@@ -67,10 +67,10 @@ export function collegesKeyboard(page = 0): InlineKeyboard {
   const totalPages = Math.ceil(COLLEGES.length / PAGE_SIZE);
   if (totalPages > 1) {
     if (page > 0) {
-      kb.text(TEXTS.navigation.prev_page, `colleges_page_${page - 1}`);
+      kb.text(TEXTS.navigation.prev_page, `${prefix === "col" ? "colleges" : prefix}_page_${page - 1}`);
     }
     if (page < totalPages - 1) {
-      kb.text(TEXTS.navigation.next_page, `colleges_page_${page + 1}`);
+      kb.text(TEXTS.navigation.next_page, `${prefix === "col" ? "colleges" : prefix}_page_${page + 1}`);
     }
     kb.row();
   }
@@ -80,9 +80,9 @@ export function collegesKeyboard(page = 0): InlineKeyboard {
 }
 
 // ============================================
-// S3: قائمة التخصصات لكلية معينة (مع زر قناة لجنة الكلية)
+// S3: قائمة التخصصات لكلية معينة (مع زر قناة لجنة الكلية + prefix اختياري)
 // ============================================
-export function majorsKeyboard(collegeId: number, page = 0): InlineKeyboard {
+export function majorsKeyboard(collegeId: number, page = 0, prefix = "major"): InlineKeyboard {
   const specialties = getSpecialtiesByCollege(collegeId);
   const kb = new InlineKeyboard();
   const start = page * PAGE_SIZE;
@@ -90,49 +90,53 @@ export function majorsKeyboard(collegeId: number, page = 0): InlineKeyboard {
 
   for (let i = start; i < end; i++) {
     const s = specialties[i];
-    kb.text(s.name, `major_${s.id}`).row();
+    kb.text(s.name, `${prefix}_${s.id}`).row();
   }
 
   const totalPages = Math.ceil(specialties.length / PAGE_SIZE);
   if (totalPages > 1) {
     if (page > 0) {
-      kb.text(TEXTS.navigation.prev_page, `majors_${collegeId}_page_${page - 1}`);
+      kb.text(TEXTS.navigation.prev_page, `${prefix === "major" ? "majors" : prefix}_${collegeId}_page_${page - 1}`);
     }
     if (page < totalPages - 1) {
-      kb.text(TEXTS.navigation.next_page, `majors_${collegeId}_page_${page + 1}`);
+      kb.text(TEXTS.navigation.next_page, `${prefix === "major" ? "majors" : prefix}_${collegeId}_page_${page + 1}`);
     }
     kb.row();
   }
 
-  // زر قناة اللجنة العلمية للكلية
-  kb.text("📢 قناة اللجنة العلمية - الكلية", `committee_college_${collegeId}`).row();
+  // زر قناة اللجنة العلمية للكلية (فقط في الوضع العادي، ليس في التسجيل)
+  if (prefix === "major") {
+    kb.text("📢 قناة اللجنة العلمية - الكلية", `committee_college_${collegeId}`).row();
+  }
 
-  kb.text(TEXTS.navigation.back_to_colleges, "back_to_colleges");
+  kb.text(prefix === "major" ? TEXTS.navigation.back_to_colleges : TEXTS.navigation.back_to_main, prefix === "major" ? "back_to_colleges" : "back_to_main");
   return kb;
 }
 
 // ============================================
-// S4: قائمة المستويات (مع زر قناة اللجنة للتخصص)
+// S4: قائمة المستويات (مع زر قناة اللجنة للتخصص + prefix اختياري)
 // ============================================
-export function levelsKeyboard(specialtyId: number): InlineKeyboard {
+export function levelsKeyboard(specialtyId: number, prefix = "level"): InlineKeyboard {
   const levels = getLevelsForSpecialty(specialtyId);
   const kb = new InlineKeyboard();
 
   // عرض المستويات في صفوف من 3
   for (let i = 0; i < levels.length; i += 3) {
     for (let j = 0; j < 3 && i + j < levels.length; j++) {
-      kb.text(`المستوى ${levels[i + j]}`, `level_${levels[i + j]}_spec_${specialtyId}`);
+      kb.text(`المستوى ${levels[i + j]}`, `${prefix}_${levels[i + j]}_spec_${specialtyId}`);
     }
     kb.row();
   }
 
-  // زر قناة اللجنة العلمية للتخصص
-  kb.text("📢 قناة اللجنة العلمية", `committee_specialty_${specialtyId}`).row();
-
-  // زر الخطة الاسترشادية
-  kb.text("🗺 الخطة الاسترشادية", `plan_${specialtyId}`).row();
-
-  kb.text(TEXTS.navigation.back_to_majors, `back_to_majors_${specialtyId}`);
+  // زر قناة اللجنة العلمية للتخصص (فقط في الوضع العادي)
+  if (prefix === "level") {
+    kb.text("📢 قناة اللجنة العلمية", `committee_specialty_${specialtyId}`).row();
+    // زر الخطة الاسترشادية
+    kb.text("🗺 الخطة الاسترشادية", `plan_${specialtyId}`).row();
+    kb.text(TEXTS.navigation.back_to_majors, `back_to_majors_${specialtyId}`);
+  } else {
+    kb.text(TEXTS.navigation.back_to_main, "back_to_main");
+  }
   return kb;
 }
 
@@ -447,14 +451,11 @@ export function subjectsMgmtKeyboard(): InlineKeyboard {
   return kb;
 }
 
-// A7: التعميم
+// A7: التعميم (لم يعد يُستخدم - التعميمات أصبحت ديناميكية في admin/index.ts)
+// تركنا الدالة للتوافق مع أي استدعاءات قديمة
 export function broadcastKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
-  kb.text(ADMIN_TEXTS.broadcast.btn_all, "broadcast_all");
-  kb.text(ADMIN_TEXTS.broadcast.btn_college, "broadcast_college");
-  kb.row();
-  kb.text(ADMIN_TEXTS.broadcast.btn_major, "broadcast_major");
-  kb.text(ADMIN_TEXTS.broadcast.btn_level, "broadcast_level");
+  kb.text("📢 للتعميم", "broadcast");
   kb.row();
   kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
   return kb;

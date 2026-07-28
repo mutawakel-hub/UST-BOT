@@ -795,8 +795,125 @@ WHERE level = 'level';
 -- ============================================
 -- نهاية الـ Schema
 -- ============================================
--- إجمالي الجداول: 23 جدول (مع نقاط + تكريم + سجلات + إشعارات)
--- إجمالي المناصب: 8 (1 مركزي + 7 كليات) + مسؤولي الدفع
--- إجمالي الصلاحيات: 19 صلاحية (16 + 3 جديدة)
--- Functions: 4 (user_has_permission + get_top_contributors + award_points + notify_rejected)
+-- ============================================
+-- 24. اشتراكات الطلاب في النطاقات (للتعاميم)
+-- ============================================
+-- التسجيل الصريح: عند أول /start، الطالب يختار كليته + تخصصه + مستواه
+-- هذه البيانات تُستخدم لاستهداف التعاميم بدقة
+CREATE TABLE student_subscriptions (
+  id BIGSERIAL PRIMARY KEY,
+  student_telegram_id BIGINT NOT NULL REFERENCES students(telegram_id) ON DELETE CASCADE,
+  -- النطاق: الطالب يسجّل دائماً على مستوى (level) محدد
+  scope_type TEXT NOT NULL DEFAULT 'level' CHECK (scope_type IN ('college', 'specialty', 'level')),
+  scope_college_id INT NOT NULL REFERENCES colleges(id),
+  scope_specialty_id INT REFERENCES specialties(id),
+  scope_level INT,
+  subscribed_at TIMESTAMPTZ DEFAULT NOW(),
+  is_active BOOLEAN DEFAULT TRUE,
+  -- القيود
+  CONSTRAINT chk_subscription_scope CHECK (
+    (scope_type = 'college'   AND scope_specialty_id IS NULL AND scope_level IS NULL) OR
+    (scope_type = 'specialty' AND scope_specialty_id IS NOT NULL AND scope_level IS NULL) OR
+    (scope_type = 'level'     AND scope_specialty_id IS NOT NULL AND scope_level IS NOT NULL)
+  ),
+  -- كل طالب له اشتراك واحد فقط (نقطة التسجيل)
+  UNIQUE(student_telegram_id)
+);
+CREATE INDEX idx_subscriptions_scope ON student_subscriptions(scope_type, scope_college_id, scope_specialty_id, scope_level) WHERE is_active = TRUE;
+CREATE INDEX idx_subscriptions_college ON student_subscriptions(scope_college_id) WHERE is_active = TRUE;
+CREATE INDEX idx_subscriptions_specialty ON student_subscriptions(scope_college_id, scope_specialty_id) WHERE is_active = TRUE;
+
+-- ============================================
+-- Function: الحصول على مستلمي التعميم
+-- ============================================
+CREATE OR REPLACE FUNCTION get_broadcast_recipients(
+  p_scope_type TEXT,
+  p_college_id INT DEFAULT NULL,
+  p_specialty_id INT DEFAULT NULL,
+  p_level INT DEFAULT NULL
+) RETURNS TABLE (telegram_id BIGINT) AS $$
+BEGIN
+  IF p_scope_type = 'all' THEN
+    -- كل الطلاب المسجّلين
+    RETURN QUERY SELECT telegram_id FROM students WHERE is_blocked = FALSE;
+  ELSIF p_scope_type = 'college' THEN
+    -- كل طلاب الكلية (أي تخصص/مستوى)
+    RETURN QUERY
+    SELECT s.telegram_id FROM students s
+    JOIN student_subscriptions sub ON s.telegram_id = sub.student_telegram_id
+    WHERE sub.is_active = TRUE
+      AND sub.scope_college_id = p_college_id
+      AND s.is_blocked = FALSE;
+  ELSIF p_scope_type = 'specialty' THEN
+    -- كل طلاب التخصص (أي مستوى)
+    RETURN QUERY
+    SELECT s.telegram_id FROM students s
+    JOIN student_subscriptions sub ON s.telegram_id = sub.student_telegram_id
+    WHERE sub.is_active = TRUE
+      AND sub.scope_college_id = p_college_id
+      AND sub.scope_specialty_id = p_specialty_id
+      AND s.is_blocked = FALSE;
+  ELSIF p_scope_type = 'level' THEN
+    -- طلاب مستوى محدد في تخصص محدد
+    RETURN QUERY
+    SELECT s.telegram_id FROM students s
+    JOIN student_subscriptions sub ON s.telegram_id = sub.student_telegram_id
+    WHERE sub.is_active = TRUE
+      AND sub.scope_college_id = p_college_id
+      AND sub.scope_specialty_id = p_specialty_id
+      AND sub.scope_level = p_level
+      AND s.is_blocked = FALSE;
+  END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================
+-- Function: تسجيل طالب جديد (التسجيل الصريح)
+-- ============================================
+CREATE OR REPLACE FUNCTION register_student(
+  p_telegram_id BIGINT,
+  p_first_name TEXT,
+  p_username TEXT,
+  p_college_id INT,
+  p_specialty_id INT,
+  p_level INT
+) RETURNS VOID AS $$
+BEGIN
+  -- إدراج/تحديث بيانات الطالب
+  INSERT INTO students (telegram_id, first_name, username, current_college_id, current_specialty_id, current_level)
+  VALUES (p_telegram_id, p_first_name, p_username, p_college_id, p_specialty_id, p_level)
+  ON CONFLICT (telegram_id) DO UPDATE
+  SET first_name = EXCLUDED.first_name,
+      username = EXCLUDED.username,
+      current_college_id = EXCLUDED.current_college_id,
+      current_specialty_id = EXCLUDED.current_specialty_id,
+      current_level = EXCLUDED.current_level,
+      last_activity = NOW();
+
+  -- إدراج/تحديث الاشتراك (نطاق المستوى)
+  INSERT INTO student_subscriptions (student_telegram_id, scope_type, scope_college_id, scope_specialty_id, scope_level)
+  VALUES (p_telegram_id, 'level', p_college_id, p_specialty_id, p_level)
+  ON CONFLICT (student_telegram_id) DO UPDATE
+  SET scope_college_id = EXCLUDED.scope_college_id,
+      scope_specialty_id = EXCLUDED.scope_specialty_id,
+      scope_level = EXCLUDED.scope_level,
+      is_active = TRUE,
+      subscribed_at = NOW();
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================
+-- تحديث جدول broadcasts ليدعم نطاقات أوسع
+-- ============================================
+-- ملاحظة: الجدول موجود مسبقاً، نضيف فقط أعمدة جديدة لو لزم
+-- scope_type موجود بالفعل: 'all', 'college', 'specialty', 'level'
+-- العمود scope_specialty_id موجود بالفعل
+
+-- ============================================
+-- نهاية الـ Schema
+-- ============================================
+-- إجمالي الجداول: 24 جدول (مع اشتراكات الطلاب)
+-- إجمالي المناصب: 9 (1 مركزي + 7 كليات + 1 دفعة)
+-- إجمالي الصلاحيات: 19 صلاحية
+-- Functions: 6 (user_has_permission + get_top_contributors + award_points + notify_rejected + get_broadcast_recipients + register_student)
 -- ============================================
