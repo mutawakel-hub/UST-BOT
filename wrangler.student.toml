@@ -15,21 +15,20 @@ WORKERS_SUBDOMAIN = "atow73768"
 # ============================================
 # KV Namespaces (للجلسات والـ cache)
 # ============================================
-# ملاحظة: يجب إنشاء الـ namespaces أولاً عبر:
-#   npx wrangler kv namespace create SESSIONS --config wrangler.student.toml
-#   npx wrangler kv namespace create CACHE --config wrangler.student.toml
-# ثم استبدل placeholder IDs أدناه بالـ IDs المُستعادة من Cloudflare
+# تم إنشاؤها في Cloudflare — IDs حقيقية
 # ============================================
 
-# KV لحالة الجلسات (مستخدم واحد لكل isolate — يحل مشكلة Map بين isolates)
+# KV لحالة الجلسات (يحل مشكلة Map بين isolates)
+# Namespace: UST_STUDENT_SESSIONS
 [[kv_namespaces]]
 binding = "SESSIONS"
-id = "STUDENT_SESSIONS_KV_ID_PLACEHOLDER"
+id = "7bcd9c092e6b449092c1454551dfe5f4"
 
 # KV للـ cache (الكليات، التخصصات، المواد، الصلاحيات)
+# Namespace: UST_STUDENT_CACHE
 [[kv_namespaces]]
 binding = "CACHE"
-id = "STUDENT_CACHE_KV_ID_PLACEHOLDER"
+id = "b34bde3b704b405bbca5510403071876"
 
 # ============================================
 # Secrets (تُحدد عبر wrangler secret put)

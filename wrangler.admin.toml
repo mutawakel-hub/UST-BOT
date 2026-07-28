@@ -15,21 +15,20 @@ WORKERS_SUBDOMAIN = "atow73768"
 # ============================================
 # KV Namespaces (للجلسات والـ cache)
 # ============================================
-# ملاحظة: يجب إنشاء الـ namespaces أولاً عبر:
-#   npx wrangler kv namespace create SESSIONS --config wrangler.admin.toml
-#   npx wrangler kv namespace create CACHE --config wrangler.admin.toml
-# ثم استبدل placeholder IDs أدناه بالـ IDs المُستعادة من Cloudflare
+# تم إنشاؤها في Cloudflare — IDs حقيقية
 # ============================================
 
 # KV لجلسات المسؤولين (حالة await upload، broadcast context، إلخ)
+# Namespace: UST_ADMIN_SESSIONS
 [[kv_namespaces]]
 binding = "SESSIONS"
-id = "ADMIN_SESSIONS_KV_ID_PLACEHOLDER"
+id = "fc1b3d84b987471ca4ef51a2bf9eb11c"
 
 # KV للـ cache (الصلاحيات، الكليات، التخصصات)
+# Namespace: UST_ADMIN_CACHE
 [[kv_namespaces]]
 binding = "CACHE"
-id = "ADMIN_CACHE_KV_ID_PLACEHOLDER"
+id = "0d0fbffb56f04907b68bb68c51aac9de"
 
 # ============================================
 # Secrets (تُحدد عبر wrangler secret put)
