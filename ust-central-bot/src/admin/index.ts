@@ -57,6 +57,7 @@ import {
   isUserAdmin,
   type UserPermissions,
 } from "../shared/rbac";
+import { SupabaseClient, getBroadcastRecipients as dbGetBroadcastRecipients } from "../shared/db";
 
 // ============================================
 // حالة الجلسة
@@ -192,7 +193,7 @@ function buildDynamicDashboard(perms: UserPermissions, pendingCount: number): In
 // ============================================
 // إنشاء البوت
 // ============================================
-export function createAdminBot(token: string): Bot {
+export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   const bot = new Bot(token);
 
   // ====== /start ======
@@ -303,41 +304,91 @@ export function createAdminBot(token: string): Bot {
   // ====== A3: المساهمات المعلقة ======
   bot.callbackQuery("pending", async (ctx) => {
     await ctx.answerCallbackQuery();
-    if (pendingContributions.length === 0) {
+
+    // قراءة المساهمات المعلقة من Supabase
+    let dbContributions: any[] = [];
+    if (supabase) {
+      try {
+        dbContributions = await supabase.select("contributions", {
+          columns: "id,file_name,subject_id,content_type_id,description,file_size_mb,created_at",
+          filter: "status=eq.pending",
+          order: "created_at.desc",
+          limit: 20,
+        }) as any[];
+        console.log(`✅ Read ${dbContributions.length} pending contributions from Supabase`);
+      } catch (e) {
+        console.error("Supabase pending read error:", e);
+      }
+    }
+
+    // دمج المساهمات من DB + Mock
+    const allPending = [
+      ...dbContributions.map((c: any) => ({
+        id: c.id,
+        file_name: c.file_name,
+        subject_id: c.subject_id,
+        subject_name: getSubjectNameById(c.subject_id) || "غير معروف",
+        content_type: c.content_type_id,
+        description: c.description,
+        file_size_mb: parseFloat(c.file_size_mb) || 0,
+        user_name: "طالب",
+        user_telegram_id: 0,
+        uploaded_at: "حديثاً",
+        specialty_id: 0,
+        college_id: 0,
+        level: 0,
+      })),
+      ...pendingContributions,
+    ];
+
+    if (allPending.length === 0) {
       await ctx.editMessageText(ADMIN_TEXTS.pending.empty, {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
       });
       return;
     }
-    await ctx.editMessageText(
-      ADMIN_TEXTS.pending.title(pendingContributions.length),
-      {
-        reply_markup: new InlineKeyboard()
-          .text(pendingContributions.map((c) => `#${c.id} • ${c.file_name.substring(0, 25)}`).join(" | ") || "لا يوجد",
-                `review_${pendingContributions[0].id}`)
-          .row(),
-        parse_mode: "Markdown",
-      }
-    );
-    // في الواقع، نبني الـ keyboard بشكل صحيح
+
     const kb = new InlineKeyboard();
-    pendingContributions.forEach((c) => {
+    allPending.forEach((c) => {
       kb.text(`#${c.id} • ${c.file_name.substring(0, 25)}`, `review_${c.id}`).row();
     });
     kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
-    await ctx.editMessageReplyMarkup({ reply_markup: kb });
+    await ctx.editMessageText(
+      ADMIN_TEXTS.pending.title(allPending.length),
+      { reply_markup: kb, parse_mode: "Markdown" }
+    );
   });
 
   bot.callbackQuery("back_to_pending", async (ctx) => {
     await ctx.answerCallbackQuery();
+
+    // قراءة من Supabase أيضاً
+    let dbContributions: any[] = [];
+    if (supabase) {
+      try {
+        dbContributions = await supabase.select("contributions", {
+          columns: "id,file_name",
+          filter: "status=eq.pending",
+          order: "created_at.desc",
+          limit: 20,
+        }) as any[];
+      } catch (e) {
+        console.error("Supabase pending read error:", e);
+      }
+    }
+    const allPending = [
+      ...dbContributions.map((c: any) => ({ id: c.id, file_name: c.file_name })),
+      ...pendingContributions,
+    ];
+
     const kb = new InlineKeyboard();
-    pendingContributions.forEach((c) => {
+    allPending.forEach((c) => {
       kb.text(`#${c.id} • ${c.file_name.substring(0, 25)}`, `review_${c.id}`).row();
     });
     kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
     await ctx.editMessageText(
-      ADMIN_TEXTS.pending.title(pendingContributions.length),
+      ADMIN_TEXTS.pending.title(allPending.length),
       { reply_markup: kb, parse_mode: "Markdown" }
     );
   });
@@ -375,8 +426,44 @@ export function createAdminBot(token: string): Bot {
     const contribId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery({ text: isStarred ? "⭐ تم الاعتماد المميز" : "✅ تم الاعتماد" });
     pendingContributions = pendingContributions.filter((c) => c.id !== contribId);
+
+    // تحديث المساهمة في Supabase
+    if (supabase) {
+      try {
+        // تحديث حالة المساهمة
+        await supabase.update("contributions", {
+          status: "approved",
+          is_starred: isStarred,
+          reviewed_by_telegram_id: ctx.from.id,
+          reviewed_at: new Date().toISOString(),
+        }, `id=eq.${contribId}`);
+        console.log(`✅ Contribution ${contribId} approved in Supabase`);
+
+        // منح النقاط للطالب (عبر RPC)
+        // نحتاج معرفة user_telegram_id + subject_id من المساهمة
+        const contribData = await supabase.select("contributions", {
+          columns: "user_telegram_id",
+          filter: `id=eq.${contribId}`,
+          single: true,
+        }) as any;
+        if (contribData?.user_telegram_id) {
+          const points = isStarred ? 20 : 10;
+          await supabase.rpc("award_contribution_points", {
+            p_student_telegram_id: contribData.user_telegram_id,
+            p_contribution_id: contribId,
+            p_awarded_by_telegram_id: ctx.from.id,
+            p_awarded_by_position_id: "central_chair",
+            p_points: points,
+          });
+          console.log(`✅ Awarded ${points} points to student ${contribData.user_telegram_id}`);
+        }
+      } catch (e) {
+        console.error("Supabase approve error:", e);
+      }
+    }
+
     await ctx.editMessageText(
-      `${isStarred ? "⭐" : "✅"} *تم اعتماد المساهمة #${contribId}*\n\nتم نقل الملف لقناة التخزين ونشره للطلاب (محاكاة).`,
+      `${isStarred ? "⭐" : "✅"} *تم اعتماد المساهمة #${contribId}*\n\nتم نقل الملف لقناة التخزين ونشره للطلاب.\n💎 تم منح الطالب ${isStarred ? "20" : "10"} نقطة.`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
         parse_mode: "Markdown",
@@ -411,8 +498,41 @@ export function createAdminBot(token: string): Bot {
     };
     await ctx.answerCallbackQuery({ text: "❌ تم الرفض" });
     pendingContributions = pendingContributions.filter((c) => c.id !== contribId);
+
+    // تحديث المساهمة في Supabase
+    if (supabase) {
+      try {
+        // الحصول على user_telegram_id قبل التحديث
+        const contribData = await supabase.select("contributions", {
+          columns: "user_telegram_id",
+          filter: `id=eq.${contribId}`,
+          single: true,
+        }) as any;
+
+        // تحديث حالة المساهمة
+        await supabase.update("contributions", {
+          status: "rejected",
+          reject_reason: reasons[reasonKey],
+          reviewed_by_telegram_id: ctx.from.id,
+          reviewed_at: new Date().toISOString(),
+        }, `id=eq.${contribId}`);
+
+        // إشعار الطالب بالرفض
+        if (contribData?.user_telegram_id) {
+          await supabase.rpc("notify_contribution_rejected", {
+            p_student_telegram_id: contribData.user_telegram_id,
+            p_contribution_id: contribId,
+            p_reject_reason: reasons[reasonKey],
+          });
+        }
+        console.log(`✅ Contribution ${contribId} rejected in Supabase`);
+      } catch (e) {
+        console.error("Supabase reject error:", e);
+      }
+    }
+
     await ctx.editMessageText(
-      `✅ *تم رفض المساهمة #${contribId}*\n\nالسبب: ${reasons[reasonKey]}`,
+      `✅ *تم رفض المساهمة #${contribId}*\n\nالسبب: ${reasons[reasonKey]}\n\n🔔 تم إشعار الطالب بالرفض.`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
         parse_mode: "Markdown",
@@ -1955,15 +2075,24 @@ export interface Env {
   BOT_USERNAME: string;
   ENVIRONMENT: string;
   WORKERS_SUBDOMAIN: string;
+  SUPABASE_URL: string;
+  SUPABASE_SERVICE_KEY: string;
 }
 
 let botInstance: Bot | null = null;
+let supabaseClient: SupabaseClient | null = null;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
+      if (!supabaseClient && env.SUPABASE_URL && env.SUPABASE_SERVICE_KEY) {
+        supabaseClient = new SupabaseClient({
+          SUPABASE_URL: env.SUPABASE_URL,
+          SUPABASE_SERVICE_KEY: env.SUPABASE_SERVICE_KEY,
+        });
+      }
       if (!botInstance) {
-        botInstance = createAdminBot(env.BOT_TOKEN);
+        botInstance = createAdminBot(env.BOT_TOKEN, supabaseClient || undefined);
       }
       const url = new URL(request.url);
 
@@ -1971,7 +2100,7 @@ export default {
         return new Response(
           JSON.stringify({
             status: "ok", bot: env.BOT_USERNAME, environment: env.ENVIRONMENT,
-            version: "3.2", timestamp: new Date().toISOString(),
+            version: "3.3", timestamp: new Date().toISOString(),
           }),
           { headers: { "Content-Type": "application/json" } }
         );

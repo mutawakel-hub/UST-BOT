@@ -52,7 +52,7 @@ export class SupabaseClient {
     }
 
     const data = await resp.json();
-    return options.single ? data[0] : data;
+    return options.single ? (data as T) : (data as T[]);
   }
 
   // ============================================
@@ -74,7 +74,7 @@ export class SupabaseClient {
     }
 
     const result = await resp.json();
-    return Array.isArray(result) ? result[0] : result;
+    return (Array.isArray(result) ? result[0] : result) as T;
   }
 
   // ============================================
