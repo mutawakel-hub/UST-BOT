@@ -255,3 +255,210 @@ export async function getPendingContributionsCount(
   });
   return Array.isArray(result) ? result.length : 0;
 }
+
+// ============================================
+// دوال المحتوى (Content)
+// ============================================
+
+// الحصول على محتوى مادة حسب التصنيف
+export async function getContentForSubject(
+  client: SupabaseClient,
+  subjectId: number,
+  contentType: string
+): Promise<any[]> {
+  const result = await client.select("content", {
+    columns: "id,title,file_name,file_size_mb,telegram_message_id,telegram_file_id,is_starred,download_count,added_at",
+    filter: `subject_id=eq.${subjectId}&content_type_id=eq.${contentType}&is_active=eq.true`,
+    order: "is_starred.desc,download_count.desc",
+  });
+  return Array.isArray(result) ? result : [];
+}
+
+// الحصول على محتوى بالمعرف
+export async function getContentById(
+  client: SupabaseClient,
+  contentId: number
+): Promise<any | null> {
+  const result = await client.select("content", {
+    filter: `id=eq.${contentId}`,
+    single: true,
+  });
+  return result || null;
+}
+
+// تحديث عدّاد التحميلات
+export async function incrementDownloadCount(
+  client: SupabaseClient,
+  contentId: number
+): Promise<void> {
+  // نقرأ العدد الحالي ثم نحدّثه
+  const content = await getContentById(client, contentId);
+  if (content) {
+    await client.update("content", {
+      download_count: (content.download_count || 0) + 1,
+    }, `id=eq.${contentId}`);
+  }
+}
+
+// ============================================
+// دوال قنوات اللجان (Committee Channels)
+// ============================================
+
+export async function getCommitteeChannelsFromDB(
+  client: SupabaseClient,
+  options?: {
+    scope_type?: string;
+    college_id?: number;
+    specialty_id?: number;
+    level_num?: number;
+  }
+): Promise<any[]> {
+  let filter = "is_active=eq.true";
+  if (options?.scope_type) filter += `&scope_type=eq.${options.scope_type}`;
+  if (options?.college_id) filter += `&college_id=eq.${options.college_id}`;
+  if (options?.specialty_id) filter += `&specialty_id=eq.${options.specialty_id}`;
+  if (options?.level_num) filter += `&level_num=eq.${options.level_num}`;
+
+  const result = await client.select("committee_channels", {
+    columns: "id,scope_type,college_id,specialty_id,level_num,channel_url,display_name",
+    filter,
+  });
+  return Array.isArray(result) ? result : [];
+}
+
+// ============================================
+// دوال الإشعارات (Student Notifications)
+// ============================================
+
+export async function getStudentNotifications(
+  client: SupabaseClient,
+  telegramId: number,
+  unreadOnly = false
+): Promise<any[]> {
+  let filter = `student_telegram_id=eq.${telegramId}`;
+  if (unreadOnly) filter += "&is_read=eq.false";
+
+  const result = await client.select("student_notifications", {
+    columns: "id,notification_type,title,body,is_read,created_at",
+    filter,
+    order: "created_at.desc",
+    limit: 20,
+  });
+  return Array.isArray(result) ? result : [];
+}
+
+export async function getUnreadNotificationsCount(
+  client: SupabaseClient,
+  telegramId: number
+): Promise<number> {
+  const result = await client.select("student_notifications", {
+    columns: "id",
+    filter: `student_telegram_id=eq.${telegramId}&is_read=eq.false`,
+  });
+  return Array.isArray(result) ? result.length : 0;
+}
+
+export async function markNotificationsRead(
+  client: SupabaseClient,
+  telegramId: number
+): Promise<void> {
+  await client.update("student_notifications", {
+    is_read: true,
+  }, `student_telegram_id=eq.${telegramId}&is_read=eq.false`);
+}
+
+// ============================================
+// دوال لوحة الشرف (Leaderboard)
+// ============================================
+
+export async function getTopContributorsFromDB(
+  client: SupabaseClient,
+  limit = 10
+): Promise<any[]> {
+  const result = await client.select("students", {
+    columns: "telegram_id,first_name,total_points,accepted_contributions,current_college_id,current_specialty_id",
+    filter: "is_blocked=eq.false",
+    order: "total_points.desc",
+    limit,
+  });
+  return Array.isArray(result) ? result : [];
+}
+
+// ============================================
+// دوال المساهمات (Contributions)
+// ============================================
+
+export async function getStudentContributions(
+  client: SupabaseClient,
+  telegramId: number
+): Promise<any[]> {
+  const result = await client.select("contributions", {
+    columns: "id,file_name,description,status,reject_reason,created_at,subject_id,content_type_id",
+    filter: `user_telegram_id=eq.${telegramId}`,
+    order: "created_at.desc",
+    limit: 20,
+  });
+  return Array.isArray(result) ? result : [];
+}
+
+// ============================================
+// دوال التحميلات (Downloads)
+// ============================================
+
+export async function logDownload(
+  client: SupabaseClient,
+  studentTelegramId: number,
+  contentId: number
+): Promise<void> {
+  try {
+    await client.insert("downloads", {
+      student_telegram_id: studentTelegramId,
+      content_id: contentId,
+    });
+  } catch (e) {
+    // تجاهل الأخطاء (قد لا يكون الطالب مسجلاً في students)
+  }
+}
+
+export async function getRecentDownloads(
+  client: SupabaseClient,
+  telegramId: number,
+  limit = 5
+): Promise<any[]> {
+  const result = await client.select("downloads", {
+    columns: "id,content_id,downloaded_at",
+    filter: `student_telegram_id=eq.${telegramId}`,
+    order: "downloaded_at.desc",
+    limit,
+  });
+  return Array.isArray(result) ? result : [];
+}
+
+// ============================================
+// دوال التعميمات (Broadcasts)
+// ============================================
+
+export async function logBroadcast(
+  client: SupabaseClient,
+  data: {
+    sender_telegram_id: number;
+    sender_position_id?: string;
+    scope_type: string;
+    scope_college_id?: number;
+    scope_specialty_id?: number;
+    scope_level?: number;
+    content_type: string;
+    text_content?: string;
+    media_file_id?: string;
+    sent_count: number;
+  }
+): Promise<void> {
+  try {
+    await client.insert("broadcasts", {
+      ...data,
+      status: "completed",
+    });
+  } catch (e) {
+    // تجاهل
+  }
+}

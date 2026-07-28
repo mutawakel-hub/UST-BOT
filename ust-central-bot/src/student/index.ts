@@ -28,7 +28,12 @@ import {
 } from "../shared/data/leaderboard";
 import { MOCK_COMMITTEE_CHANNELS, MOCK_STUDENT_NOTIFICATIONS, MOCK_CONTENT, type MockStudentNotification } from "../shared/data/admins";
 import { TEXTS } from "../shared/texts";
-import { SupabaseClient, registerStudent, isStudentRegistered, getStudent } from "../shared/db";
+import { SupabaseClient, registerStudent, isStudentRegistered, getStudent,
+  getContentForSubject, getContentById, incrementDownloadCount,
+  getCommitteeChannelsFromDB, getStudentNotifications, getUnreadNotificationsCount,
+  markNotificationsRead, getTopContributorsFromDB, getStudentContributions,
+  logDownload
+} from "../shared/db";
 import {
   mainMenuKeyboard,
   collegesKeyboard,
@@ -562,7 +567,20 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     }
     await ctx.answerCallbackQuery();
 
-    const files = getMockFilesForSubject(subjectId, category);
+    // قراءة المحتوى من Supabase
+    let files: any[] = [];
+    if (supabase) {
+      try {
+        files = await getContentForSubject(supabase, subjectId, category);
+      } catch (e) {
+        console.error("Supabase content read error:", e);
+      }
+    }
+    // Fallback للبيانات المحلية إن لم يكن Supabase متاحاً
+    if (files.length === 0) {
+      files = getMockFilesForSubject(subjectId, category);
+    }
+
     if (files.length === 0) {
       const bc = `📄 *${subject.name} - ${TYPE_LABELS[category]}*`;
       await ctx.editMessageText(`${bc}\n\n${TEXTS.files_list.no_files}`, {
@@ -575,9 +593,22 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
       return;
     }
 
+    // تحويل البيانات من Supabase إلى صيغة موحدة
+    const unifiedFiles = files.map((f: any) => ({
+      id: f.id.toString(),
+      file_name: f.title || f.file_name || "ملف",
+      file_size_mb: parseFloat(f.file_size_mb) || 0,
+      is_starred: f.is_starred || false,
+      download_count: f.download_count || 0,
+      telegram_message_id: f.telegram_message_id,
+      telegram_file_id: f.telegram_file_id,
+      uploaded_at: f.added_at || "غير معروف",
+      uploaded_by: "المسؤول",
+    }));
+
     const bc = `📄 *${subject.name} - ${TYPE_LABELS[category]}*`;
     await ctx.editMessageText(`${bc}\n\n${TEXTS.files_list.title(subject.name, TYPE_LABELS[category])}`, {
-      reply_markup: filesListKeyboard(files, subjectId),
+      reply_markup: filesListKeyboard(unifiedFiles, subjectId),
       parse_mode: "Markdown",
     });
   }
@@ -587,15 +618,35 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const fileId = ctx.match[1];
     await ctx.answerCallbackQuery();
 
-    // استخراج معلومات الملف
-    const parts = fileId.split("_");
-    const subjectId = parseInt(parts[1]);
-    const category = parts[2];
-    const fileIdx = parseInt(parts[3]) - 1;
+    let fileData: any = null;
+    let subjectId: number = 0;
+    let category: string = "";
 
-    const files = getMockFilesForSubject(subjectId, category);
-    const file = files[fileIdx];
-    if (!file) {
+    // إذا كان fileId رقمياً (من Supabase)
+    if (/^\d+$/.test(fileId)) {
+      const contentId = parseInt(fileId);
+      if (supabase) {
+        try {
+          fileData = await getContentById(supabase, contentId);
+        } catch (e) {
+          console.error("Supabase content read error:", e);
+        }
+      }
+      if (fileData) {
+        subjectId = fileData.subject_id;
+        category = fileData.content_type_id;
+      }
+    } else {
+      // صيغة قديمة (mock): f_subjectId_category_idx
+      const parts = fileId.split("_");
+      subjectId = parseInt(parts[1]);
+      category = parts[2];
+      const fileIdx = parseInt(parts[3]) - 1;
+      const files = getMockFilesForSubject(subjectId, category);
+      fileData = files[fileIdx];
+    }
+
+    if (!fileData) {
       await ctx.reply("⚠️ الملف غير موجود.");
       return;
     }
@@ -607,14 +658,14 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const msg =
       TEXTS.file_preview.title +
       TEXTS.file_preview.details({
-        file_name: file.file_name,
-        file_size_mb: file.file_size_mb,
+        file_name: fileData.title || fileData.file_name || "ملف",
+        file_size_mb: parseFloat(fileData.file_size_mb) || 0,
         type_label: TYPE_LABELS[category] || category,
         subject_name: subject?.name || "غير معروف",
-        uploaded_at: file.uploaded_at,
-        download_count: file.download_count,
-        uploaded_by: file.uploaded_by,
-        is_starred: file.is_starred,
+        uploaded_at: fileData.added_at || fileData.uploaded_at || "غير معروف",
+        download_count: fileData.download_count || 0,
+        uploaded_by: "المسؤول",
+        is_starred: fileData.is_starred || false,
       });
 
     await ctx.editMessageText(msg, {
@@ -628,76 +679,99 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const fileId = ctx.match[1];
     await ctx.answerCallbackQuery({ text: TEXTS.common.loading });
 
-    const parts = fileId.split("_");
-    const subjectId = parseInt(parts[1]);
-    const category = parts[2];
-    const fileIdx = parseInt(parts[3]) - 1;
+    let fileData: any = null;
+    let subjectId: number = 0;
+    let category: string = "";
 
-    const files = getMockFilesForSubject(subjectId, category);
-    const file = files[fileIdx];
+    // إذا كان fileId رقمياً (من Supabase)
+    if (/^\d+$/.test(fileId)) {
+      const contentId = parseInt(fileId);
+      if (supabase) {
+        try {
+          fileData = await getContentById(supabase, contentId);
+        } catch (e) {
+          console.error("Supabase content read error:", e);
+        }
+      }
+      if (fileData) {
+        subjectId = fileData.subject_id;
+        category = fileData.content_type_id;
+      }
+    } else {
+      // صيغة قديمة (mock)
+      const parts = fileId.split("_");
+      subjectId = parseInt(parts[1]);
+      category = parts[2];
+      const fileIdx = parseInt(parts[3]) - 1;
+      const files = getMockFilesForSubject(subjectId, category);
+      fileData = files[fileIdx];
+    }
+
     const subject = getSubjectByIdWithFallback(subjectId);
-    if (!file || !subject) {
+    if (!fileData || !subject) {
       await ctx.reply("⚠️ الملف غير موجود.");
       return;
     }
 
+    const fileName = fileData.title || fileData.file_name || "ملف";
     const userState = getUserState(ctx.from.id, ctx.from.first_name);
     userState.total_downloads++;
-    file.download_count++;
     userState.recent_downloads.unshift({
-      file_name: file.file_name,
+      file_name: fileName,
       subject_name: subject.name,
       date: "الآن",
     });
     if (userState.recent_downloads.length > 5) userState.recent_downloads.pop();
 
-    // محاولة إرسال الملف من قناة التخزين (forwardMessage)
-    // إن كانت الكلية لها قناة تخزين + الملف له message_id
-    const college = getCollegeById(subject.specialty_id === 16 ? 5 : subject.specialty_id === 1 ? 1 : 0);
-    const storageChannelId = college?.storage_channel_id;
-
-    let fileSent = false;
-    if (storageChannelId && file.id) {
-      // البحث عن المحتوى الحقيقي في MOCK_CONTENT للحصول على message_id
-      const mockContent = MOCK_CONTENT.find((c) =>
-        c.subject_id === subjectId &&
-        c.content_type === category &&
-        c.college_id === (subject.specialty_id === 16 ? 5 : 1)
-      );
-      if (mockContent?.telegram_message_id) {
-        try {
-          // forwardMessage من قناة التخزين للمستخدم
-          await ctx.api.forwardMessage(
-            ctx.chat.id,
-            storageChannelId,
-            mockContent.telegram_message_id
-          );
-          fileSent = true;
-          await ctx.reply(
-            TEXTS.common.file_sent_with_caption
-              .replace("{fileName}", file.file_name)
-              .replace("{subjectName}", subject.name),
-            { parse_mode: "Markdown" }
-          );
-        } catch (err) {
-          console.error("forwardMessage error:", err);
-        }
+    // تحديث عدّاد التحميلات في Supabase
+    if (supabase && /^\d+$/.test(fileId)) {
+      try {
+        await incrementDownloadCount(supabase, parseInt(fileId));
+        await logDownload(supabase, ctx.from.id, parseInt(fileId));
+      } catch (e) {
+        console.error("Supabase download log error:", e);
       }
     }
 
-    // لو فشل forwardMessage أو لا توجد قناة تخزين → fallback للـ PDF Server
+    // إرسال الملف من قناة التخزين (forwardMessage)
+    const spec = getSpecialtyById(subject.specialty_id);
+    const college = getCollegeById(spec?.college_id || 0);
+    const storageChannelId = college?.storage_channel_id;
+    const telegramMessageId = fileData.telegram_message_id;
+
+    let fileSent = false;
+    if (storageChannelId && telegramMessageId) {
+      try {
+        await ctx.api.forwardMessage(
+          ctx.chat.id,
+          storageChannelId,
+          telegramMessageId
+        );
+        fileSent = true;
+        await ctx.reply(
+          TEXTS.common.file_sent_with_caption
+            .replace("{fileName}", fileName)
+            .replace("{subjectName}", subject.name),
+          { parse_mode: "Markdown" }
+        );
+      } catch (err) {
+        console.error("forwardMessage error:", err);
+      }
+    }
+
+    // Fallback للـ PDF Server
     if (!fileSent) {
       try {
         await ctx.replyWithDocument(MOCK_PDF_URL, {
           caption: TEXTS.common.file_sent_with_caption
-            .replace("{fileName}", file.file_name)
+            .replace("{fileName}", fileName)
             .replace("{subjectName}", subject.name),
           parse_mode: "Markdown",
         });
       } catch (err) {
         console.error("File send error:", err);
         await ctx.reply(
-          `✅ *تم تسجيل تحميلك للملف*\n\n📄 ${file.file_name}\n📚 ${subject.name}\n\n⚠️ تعذّر إرسال الملف تلقائياً، أعد المحاولة لاحقاً.`,
+          `✅ *تم تسجيل تحميلك للملف*\n\n📄 ${fileName}\n📚 ${subject.name}\n\n⚠️ تعذّر إرسال الملف تلقائياً، أعد المحاولة لاحقاً.`,
           { parse_mode: "Markdown" }
         );
       }
@@ -1324,15 +1398,30 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
   });
 
   async function showLeaderboard(ctx: any, scope: "global" | "college" | "specialty", id?: number) {
-    let entries = GLOBAL_LEADERBOARD;
+    let entries: any[] = [];
     let scopeLabel = "🌍 لوحة الشرف العالمية";
+
+    // قراءة من Supabase
+    if (supabase) {
+      try {
+        entries = await getTopContributorsFromDB(supabase, 10);
+      } catch (e) {
+        console.error("Supabase leaderboard error:", e);
+      }
+    }
+    // Fallback للبيانات المحلية
+    if (entries.length === 0) {
+      entries = GLOBAL_LEADERBOARD;
+    }
+
     if (scope === "college" && id) {
       const college = getCollegeById(id);
-      entries = getLeaderboardByCollege(id);
+      // فلترة حسب الكلية
+      entries = entries.filter((e: any) => e.current_college_id === id || e.college_id === id);
       scopeLabel = `🏛 لوحة شرف - ${college?.name}`;
     } else if (scope === "specialty" && id) {
       const spec = getSpecialtyById(id);
-      entries = getLeaderboardBySpecialty(id);
+      entries = entries.filter((e: any) => e.current_specialty_id === id || e.specialty_id === id);
       scopeLabel = `📚 لوحة شرف - ${spec?.name}`;
     }
 
@@ -1361,7 +1450,8 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const specialty = userState.current_specialty_id ? getSpecialtyById(userState.current_specialty_id)?.name : undefined;
 
     const pending = userState.my_contributions.filter((c) => c.status === "pending").length;
-    const unreadCount = MOCK_STUDENT_NOTIFICATIONS.filter((n) => !n.is_read).length;
+    let unreadCount = 0;
+    if (supabase) { try { unreadCount = await getUnreadNotificationsCount(supabase, ctx.from.id); } catch(e){} }
 
     const msg =
       TEXTS.profile.title(userState.first_name || "طالب") +
@@ -1421,7 +1511,8 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
   bot.callbackQuery("my_notifications", async (ctx) => {
     await ctx.answerCallbackQuery();
     // محاكاة: نستخدم MOCK_STUDENT_NOTIFICATIONS (في الإنتاج ستُستعلم من DB)
-    const notifications = MOCK_STUDENT_NOTIFICATIONS;
+    let notifications: any[] = [];
+    if (supabase) { try { notifications = await getStudentNotifications(supabase, ctx.from.id); } catch(e){} }
     let msg = "🔔 *الإشعارات*\n\n";
     if (notifications.length === 0) {
       msg += "📭 لا توجد إشعارات حالياً.";
@@ -1442,7 +1533,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
 
   bot.callbackQuery("mark_notifications_read", async (ctx) => {
     await ctx.answerCallbackQuery({ text: "✅ تم التحديث" });
-    MOCK_STUDENT_NOTIFICATIONS.forEach((n) => { n.is_read = true; });
+    if (supabase) { try { await markNotificationsRead(supabase, ctx.from.id); } catch(e){} }
     await ctx.editMessageText(
       "✅ *تم تعليم كل الإشعارات كمقروءة.*",
       {
@@ -1470,7 +1561,8 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const college = userState.current_college_id ? getCollegeById(userState.current_college_id)?.name : undefined;
     const specialty = userState.current_specialty_id ? getSpecialtyById(userState.current_specialty_id)?.name : undefined;
     const pending = userState.my_contributions.filter((c) => c.status === "pending").length;
-    const unreadCount = MOCK_STUDENT_NOTIFICATIONS.filter((n) => !n.is_read).length;
+    let unreadCount = 0;
+    if (supabase) { try { unreadCount = await getUnreadNotificationsCount(supabase, ctx.from.id); } catch(e){} }
     const msg =
       TEXTS.profile.title(userState.first_name || "طالب") +
       TEXTS.profile.stats({
@@ -1594,8 +1686,15 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
   // ====== قناة اللجنة + تواصل ======
   bot.callbackQuery("menu_committee", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const centralChannel = MOCK_COMMITTEE_CHANNELS.find((c) => c.scope_type === "central");
-    const channelUrl = centralChannel?.channel_url || "https://t.me/+ust_central_committee";
+    let channelUrl = "https://t.me/+ust_central_committee";
+    if (supabase) {
+      try {
+        const chs = await getCommitteeChannelsFromDB(supabase, { scope_type: "central" });
+        if (chs.length > 0 && chs[0].channel_url) {
+          channelUrl = chs[0].channel_url;
+        }
+      } catch (e) { console.error("Supabase channels error:", e); }
+    }
     await ctx.editMessageText(
       "📢 *قناة اللجنة العلمية المركزية*\n\n" +
         "للحصول على آخر التحديثات والإعلانات المركزية:\n\n" +
@@ -1615,9 +1714,13 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const collegeId = parseInt(ctx.match[1]);
     const college = getCollegeById(collegeId);
     await ctx.answerCallbackQuery();
-    const channel = MOCK_COMMITTEE_CHANNELS.find(
-      (c) => c.scope_type === "college" && c.college_id === collegeId
-    );
+    let channel: any = null;
+    if (supabase) {
+      try {
+        const chs = await getCommitteeChannelsFromDB(supabase, { scope_type: "college", college_id: collegeId });
+        channel = chs[0];
+      } catch (e) { console.error("Supabase channels error:", e); }
+    }
     if (!channel) {
       await ctx.reply("⚠️ لا توجد قناة لجنة مسجّلة لهذه الكلية بعد.");
       return;
@@ -1654,9 +1757,13 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const specialty = getSpecialtyById(specialtyId);
     await ctx.answerCallbackQuery();
     // البحث عن أي قناة مستوى لهذا التخصص
-    const channel = MOCK_COMMITTEE_CHANNELS.find(
-      (c) => c.scope_type === "specialty_level" && c.specialty_id === specialtyId
-    );
+    let channel: any = null;
+    if (supabase) {
+      try {
+        const chs = await getCommitteeChannelsFromDB(supabase, { scope_type: "specialty_level", specialty_id: specialtyId });
+        channel = chs[0];
+      } catch (e) { console.error("Supabase channels error:", e); }
+    }
     if (!channel) {
       await ctx.reply(
         `⚠️ لا توجد قناة لجنة مسجّلة لتخصص *${specialty?.name}* بعد.\n\n` +
