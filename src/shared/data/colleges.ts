@@ -45,7 +45,7 @@ export const COLLEGES: College[] = [
     short_name: "طب الأسنان",
     emoji: "🦷",
     committee_channel_url: "https://t.me/+dent_committee",
-    storage_channel_id: null, // لم تُنشأ بعد
+    storage_channel_id: "-1004430087693", // ✅ قناة تخزين فعلية
     display_order: 2,
   },
   {
@@ -54,7 +54,7 @@ export const COLLEGES: College[] = [
     short_name: "الصيدلة",
     emoji: "💊",
     committee_channel_url: "https://t.me/+pharm_committee",
-    storage_channel_id: null,
+    storage_channel_id: "-1003898559257", // ✅ قناة تخزين فعلية
     display_order: 3,
   },
   {
@@ -63,7 +63,7 @@ export const COLLEGES: College[] = [
     short_name: "الهندسة",
     emoji: "⚙️",
     committee_channel_url: "https://t.me/+eng_committee",
-    storage_channel_id: null,
+    storage_channel_id: "-1004401563263", // ✅ قناة تخزين فعلية
     display_order: 4,
   },
   {
@@ -81,7 +81,7 @@ export const COLLEGES: College[] = [
     short_name: "العلوم الإدارية",
     emoji: "📊",
     committee_channel_url: "https://t.me/+admin_committee",
-    storage_channel_id: null,
+    storage_channel_id: "-1004353505188", // ✅ قناة تخزين فعلية
     display_order: 6,
   },
   {
@@ -90,7 +90,7 @@ export const COLLEGES: College[] = [
     short_name: "العلوم الإنسانية والاجتماعية",
     emoji: "📚",
     committee_channel_url: "https://t.me/+human_committee",
-    storage_channel_id: null,
+    storage_channel_id: "-1004473489150", // ✅ قناة تخزين فعلية
     display_order: 7,
   },
 ];

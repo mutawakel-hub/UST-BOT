@@ -18,7 +18,10 @@
     "test:admin": "curl -s https://ust-admin-bot.$WORKERS_SUBDOMAIN.workers.dev/health",
     "dev:student": "wrangler dev --config wrangler.student.toml",
     "dev:admin": "wrangler dev --config wrangler.admin.toml",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "grammy": "^1.30.0"
@@ -26,7 +29,9 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260702.1",
     "typescript": "^5.6.0",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.0.0",
+    "vitest": "^1.6.0",
+    "@vitest/coverage-v8": "^1.6.0"
   },
   "engines": {
     "node": ">=18"

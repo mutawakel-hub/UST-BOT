@@ -372,7 +372,12 @@ INSERT INTO colleges (id, name, name_normalized, short_name, emoji, display_orde
 
 -- تحديث قنوات التخزين الفعلية (للكليات التي تم إنشاء قنوات لها)
 UPDATE colleges SET storage_channel_id = '-1004405014472' WHERE id = 1; -- كلية الطب
+UPDATE colleges SET storage_channel_id = '-1004430087693' WHERE id = 2; -- كلية طب الأسنان
+UPDATE colleges SET storage_channel_id = '-1003898559257' WHERE id = 3; -- كلية الصيدلة
+UPDATE colleges SET storage_channel_id = '-1004401563263' WHERE id = 4; -- كلية الهندسة
 UPDATE colleges SET storage_channel_id = '-1003727164402' WHERE id = 5; -- كلية الحاسبات
+UPDATE colleges SET storage_channel_id = '-1004353505188' WHERE id = 6; -- كلية العلوم الإدارية
+UPDATE colleges SET storage_channel_id = '-1004473489150' WHERE id = 7; -- كلية العلوم الإنسانية
 
 -- التخصصات الـ 34
 INSERT INTO specialties (id, college_id, name, name_normalized, short_name, levels_count) VALUES
@@ -911,10 +916,49 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- العمود scope_specialty_id موجود بالفعل
 
 -- ============================================
+-- Function: زيادة عدّاد التحميلات بشكل ذرّي (atomic)
+-- ============================================
+-- تحل مشكلة race condition في SELECT-then-UPDATE
+-- تستخدم: SELECT increment_download(123);
+-- ============================================
+CREATE OR REPLACE FUNCTION increment_download(p_content_id BIGINT)
+RETURNS VOID AS $$
+BEGIN
+  UPDATE content
+  SET download_count = download_count + 1
+  WHERE id = p_content_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================
+-- Function: عدّ المساهمات المعلقة لنطاق محدد
+-- ============================================
+-- تستخدم: SELECT count_pending_for_scope(5, 16, 1);
+-- حيث 5=college_id, 16=specialty_id, 1=level
+-- ============================================
+CREATE OR REPLACE FUNCTION count_pending_for_scope(
+  p_college_id INT,
+  p_specialty_id INT,
+  p_level INT
+) RETURNS INT AS $$
+DECLARE
+  cnt INT;
+BEGIN
+  SELECT COUNT(*) INTO cnt
+  FROM contributions c
+  JOIN subjects s ON c.subject_id = s.id
+  WHERE c.status = 'pending'
+    AND s.specialty_id = p_specialty_id
+    AND s.level = p_level;
+  RETURN cnt;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================
 -- نهاية الـ Schema
 -- ============================================
 -- إجمالي الجداول: 24 جدول (مع اشتراكات الطلاب)
 -- إجمالي المناصب: 9 (1 مركزي + 7 كليات + 1 دفعة)
 -- إجمالي الصلاحيات: 19 صلاحية
--- Functions: 6 (user_has_permission + get_top_contributors + award_points + notify_rejected + get_broadcast_recipients + register_student)
+-- Functions: 8 (user_has_permission + get_top_contributors + award_points + notify_rejected + get_broadcast_recipients + register_student + increment_download + count_pending_for_scope)
 -- ============================================

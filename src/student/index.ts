@@ -1928,7 +1928,7 @@ export default {
           const callback = webhookCallback(botInstance, "cloudflare-mod");
           return await callback(request);
         } catch (err) {
-          console.error("Webhook handler error (returning 200 to stop retries):", err?.message || err);
+          console.error("Webhook handler error (returning 200 to stop retries):", (err as Error)?.message || err);
           return new Response("", { status: 200 });
         }
     }

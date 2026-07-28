@@ -3,6 +3,12 @@
 # ============================================
 # هذا الـ Workflow يُشغّل تلقائياً عند كل push على branch main
 # وينشر البوتين على Cloudflare Workers
+#
+# Pipeline:
+#   1. 🧪 Tests (Vitest) — يفشل النشر لو فشل أي اختبار
+#   2. 🔍 Type Check (tsc --noEmit) — يفشل النشر لو فيه أخطاء أنواع
+#   3. 🚀 Deploy (parallel): student + admin + pdf-server
+#   4. 📊 Summary
 # ============================================
 
 name: 🚀 Deploy to Cloudflare Workers
@@ -14,10 +20,10 @@ on:
 
 jobs:
   # ============================================
-  # فحص الكود قبل النشر
+  # 1. اختبارات الوحدة (Vitest)
   # ============================================
-  typecheck:
-    name: 🔍 Type Check
+  test:
+    name: 🧪 Tests
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout
@@ -27,19 +33,51 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: 📦 Install dependencies
-        run: npm install --legacy-peer-deps
+        run: npm ci --legacy-peer-deps
+
+      - name: 🧪 Run Vitest
+        run: npm test
+
+      - name: 📊 Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+
+  # ============================================
+  # 2. فحص الأنواع (TypeScript)
+  # ============================================
+  typecheck:
+    name: 🔍 Type Check
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci --legacy-peer-deps
 
       - name: 🔍 TypeScript type check
         run: npx tsc --noEmit
 
   # ============================================
-  # نشر بوت الطالب
+  # 3. نشر بوت الطالب
   # ============================================
   deploy-student-bot:
     name: 🎓 Deploy Student Bot
-    needs: typecheck
+    needs: [test, typecheck]
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout
@@ -49,9 +87,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: 📦 Install dependencies
-        run: npm install --legacy-peer-deps
+        run: npm ci --legacy-peer-deps
 
       - name: 🚀 Deploy Student Bot to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
@@ -61,11 +100,11 @@ jobs:
           command: deploy --config wrangler.student.toml
 
   # ============================================
-  # نشر بوت الإدارة
+  # 4. نشر بوت الإدارة
   # ============================================
   deploy-admin-bot:
     name: 🛡 Deploy Admin Bot
-    needs: typecheck
+    needs: [test, typecheck]
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout
@@ -75,9 +114,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: 📦 Install dependencies
-        run: npm install --legacy-peer-deps
+        run: npm ci --legacy-peer-deps
 
       - name: 🚀 Deploy Admin Bot to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
@@ -87,11 +127,11 @@ jobs:
           command: deploy --config wrangler.admin.toml
 
   # ============================================
-  # نشر PDF Server (للملفات التجريبية)
+  # 5. نشر PDF Server
   # ============================================
   deploy-pdf-server:
     name: 📄 Deploy PDF Server
-    needs: typecheck
+    needs: [test, typecheck]
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout
@@ -101,9 +141,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: 📦 Install dependencies
-        run: npm install --legacy-peer-deps
+        run: npm ci --legacy-peer-deps
 
       - name: 🚀 Deploy PDF Server to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
@@ -113,7 +154,7 @@ jobs:
           command: deploy --config pdf-server/wrangler.toml
 
   # ============================================
-  # ملخص النشر
+  # 6. ملخص النشر
   # ============================================
   summary:
     name: ✅ Deployment Summary
@@ -124,9 +165,11 @@ jobs:
       - name: 📊 Status Summary
         run: |
           echo "============================================"
-          echo "🎉 Deployment Summary - UST Central Bot"
+          echo "🎉 Deployment Summary - UST Central Bot v3.3"
           echo "============================================"
           echo ""
+          echo "Tests:       ${{ needs.test.result }}"
+          echo "Type Check:  ${{ needs.typecheck.result }}"
           echo "Student Bot: ${{ needs.deploy-student-bot.result }}"
           echo "Admin Bot:   ${{ needs.deploy-admin-bot.result }}"
           echo "PDF Server:  ${{ needs.deploy-pdf-server.result }}"

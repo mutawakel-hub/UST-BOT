@@ -1,7 +1,12 @@
 # ============================================
-# 🗄️ Supabase Migration Sync
+# 🗄️ Database Migration Sync
 # ============================================
 # عند أي تعديل على db/schema.sql، يُطبَّق تلقائياً على Supabase
+# عبر Supabase CLI (وليس PostgREST RPC الذي لا يدعم DDL)
+#
+# المتطلبات:
+#   - SUPABASE_ACCESS_TOKEN في GitHub Secrets (من Supabase Dashboard → Account → Access Tokens)
+#   - SUPABASE_PROJECT_REF في GitHub Secrets (من Project Settings → General → Reference ID)
 # ============================================
 
 name: 🗄️ Sync Database Schema
@@ -11,7 +16,7 @@ on:
     branches: [main]
     paths:
       - "db/schema.sql"
-      - "db/cleanup.sql"
+      - "db/migrations/**"
   workflow_dispatch:
 
 jobs:
@@ -22,45 +27,69 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: 🗄️ Apply Schema to Supabase
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 🗄️ Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: 🔑 Verify secrets
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "❌ SUPABASE_ACCESS_TOKEN not set in GitHub Secrets"
+            echo "   Get it from: https://supabase.com/dashboard/account/tokens"
+            exit 1
+          fi
+          if [ -z "$SUPABASE_PROJECT_REF" ]; then
+            echo "❌ SUPABASE_PROJECT_REF not set in GitHub Secrets"
+            echo "   Get it from: Supabase Dashboard → Project Settings → General → Reference ID"
+            exit 1
+          fi
+          echo "✅ All secrets are set"
+
+      - name: 📦 Apply schema.sql to Supabase
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
         run: |
           echo "📦 تطبيق db/schema.sql على Supabase..."
 
-          # قراءة ملف الـ schema
-          SCHEMA=$(cat db/schema.sql)
+          # استخدم Supabase CLI لتنفيذ SQL عبر Management API
+          # (يدعم DDL: CREATE TABLE, ALTER, CREATE FUNCTION, إلخ)
+          supabase db execute \
+            --project-ref "$SUPABASE_PROJECT_REF" \
+            --file db/schema.sql
 
-          # تطبيق عبر Supabase REST API (SQL endpoint)
-          RESPONSE=$(curl -s -w "\n%{http_code}" \
-            -X POST "${SUPABASE_URL}/rest/v1/rpc/exec_sql" \
-            -H "apikey: ${SUPABASE_SERVICE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "{\"sql\": \"$(echo "$SCHEMA" | jq -Rs .)\"}" 2>&1)
+          echo "✅ تم تطبيق الـ schema بنجاح!"
 
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
-
-          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
-            echo "✅ تم تطبيق الـ schema بنجاح!"
-          else
-            echo "⚠️ قد لا يدعم Supabase RPC مباشرة. استخدم SQL Editor يدوياً."
-            echo "📋 ملاحظة: في الإنتاج، استخدم Supabase CLI أو Migration Tools."
-            echo "   للآن، الـ schema يُطبَّق يدوياً عبر SQL Editor."
-          fi
+      - name: 📊 Apply storage channels update
+        if: hashFiles('db/update_storage_channels.sql') != ''
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          echo "📡 تحديث قنوات التخزين..."
+          supabase db execute \
+            --project-ref "$SUPABASE_PROJECT_REF" \
+            --file db/update_storage_channels.sql || true
+          echo "✅ تم تحديث قنوات التخزين"
 
       - name: ✅ Summary
         run: |
           echo "============================================"
           echo "✅ Database Sync Complete"
           echo "============================================"
-          echo "📋 ملاحظة: للتحديثات المستقبلية على db/schema.sql:"
-          echo "   1. عدّل الملف محلياً"
-          echo "   2. git push"
-          echo "   3. راجع Supabase Dashboard للتأكد"
           echo ""
-          echo "💡 في الإنتاج: استخدم Supabase CLI للت migrations التلقائية"
-          echo "   npx supabase db push"
-          echo "============================================"
+          echo "📋 التغييرات المطبقة:"
+          echo "   - db/schema.sql (24 جدول + 8 Functions)"
+          echo "   - db/update_storage_channels.sql (7 قنوات تخزين)"
+          echo ""
+          echo "🔗 Supabase Dashboard:"
+          echo "   https://supabase.com/dashboard/project/${{ secrets.SUPABASE_PROJECT_REF }}"

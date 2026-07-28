@@ -84,13 +84,14 @@ function step1_install() {
 // ============================================
 function step2_pdfServer() {
   console.log("📄 [2/5] نشر PDF Server...");
-  const pdfDir = path.join(path.dirname(projectRoot), "ust-pdf-server");
+  // PDF server موجود داخل المشروع في مجلد pdf-server/
+  const pdfDir = path.join(projectRoot, "pdf-server");
   if (!fs.existsSync(pdfDir)) {
-    console.log("   ⚠️ مجلد ust-pdf-server غير موجود، تخطّي");
+    console.log("   ⚠️ مجلد pdf-server غير موجود، تخطّي");
     return;
   }
   try {
-    execSync("npx wrangler deploy", {
+    execSync("npx wrangler deploy --config wrangler.toml", {
       cwd: pdfDir,
       stdio: "inherit",
       env: { ...process.env, CLOUDFLARE_API_TOKEN: env.CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID: env.CLOUDFLARE_ACCOUNT_ID },

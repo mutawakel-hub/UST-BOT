@@ -278,49 +278,33 @@ export async function getBroadcastRecipients(
 }
 
 // الحصول على عدد المساهمات المعلقة لمسؤول مستوى
-// الفلترة بالنطاق: college + specialty + level (عبر JOIN مع subjects)
-// ملاحظة: هذه الدالة تستخدم PostgREST resource embedding
-//   لربط contributions مع subjects عبر FK الموجود في schema
+// ============================================
+// يستخدم RPC function `count_pending_for_scope` الذرّي
+// Function معرّفة في db/schema.sql
+// تستخدم JOIN داخلي بين contributions و subjects للفلترة بالنطاق
+// ============================================
 export async function getPendingContributionsCount(
   client: SupabaseClient,
   collegeId: number,
   specialtyId: number,
   level: number
 ): Promise<number> {
-  // استخدم PostgREST: select مع filter على جدول subjects المرتبط
-  // contributions.subject_id → subjects.id (FK)
-  // subjects.specialty_id = specialtyId AND subjects.level = level
-  //
-  // في PostgREST، نستخدم resource embedding:
-  //   GET /contributions?select=id&subjects!inner()...
-  // لكن الـ filter على subject-level يُكتب هكذا:
-  const filter = [
-    "status=eq.pending",
-    `subject_id=in.(select id from subjects where specialty_id=eq.${specialtyId} and level=eq.${level})`,
-  ].join("&");
-
   try {
-    const result = await client.select<{ id: number }>("contributions", {
-      columns: "id",
-      filter,
+    const result = await client.rpc("count_pending_for_scope", {
+      p_college_id: collegeId,
+      p_specialty_id: specialtyId,
+      p_level: level,
     });
-    return Array.isArray(result) ? result.length : 0;
+    return Number(result) || 0;
   } catch (e) {
-    // PostgREST قد لا يدعم subquery صياغة بطريقة مباشرة
-    // fallback: قراءة المساهمات المعلقة كلها ثم فلترة client-side
-    console.error("getPendingContributionsCount failed, using fallback:", e);
+    console.error("getPendingContributionsCount RPC failed:", e);
+    // Fallback: عدّ كامل المساهمات المعلقة (بدون فلترة بالنطاق)
     try {
-      const all = await client.select<{ id: number; subject_id: number }>(
-        "contributions",
-        {
-          columns: "id,subject_id",
-          filter: "status=eq.pending",
-        }
-      );
-      if (!Array.isArray(all)) return 0;
-      // نحتاج معرفة specialty_id+level لكل subject
-      // مؤقتاً نرجع العدد الكلي لو فشل الفلترة (further optimization في C)
-      return all.length;
+      const all = await client.select<{ id: number }>("contributions", {
+        columns: "id",
+        filter: "status=eq.pending",
+      });
+      return Array.isArray(all) ? all.length : 0;
     } catch (e2) {
       console.error("Fallback also failed:", e2);
       return 0;
@@ -359,32 +343,17 @@ export async function getContentById(
 }
 
 // تحديث عدّاد التحميلات
-// ملاحظة: هذه الطريقة تستخدم PostgREST's Prefer: return=headers-only
-// لتفادي race condition (read-then-write) قدر الإمكان.
-// الحل الأمثل هو استخدام RPC function `increment_download` (سيُضاف في المرحلة E).
-// في غياب الـ RPC، نستخدم atomic-ish update عبر PostgREST:
-//   UPDATE content SET download_count = download_count + 1 WHERE id = ?
-// لكن PostgREST لا يدعم الزيادة الذرية مباشرة، لذا نقرأ ثم نكتب.
-// للحد من الـ race، نستخدم fetch مباشرة دون قراءة كاملة:
+// ============================================
+// يستخدم RPC function `increment_download` الذرّي (atomic)
+// يحل مشكلة race condition في SELECT-then-UPDATE
+// Function معرّفة في db/schema.sql
+// ============================================
 export async function incrementDownloadCount(
   client: SupabaseClient,
   contentId: number
 ): Promise<void> {
   try {
-    // محاولة 1: استخدام RPC لو موجود (increment_download function)
-    // سيُنجز في المرحلة E
-    // محاولة 2: قراءة سريعة (select download_count فقط) ثم update
-    const result = await client.select<{ download_count: number }>("content", {
-      columns: "download_count",
-      filter: `id=eq.${contentId}`,
-      single: true,
-    });
-    // select مع single: true يرجع T | T[] | null
-    const current = Array.isArray(result) ? result[0] : result;
-    if (!current) return;
-    await client.update("content", {
-      download_count: (current.download_count || 0) + 1,
-    }, `id=eq.${contentId}`);
+    await client.rpc("increment_download", { p_content_id: contentId });
   } catch (e) {
     // تجاهل أخطاء عداد التحميل — لا يجب أن تفشل تجربة المستخدم بسببها
     console.error("incrementDownloadCount error (ignored):", e);
