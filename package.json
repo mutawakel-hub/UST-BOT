@@ -1,0 +1,34 @@
+{
+  "name": "ust-central-bot",
+  "version": "2.2.0",
+  "description": "UST Central Bot - Telegram bot system for University of Science and Technology (Yemen) - Mockup v2.2",
+  "private": true,
+  "scripts": {
+    "setup": "node scripts/setup.js",
+    "deploy:student": "wrangler deploy --config wrangler.student.toml",
+    "deploy:admin": "wrangler deploy --config wrangler.admin.toml",
+    "deploy:pdf": "wrangler deploy --config pdf-server/wrangler.toml",
+    "deploy:all": "npm run deploy:pdf && npm run deploy:student && npm run deploy:admin",
+    "set-secrets": "node scripts/set-secrets.js",
+    "set-webhooks": "node scripts/set-webhooks.js",
+    "webhook:status": "node scripts/webhook-manager.js status",
+    "webhook:clear": "node scripts/webhook-manager.js clear",
+    "webhook:reset": "node scripts/webhook-manager.js reset",
+    "test:student": "curl -s https://ust-student-bot.$WORKERS_SUBDOMAIN.workers.dev/health",
+    "test:admin": "curl -s https://ust-admin-bot.$WORKERS_SUBDOMAIN.workers.dev/health",
+    "dev:student": "wrangler dev --config wrangler.student.toml",
+    "dev:admin": "wrangler dev --config wrangler.admin.toml",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "grammy": "^1.30.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260702.1",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
