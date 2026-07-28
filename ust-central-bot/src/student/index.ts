@@ -1,7 +1,7 @@
 // ============================================
-// بوت الطالب - جامعة العلوم والتكنولوجيا (محسّن)
-// Mockup على Cloudflare Workers + grammY
-// 12 شاشة + شاشة معاينة ملف + breadcrumb + ملف PDF فعلي
+// بوت الطالب - جامعة العلوم والتكنولوجيا
+// Cloudflare Workers + grammY + Supabase
+// 12 شاشة + شاشة معاينة ملف + breadcrumb
 // ============================================
 
 import { Bot, webhookCallback, InlineKeyboard } from "grammy";
@@ -17,22 +17,13 @@ import {
   getSubjectById,
   getSubjectByIdWithFallback,
   getSubjectsBySpecialtyLevelSemester,
-  getMockFilesForSubject,
-  searchFiles,
-  type MockFile,
 } from "../shared/data/subjects";
-import {
-  GLOBAL_LEADERBOARD,
-  getLeaderboardByCollege,
-  getLeaderboardBySpecialty,
-} from "../shared/data/leaderboard";
-import { MOCK_COMMITTEE_CHANNELS, MOCK_STUDENT_NOTIFICATIONS, MOCK_CONTENT, type MockStudentNotification } from "../shared/data/admins";
 import { TEXTS } from "../shared/texts";
 import { SupabaseClient, registerStudent, isStudentRegistered, getStudent,
   getContentForSubject, getContentById, incrementDownloadCount,
   getCommitteeChannelsFromDB, getStudentNotifications, getUnreadNotificationsCount,
   markNotificationsRead, getTopContributorsFromDB, getStudentContributions,
-  logDownload
+  logDownload, getRecentDownloads
 } from "../shared/db";
 import {
   mainMenuKeyboard,
@@ -51,8 +42,8 @@ import {
   breadcrumb,
 } from "../shared/keyboards";
 
-// URL لملف PDF التجريبي (من Worker منفصل)
-const MOCK_PDF_URL = "https://ust-pdf-server.atow73768.workers.dev/sample.pdf";
+// URL لملف PDF التجريبي - يُستخدم فقط كآخر خيار إذا فشل forwardMessage
+const FALLBACK_PDF_URL = "https://ust-pdf-server.atow73768.workers.dev/sample.pdf";
 
 // تصنيفات الملفات
 const TYPE_LABELS: Record<string, string> = {
@@ -417,7 +408,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     await ctx.reply(`${bc}\n\n${TEXTS.choose_level.plan_message}`, {
       reply_markup: new InlineKeyboard().url(
         "📥 تحميل الخطة (PDF تجريبي)",
-        MOCK_PDF_URL
+        FALLBACK_PDF_URL
       ).row().text(
         TEXTS.navigation.back_to_levels,
         `back_to_levels_${specId}`
@@ -567,7 +558,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     }
     await ctx.answerCallbackQuery();
 
-    // قراءة المحتوى من Supabase
+    // قراءة المحتوى من Supabase فقط
     let files: any[] = [];
     if (supabase) {
       try {
@@ -576,14 +567,10 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
         console.error("Supabase content read error:", e);
       }
     }
-    // Fallback للبيانات المحلية إن لم يكن Supabase متاحاً
-    if (files.length === 0) {
-      files = getMockFilesForSubject(subjectId, category);
-    }
 
     if (files.length === 0) {
       const bc = `📄 *${subject.name} - ${TYPE_LABELS[category]}*`;
-      await ctx.editMessageText(`${bc}\n\n${TEXTS.files_list.no_files}`, {
+      await ctx.editMessageText(`${bc}\n\n📭 لا توجد ملفات في هذا التصنيف حالياً.\n💡 يمكنك المساهمة بأول ملف!`, {
         reply_markup: new InlineKeyboard().text(
           TEXTS.navigation.back_to_subject_menu,
           `back_to_subject_menu_${subjectId}`
@@ -613,7 +600,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     });
   }
 
-  // S8b: شاشة معاينة الملف (جديدة)
+  // S8b: شاشة معاينة الملف
   bot.callbackQuery(/preview_(.+)/, async (ctx) => {
     const fileId = ctx.match[1];
     await ctx.answerCallbackQuery();
@@ -622,7 +609,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     let subjectId: number = 0;
     let category: string = "";
 
-    // إذا كان fileId رقمياً (من Supabase)
+    // قراءة من Supabase فقط (fileId هو رقم المحتوى في DB)
     if (/^\d+$/.test(fileId)) {
       const contentId = parseInt(fileId);
       if (supabase) {
@@ -636,14 +623,6 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
         subjectId = fileData.subject_id;
         category = fileData.content_type_id;
       }
-    } else {
-      // صيغة قديمة (mock): f_subjectId_category_idx
-      const parts = fileId.split("_");
-      subjectId = parseInt(parts[1]);
-      category = parts[2];
-      const fileIdx = parseInt(parts[3]) - 1;
-      const files = getMockFilesForSubject(subjectId, category);
-      fileData = files[fileIdx];
     }
 
     if (!fileData) {
@@ -683,7 +662,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     let subjectId: number = 0;
     let category: string = "";
 
-    // إذا كان fileId رقمياً (من Supabase)
+    // قراءة من Supabase فقط
     if (/^\d+$/.test(fileId)) {
       const contentId = parseInt(fileId);
       if (supabase) {
@@ -697,14 +676,6 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
         subjectId = fileData.subject_id;
         category = fileData.content_type_id;
       }
-    } else {
-      // صيغة قديمة (mock)
-      const parts = fileId.split("_");
-      subjectId = parseInt(parts[1]);
-      category = parts[2];
-      const fileIdx = parseInt(parts[3]) - 1;
-      const files = getMockFilesForSubject(subjectId, category);
-      fileData = files[fileIdx];
     }
 
     const subject = getSubjectByIdWithFallback(subjectId);
@@ -756,25 +727,16 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
         );
       } catch (err) {
         console.error("forwardMessage error:", err);
-      }
-    }
-
-    // Fallback للـ PDF Server
-    if (!fileSent) {
-      try {
-        await ctx.replyWithDocument(MOCK_PDF_URL, {
-          caption: TEXTS.common.file_sent_with_caption
-            .replace("{fileName}", fileName)
-            .replace("{subjectName}", subject.name),
-          parse_mode: "Markdown",
-        });
-      } catch (err) {
-        console.error("File send error:", err);
         await ctx.reply(
-          `✅ *تم تسجيل تحميلك للملف*\n\n📄 ${fileName}\n📚 ${subject.name}\n\n⚠️ تعذّر إرسال الملف تلقائياً، أعد المحاولة لاحقاً.`,
+          "⚠️ تعذّر إرسال الملف من قناة التخزين. تأكد من أن البوت مشرف في القناة.",
           { parse_mode: "Markdown" }
         );
       }
+    } else {
+      await ctx.reply(
+        "⚠️ لا توجد قناة تخزين لهذه الكلية أو الملف لا يحتوي على معرف رسالة صالح.",
+        { parse_mode: "Markdown" }
+      );
     }
 
     // زر العودة
@@ -793,37 +755,40 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const fileId = ctx.match[1];
     await ctx.answerCallbackQuery();
 
-    const parts = fileId.split("_");
-    const subjectId = parseInt(parts[1]);
-    const category = parts[2];
-    const fileIdx = parseInt(parts[3]) - 1;
+    // قراءة من Supabase
+    let fileData: any = null;
+    if (/^\d+$/.test(fileId) && supabase) {
+      try {
+        fileData = await getContentById(supabase, parseInt(fileId));
+      } catch (e) {
+        console.error("Supabase content read error:", e);
+      }
+    }
 
-    const files = getMockFilesForSubject(subjectId, category);
-    const file = files[fileIdx];
-    if (!file) {
+    if (!fileData) {
       await ctx.reply("⚠️ الملف غير موجود.");
       return;
     }
 
-    const subject = getSubjectByIdWithFallback(subjectId);
+    const subject = getSubjectByIdWithFallback(fileData.subject_id);
     const userState = getUserState(ctx.from.id, ctx.from.first_name);
     userState.last_file_id = fileId;
 
     const msg =
       TEXTS.file_preview.title +
       TEXTS.file_preview.details({
-        file_name: file.file_name,
-        file_size_mb: file.file_size_mb,
-        type_label: TYPE_LABELS[category] || category,
+        file_name: fileData.title || fileData.file_name || "ملف",
+        file_size_mb: parseFloat(fileData.file_size_mb) || 0,
+        type_label: TYPE_LABELS[fileData.content_type_id] || fileData.content_type_id,
         subject_name: subject?.name || "غير معروف",
-        uploaded_at: file.uploaded_at,
-        download_count: file.download_count,
-        uploaded_by: file.uploaded_by,
-        is_starred: file.is_starred,
+        uploaded_at: fileData.added_at || "غير معروف",
+        download_count: fileData.download_count || 0,
+        uploaded_by: "المسؤول",
+        is_starred: fileData.is_starred || false,
       });
 
     await ctx.reply(msg, {
-      reply_markup: filePreviewKeyboard(fileId, subjectId),
+      reply_markup: filePreviewKeyboard(fileId, fileData.subject_id),
       parse_mode: "Markdown",
     });
   });
@@ -1274,7 +1239,21 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     if (userState.awaiting_search) {
       userState.awaiting_search = false;
       const query = ctx.message.text;
-      const results = searchFiles(query);
+
+      // البحث في Supabase
+      let results: any[] = [];
+      if (supabase) {
+        try {
+          results = await supabase.select("content", {
+            columns: "id,title,file_name,subject_id,content_type_id,file_size_mb,is_starred,download_count",
+            filter: `title=ilike.%${encodeURIComponent(query)}%`,
+            order: "download_count.desc",
+            limit: 20,
+          }) as any[];
+        } catch (e) {
+          console.error("Supabase search error:", e);
+        }
+      }
 
       if (results.length === 0) {
         await ctx.reply(TEXTS.search.no_results, {
@@ -1287,10 +1266,10 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
         return;
       }
 
-      const mappedResults = results.map((r) => ({
-        id: r.file.id,
-        file_name: r.file.file_name,
-        subject_name: r.subject_name,
+      const mappedResults = results.map((r: any) => ({
+        id: r.id.toString(),
+        file_name: r.title || r.file_name || "ملف",
+        subject_name: getSubjectByIdWithFallback(r.subject_id)?.name || "غير معروف",
       }));
       await ctx.reply(TEXTS.search.results_header(results.length), {
         reply_markup: searchResultsKeyboard(mappedResults, 0),
@@ -1411,7 +1390,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     }
     // Fallback للبيانات المحلية
     if (entries.length === 0) {
-      entries = GLOBAL_LEADERBOARD;
+      entries = []; // لا fallback — Supabase فقط
     }
 
     if (scope === "college" && id) {
@@ -1446,22 +1425,45 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
   bot.callbackQuery("menu_profile", async (ctx) => {
     await ctx.answerCallbackQuery();
     const userState = getUserState(ctx.from.id, ctx.from.first_name);
-    const college = userState.current_college_id ? getCollegeById(userState.current_college_id)?.name : undefined;
-    const specialty = userState.current_specialty_id ? getSpecialtyById(userState.current_specialty_id)?.name : undefined;
 
-    const pending = userState.my_contributions.filter((c) => c.status === "pending").length;
+    // قراءة بيانات الطالب من Supabase
+    let dbStudent: any = null;
     let unreadCount = 0;
-    if (supabase) { try { unreadCount = await getUnreadNotificationsCount(supabase, ctx.from.id); } catch(e){} }
+    let pendingCount = 0;
+    let totalDownloads = 0;
+    let acceptedContribs = 0;
+
+    if (supabase) {
+      try {
+        dbStudent = await getStudent(supabase, ctx.from.id);
+        unreadCount = await getUnreadNotificationsCount(supabase, ctx.from.id);
+        const contribs = await getStudentContributions(supabase, ctx.from.id);
+        pendingCount = contribs.filter((c: any) => c.status === "pending").length;
+        if (dbStudent) {
+          totalDownloads = dbStudent.total_downloads || 0;
+          acceptedContribs = dbStudent.accepted_contributions || 0;
+        }
+      } catch (e) {
+        console.error("Supabase profile error:", e);
+      }
+    }
+
+    const collegeId = dbStudent?.current_college_id || userState.current_college_id;
+    const specialtyId = dbStudent?.current_specialty_id || userState.current_specialty_id;
+    const level = dbStudent?.current_level || userState.current_level;
+
+    const college = collegeId ? getCollegeById(collegeId)?.name : undefined;
+    const specialty = specialtyId ? getSpecialtyById(specialtyId)?.name : undefined;
 
     const msg =
-      TEXTS.profile.title(userState.first_name || "طالب") +
+      TEXTS.profile.title(dbStudent?.first_name || userState.first_name || "طالب") +
       TEXTS.profile.stats({
-        total_downloads: userState.total_downloads,
-        accepted_contributions: userState.accepted_contributions,
-        pending_contributions: pending,
+        total_downloads: totalDownloads || userState.total_downloads,
+        accepted_contributions: acceptedContribs || userState.accepted_contributions,
+        pending_contributions: pendingCount,
         current_college: college,
         current_specialty: specialty,
-        current_level: userState.current_level,
+        current_level: level,
       });
 
     await ctx.editMessageText(msg, {
@@ -1472,16 +1474,29 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
 
   bot.callbackQuery("my_contributions", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
     let msg = "📋 *مساهماتي*\n\n";
-    if (userState.my_contributions.length === 0) {
+
+    // قراءة من Supabase
+    let dbContribs: any[] = [];
+    if (supabase) {
+      try {
+        dbContribs = await getStudentContributions(supabase, ctx.from.id);
+      } catch (e) {
+        console.error("Supabase contributions error:", e);
+      }
+    }
+
+    if (dbContribs.length === 0) {
       msg += TEXTS.profile.no_contributions;
     } else {
-      userState.my_contributions.forEach((c) => {
+      dbContribs.forEach((c: any) => {
         const icon = c.status === "approved" ? "✅" : c.status === "pending" ? "⏳" : "❌";
         const statusLabel = c.status === "approved" ? "مقبولة" : c.status === "pending" ? "قيد المراجعة" : "مرفوضة";
+        const subject = getSubjectByIdWithFallback(c.subject_id);
         msg += `${icon} #${c.id} - ${c.file_name}\n`;
-        msg += `   📚 ${c.subject_name}\n   📅 ${c.submitted_at} • ${statusLabel}\n\n`;
+        msg += `   📚 ${subject?.name || "غير معروف"}\n   📅 ${new Date(c.created_at).toLocaleDateString("ar")} • ${statusLabel}\n`;
+        if (c.reject_reason) msg += `   ❓ ${c.reject_reason}\n`;
+        msg += "\n";
       });
     }
     await ctx.editMessageText(msg, {
@@ -1492,14 +1507,33 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
 
   bot.callbackQuery("my_downloads", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
     let msg = "📥 *آخر تحميلاتي*\n\n";
-    if (userState.recent_downloads.length === 0) {
+
+    // قراءة من Supabase
+    let dbDownloads: any[] = [];
+    if (supabase) {
+      try {
+        dbDownloads = await getRecentDownloads(supabase, ctx.from.id, 5);
+      } catch (e) {
+        console.error("Supabase downloads error:", e);
+      }
+    }
+
+    if (dbDownloads.length === 0) {
       msg += TEXTS.profile.no_downloads;
     } else {
-      userState.recent_downloads.forEach((d, i) => {
-        msg += `${i + 1}. 📄 ${d.file_name}\n   📚 ${d.subject_name} • 📅 ${d.date}\n\n`;
-      });
+      for (let i = 0; i < dbDownloads.length; i++) {
+        const d = dbDownloads[i];
+        // قراءة عنوان المحتوى
+        let contentTitle = "ملف";
+        if (supabase) {
+          try {
+            const content = await getContentById(supabase, d.content_id);
+            if (content) contentTitle = content.title || content.file_name || "ملف";
+          } catch {}
+        }
+        msg += `${i + 1}. 📄 ${contentTitle}\n   📅 ${new Date(d.downloaded_at).toLocaleDateString("ar")}\n\n`;
+      }
     }
     await ctx.editMessageText(msg, {
       reply_markup: new InlineKeyboard().text(TEXTS.navigation.back_to_main, "back_to_profile"),
