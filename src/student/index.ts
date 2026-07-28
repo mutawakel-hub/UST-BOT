@@ -26,6 +26,8 @@ import { SupabaseClient, registerStudent, isStudentRegistered, getStudent,
   logDownload, getRecentDownloads
 } from "../shared/db";
 import { SessionStore, TTL } from "../shared/session";
+import { deliverFileToUser } from "../shared/storage";
+import { initCallbackSigning } from "../shared/callback-signing";
 import {
   mainMenuKeyboard,
   collegesKeyboard,
@@ -176,10 +178,15 @@ export function createStudentBot(
   token: string,
   supabase: SupabaseClient,
   sessionsKv: KVNamespace,
-  cacheKv: KVNamespace
+  cacheKv: KVNamespace,
+  callbackSecret: string
 ): Bot {
   // تهيئة SessionStore (KV-bound)
   sessionStore = new SessionStore<UserState>(sessionsKv, "student", TTL.SESSION_DEFAULT);
+  // تهيئة نظام توقيع callbacks (HMAC-SHA256)
+  if (callbackSecret) {
+    initCallbackSigning(callbackSecret);
+  }
   const bot = new Bot(token);
 
   // ====== S1: القائمة الرئيسية ======
@@ -712,39 +719,33 @@ export function createStudentBot(
     }
     }
 
-    // إرسال الملف من قناة التخزين (forwardMessage)
+    // إرسال الملف من قناة التخزين (deliverFileToUser = forward + fallback)
     const spec = getSpecialtyById(subject.specialty_id);
     const college = getCollegeById(spec?.college_id || 0);
     const storageChannelId = college?.storage_channel_id;
     const telegramMessageId = fileData.telegram_message_id;
+    const telegramFileId = fileData.telegram_file_id;
 
-    let fileSent = false;
-    if (storageChannelId && telegramMessageId) {
-    try {
-        await ctx.api.forwardMessage(
-          ctx.chat.id,
-          storageChannelId,
-          telegramMessageId
-        );
-        fileSent = true;
-        await ctx.reply(
-          TEXTS.common.file_sent_with_caption
-            .replace("{fileName}", fileName)
-            .replace("{subjectName}", subject.name),
-          { parse_mode: "Markdown" }
-        );
-    } catch (err) {
-        console.error("forwardMessage error:", err);
-        await ctx.reply(
-          "⚠️ تعذّر إرسال الملف من قناة التخزين. تأكد من أن البوت مشرف في القناة.",
-          { parse_mode: "Markdown" }
-        );
-    }
+    const result = await deliverFileToUser(bot, ctx.chat.id, {
+      storageChannelId: storageChannelId || null,
+      messageId: telegramMessageId || null,
+      fileId: telegramFileId || null,
+      fileName,
+    }, {
+      caption: TEXTS.common.file_sent_with_caption
+        .replace("{fileName}", fileName)
+        .replace("{subjectName}", subject.name),
+      parseMode: "Markdown",
+      errorMessage: "⚠️ تعذّر إرسال الملف. تأكد من أن البوت مشرف في قناة التخزين.",
+    });
+
+    if (result.delivered) {
+      console.log(`📥 File delivered via ${result.method} to user ${ctx.from.id}`);
     } else {
-    await ctx.reply(
-        "⚠️ لا توجد قناة تخزين لهذه الكلية أو الملف لا يحتوي على معرف رسالة صالح.",
-        { parse_mode: "Markdown" }
-      );
+      console.error(`❌ File delivery failed: ${result.error}`);
+      await ctx.reply(result.error || "⚠️ تعذّر إرسال الملف.", {
+        parse_mode: "Markdown",
+      });
     }
 
     // زر العودة
@@ -1873,6 +1874,8 @@ export interface Env {
   // KV bindings (مضافة في wrangler.student.toml)
   SESSIONS: KVNamespace;
   CACHE: KVNamespace;
+  // HMAC secret لتوقيع callback_data (منع التزوير)
+  CALLBACK_SECRET: string;
 }
 
 let botInstance: Bot | null = null;
@@ -1899,9 +1902,9 @@ export default {
         });
     }
 
-    // تهيئة البوت مرة واحدة (يحتفظ بالـ KV bindings)
+    // تهيئة البوت مرة واحدة (يحتفظ بالـ KV bindings + callback secret)
     if (!botInstance) {
-        botInstance = createStudentBot(env.BOT_TOKEN, supabaseClient!, env.SESSIONS, env.CACHE);
+        botInstance = createStudentBot(env.BOT_TOKEN, supabaseClient!, env.SESSIONS, env.CACHE, env.CALLBACK_SECRET || "");
     }
 
     const url = new URL(request.url);
@@ -1916,6 +1919,7 @@ export default {
             supabase: "connected",
             kv_sessions: env.SESSIONS ? "bound" : "missing",
             kv_cache: env.CACHE ? "bound" : "missing",
+            callback_signing: env.CALLBACK_SECRET ? "enabled" : "disabled",
             timestamp: new Date().toISOString(),
           }),
           { headers: { "Content-Type": "application/json" } }

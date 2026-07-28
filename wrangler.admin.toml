@@ -41,3 +41,8 @@ id = "0d0fbffb56f04907b68bb68c51aac9de"
 #
 # Secret: SUPABASE_SERVICE_KEY
 # لتعيينه: echo "eyJhbGc..." | npx wrangler secret put SUPABASE_SERVICE_KEY --config wrangler.admin.toml
+#
+# Secret: CALLBACK_SECRET (لتوقيع callback_data بـ HMAC-SHA256)
+# توليد secret: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+# لتعيينه: echo "GENERATED_SECRET" | npx wrangler secret put CALLBACK_SECRET --config wrangler.admin.toml
+# ⚠️ مهم: استخدم نفس الـ secret لكلا البوتين (student + admin)

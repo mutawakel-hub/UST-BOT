@@ -43,6 +43,8 @@ import {
   logBroadcast,
 } from "../shared/db";
 import { SessionStore, TTL } from "../shared/session";
+import { uploadFileToStorageChannel, deliverFileToUser, formatFileSize, bytesToMb } from "../shared/storage";
+import { initCallbackSigning } from "../shared/callback-signing";
 
 // ============================================
 // Stub functions (تقرأ من DB بدل MOCK arrays)
@@ -290,10 +292,14 @@ export function createAdminBot(
   token: string,
   supabase: SupabaseClient,
   sessionsKv: KVNamespace,
-  cacheKv: KVNamespace
+  cacheKv: KVNamespace,
+  callbackSecret: string
 ): Bot {
   sessionStore = new SessionStore<AdminSession>(sessionsKv, "admin", TTL.SESSION_DEFAULT);
   initRbac(supabase, cacheKv);
+  if (callbackSecret) {
+    initCallbackSigning(callbackSecret);
+  }
   (globalThis as any).__supabase = supabase;
   const bot = new Bot(token);
 
@@ -474,41 +480,138 @@ export function createAdminBot(
     await ctx.answerCallbackQuery({ text: isStarred ? "⭐ تم الاعتماد المميز" : "✅ تم الاعتماد" });
     pendingContributions = pendingContributions.filter((c) => c.id !== contribId);
 
-    // تحديث المساهمة في Supabase
-      try {
-        // تحديث حالة المساهمة
-        await supabase.update("contributions", {
-          status: "approved",
-          is_starred: isStarred,
-          reviewed_by_telegram_id: ctx.from.id,
-          reviewed_at: new Date().toISOString(),
-        }, `id=eq.${contribId}`);
-        console.log(`✅ Contribution ${contribId} approved in Supabase`);
+    // 1. قراءة بيانات المساهمة الكاملة من Supabase
+    let contribution: any = null;
+    try {
+      const result = await supabase.select("contributions", {
+        columns: "id,file_name,subject_id,content_type_id,description,file_size_mb,user_telegram_id,telegram_file_id",
+        filter: `id=eq.${contribId}`,
+        single: true,
+      });
+      contribution = Array.isArray(result) ? result[0] : result;
+    } catch (e) {
+      console.error("Failed to read contribution:", e);
+    }
 
-        // منح النقاط للطالب (عبر RPC)
-        // نحتاج معرفة user_telegram_id + subject_id من المساهمة
-        const contribData = await supabase.select("contributions", {
-          columns: "user_telegram_id",
-          filter: `id=eq.${contribId}`,
+    if (!contribution) {
+      await ctx.reply("⚠️ المساهمة غير موجودة.");
+      return;
+    }
+
+    // 2. معرفة الكلية + قناة التخزين للمادة
+    let storageChannelId: string | null = null;
+    let collegeId: number | null = null;
+    try {
+      const subjectResult = await supabase.select("subjects", {
+        columns: "specialty_id",
+        filter: `id=eq.${contribution.subject_id}`,
+        single: true,
+      });
+      const subject = Array.isArray(subjectResult) ? subjectResult[0] : subjectResult;
+      if (subject?.specialty_id) {
+        const specResult = await supabase.select("specialties", {
+          columns: "college_id",
+          filter: `id=eq.${subject.specialty_id}`,
           single: true,
-        }) as any;
-        if (contribData?.user_telegram_id) {
-          const points = isStarred ? 20 : 10;
-          await supabase.rpc("award_contribution_points", {
-            p_student_telegram_id: contribData.user_telegram_id,
-            p_contribution_id: contribId,
-            p_awarded_by_telegram_id: ctx.from.id,
-            p_awarded_by_position_id: "central_chair",
-            p_points: points,
+        });
+        const spec = Array.isArray(specResult) ? specResult[0] : specResult;
+        if (spec?.college_id) {
+          collegeId = spec.college_id;
+          const collegeResult = await supabase.select("colleges", {
+            columns: "storage_channel_id",
+            filter: `id=eq.${spec.college_id}`,
+            single: true,
           });
-          console.log(`✅ Awarded ${points} points to student ${contribData.user_telegram_id}`);
+          const college = Array.isArray(collegeResult) ? collegeResult[0] : collegeResult;
+          storageChannelId = college?.storage_channel_id || null;
         }
-      } catch (e) {
-        console.error("Supabase approve error:", e);
       }
+    } catch (e) {
+      console.error("Failed to fetch college/storage channel:", e);
+    }
+
+    // 3. رفع الملف لقناة التخزين (لو توفر file_id + channel)
+    let uploadedMessageId: number | null = null;
+    let uploadedFileId: string | null = null;
+    if (storageChannelId && contribution.telegram_file_id) {
+      try {
+        const uploaded = await uploadFileToStorageChannel(
+          bot,
+          storageChannelId,
+          { fileId: contribution.telegram_file_id, fileName: contribution.file_name },
+          {
+            caption: `📄 ${contribution.file_name}\n📚 مادة: ${contribution.subject_id}\n👤 رافع: ${contribution.user_telegram_id}`,
+            parseMode: "Markdown",
+          }
+        );
+        uploadedMessageId = uploaded.message_id;
+        uploadedFileId = uploaded.file_id;
+        console.log(`📤 File uploaded to storage channel ${storageChannelId}: msg_id=${uploadedMessageId}`);
+      } catch (e) {
+        console.error("Failed to upload file to storage channel:", e);
+        // نستمر حتى لو فشل الرفع — لا نريد فقدان القرار
+      }
+    }
+
+    // 4. إنشاء سجل content في DB (لو تم الرفع)
+    if (uploadedMessageId && uploadedFileId && collegeId !== null) {
+      try {
+        await supabase.insert("content", {
+          subject_id: contribution.subject_id,
+          specialty_id: 0, // سيُحسب من subject
+          college_id: collegeId,
+          level: 1, // افتراضي — يجب تحديثه من subject
+          semester: 1, // افتراضي
+          content_type_id: contribution.content_type_id,
+          title: contribution.file_name,
+          file_name: contribution.file_name,
+          file_size_mb: contribution.file_size_mb || 0,
+          telegram_message_id: uploadedMessageId,
+          telegram_file_id: uploadedFileId,
+          added_by_position_id: "central_chair",
+          added_by_telegram_id: ctx.from.id,
+          is_starred: isStarred,
+          is_active: true,
+          academic_year: new Date().getFullYear().toString(),
+        });
+        console.log(`✅ Content record created for contribution ${contribId}`);
+      } catch (e) {
+        console.error("Failed to create content record:", e);
+      }
+    }
+
+    // 5. تحديث حالة المساهمة في Supabase
+    try {
+      await supabase.update("contributions", {
+        status: "approved",
+        is_starred: isStarred,
+        reviewed_by_telegram_id: ctx.from.id,
+        reviewed_at: new Date().toISOString(),
+      }, `id=eq.${contribId}`);
+      console.log(`✅ Contribution ${contribId} approved in Supabase`);
+
+      // 6. منح النقاط للطالب (عبر RPC)
+      if (contribution.user_telegram_id) {
+        const points = isStarred ? 20 : 10;
+        await supabase.rpc("award_contribution_points", {
+          p_student_telegram_id: contribution.user_telegram_id,
+          p_contribution_id: contribId,
+          p_awarded_by_telegram_id: ctx.from.id,
+          p_awarded_by_position_id: "central_chair",
+          p_points: points,
+        });
+        console.log(`✅ Awarded ${points} points to student ${contribution.user_telegram_id}`);
+      }
+    } catch (e) {
+      console.error("Supabase approve error:", e);
+    }
 
     await ctx.editMessageText(
-      `${isStarred ? "⭐" : "✅"} *تم اعتماد المساهمة #${contribId}*\n\nتم نقل الملف لقناة التخزين ونشره للطلاب.\n💎 تم منح الطالب ${isStarred ? "20" : "10"} نقطة.`,
+      `${isStarred ? "⭐" : "✅"} *تم اعتماد المساهمة #${contribId}*\n\n` +
+      (uploadedMessageId
+        ? `📤 تم رفع الملف لقناة التخزين (message_id: ${uploadedMessageId})\n`
+        : `⚠️ تعذّر رفع الملف لقناة التخزين — تحقق من إعدادات القناة\n`) +
+      `💎 تم منح الطالب ${isStarred ? "20" : "10"} نقطة.`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
         parse_mode: "Markdown",
@@ -1836,10 +1939,117 @@ export function createAdminBot(
       return;
     }
 
-    // محاكاة رفع المحتوى
+    // استقبال ملف لرفع محتوى (لو المسؤول اختار نوع المحتوى مسبقاً)
     const doc = ctx.message.document;
+    const fileSizeMb = bytesToMb(doc.file_size || 0);
+
+    // لو المسؤول في وضع رفع محتوى، نرفع الملف لقناة التخزين
+    if (session?.awaiting_upload_step === "file" && session.upload_context) {
+      const ctx2 = session.upload_context;
+      session.awaiting_upload_step = undefined;
+      session.upload_context = undefined;
+      await saveSession(session);
+
+      // ابحث عن قناة التخزين للكلية
+      let storageChannelId: string | null = null;
+      try {
+        const collegeResult = await supabase.select("colleges", {
+          columns: "storage_channel_id",
+          filter: `id=eq.${ctx2.college_id}`,
+          single: true,
+        });
+        const college = Array.isArray(collegeResult) ? collegeResult[0] : collegeResult;
+        storageChannelId = college?.storage_channel_id || null;
+      } catch (e) {
+        console.error("Failed to fetch storage channel:", e);
+      }
+
+      if (!storageChannelId) {
+        await ctx.reply(
+          "⚠️ لا توجد قناة تخزين لهذه الكلية. تأكد من إعداد القناة.",
+          {
+            reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+            parse_mode: "Markdown",
+          }
+        );
+        return;
+      }
+
+      // رفع الملف لقناة التخزين
+      let uploaded: any = null;
+      try {
+        uploaded = await uploadFileToStorageChannel(
+          bot,
+          storageChannelId,
+          { fileId: doc.file_id, fileName: doc.file_name },
+          {
+            caption: `📄 ${doc.file_name}\n📚 مادة: ${ctx2.subject_id}\n📂 نوع: ${ctx2.content_type}`,
+            parseMode: "Markdown",
+          }
+        );
+      } catch (e) {
+        console.error("File upload failed:", e);
+        await ctx.reply(
+          "❌ فشل رفع الملف لقناة التخزين. تأكد من أن البوت مشرف في القناة.",
+          {
+            reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+            parse_mode: "Markdown",
+          }
+        );
+        return;
+      }
+
+      // إنشاء سجل content في DB
+      try {
+        await supabase.insert("content", {
+          subject_id: ctx2.subject_id,
+          specialty_id: ctx2.specialty_id || 0,
+          college_id: ctx2.college_id,
+          level: ctx2.level || 1,
+          semester: ctx2.semester || 1,
+          content_type_id: ctx2.content_type,
+          title: ctx2.title || doc.file_name,
+          file_name: doc.file_name,
+          file_size_mb: fileSizeMb,
+          telegram_message_id: uploaded.message_id,
+          telegram_file_id: uploaded.file_id,
+          added_by_position_id: "central_chair",
+          added_by_telegram_id: ctx.from.id,
+          is_starred: false,
+          is_active: true,
+          academic_year: new Date().getFullYear().toString(),
+        });
+
+        await ctx.reply(
+          `✅ *تم رفع المحتوى بنجاح!*\n\n` +
+          `📄 *الاسم:* ${doc.file_name}\n` +
+          `📊 *الحجم:* ${formatFileSize(doc.file_size || 0)}\n` +
+          `📨 *message_id:* ${uploaded.message_id}\n` +
+          `🗂 *النوع:* ${ctx2.content_type}\n\n` +
+          `✅ تم تسجيل المحتوى في قاعدة البيانات وهو متاح للطلاب الآن.`,
+          {
+            reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+            parse_mode: "Markdown",
+          }
+        );
+      } catch (e) {
+        console.error("Content insert failed:", e);
+        await ctx.reply(
+          `⚠️ تم رفع الملف لقناة التخزين (message_id: ${uploaded.message_id})\n` +
+          `لكن فشل تسجيله في قاعدة البيانات. تواصل مع المسؤول.`,
+          {
+            reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+            parse_mode: "Markdown",
+          }
+        );
+      }
+      return;
+    }
+
+    // رد افتراضي: الملف غير متوقع
     await ctx.reply(
-      `✅ *تم استلام الملف!*\n\n📄 *الاسم:* ${doc.file_name}\n📊 *الحجم:* ${(doc.file_size / 1024 / 1024).toFixed(2)} MB\n\n_في الإنتاج: سيُرفع الملف لقناة التخزين ويُسجّل في قاعدة البيانات._`,
+      `✅ *تم استلام الملف!*\n\n📄 *الاسم:* ${doc.file_name}\n📊 *الحجم:* ${formatFileSize(doc.file_size || 0)}\n\n` +
+      `ℹ️ لرفع محتوى رسمي، استخدم زر "📁 إدارة المحتوى" → "📤 رفع محتوى" من لوحة الإدارة.`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
@@ -2136,6 +2346,8 @@ export interface Env {
   SUPABASE_SERVICE_KEY: string;
   SESSIONS: KVNamespace;
   CACHE: KVNamespace;
+  // HMAC secret لتوقيع callback_data (منع التزوير)
+  CALLBACK_SECRET: string;
 }
 
 let botInstance: Bot | null = null;
@@ -2151,7 +2363,7 @@ export default {
         });
       }
       if (!botInstance) {
-        botInstance = createAdminBot(env.BOT_TOKEN, supabaseClient!, env.SESSIONS, env.CACHE);
+        botInstance = createAdminBot(env.BOT_TOKEN, supabaseClient!, env.SESSIONS, env.CACHE, env.CALLBACK_SECRET || "");
       }
       const url = new URL(request.url);
 
@@ -2159,7 +2371,12 @@ export default {
         return new Response(
           JSON.stringify({
             status: "ok", bot: env.BOT_USERNAME, environment: env.ENVIRONMENT,
-            version: "3.3", timestamp: new Date().toISOString(),
+            version: "3.3",
+            supabase: supabaseClient ? "connected" : "missing",
+            kv_sessions: env.SESSIONS ? "bound" : "missing",
+            kv_cache: env.CACHE ? "bound" : "missing",
+            callback_signing: env.CALLBACK_SECRET ? "enabled" : "disabled",
+            timestamp: new Date().toISOString(),
           }),
           { headers: { "Content-Type": "application/json" } }
         );
