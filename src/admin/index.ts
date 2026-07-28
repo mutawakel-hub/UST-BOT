@@ -158,20 +158,8 @@ const customTexts = {
 // Array-like wrappers للتوافق مع الكود الموجود (يقرأ من DB عند الحاجة)
 // ملاحظة: هذه stubs تُرجع arrays فارغة — الكود يجب أن يُحدّث لاستخدام الدوال async
 // ============================================
-// TEMP STUBS: هذه المتغيرات موجودة مؤقتاً لإكمال typecheck
-// سيتم استبدالها بـ Supabase calls في المرحلة C المتقدمة
+// (تم حذف TEMP STUBS — كل البيانات الآن من Supabase)
 // ============================================
-let pendingContributions: any[] = [];
-const mockContent: any[] = [];
-let mockHolders: any[] = [];
-const mockChannels: any[] = [];
-
-// TEMP STUB: getUserPositions (مُحذوف من rbac.ts الجديد)
-// يستخدم في عدد محدود من الأماكن — سيُستبدل بـ getUserPermissions().positions
-async function getUserPositions(telegramId: number): Promise<UserPosition[]> {
-  const perms = await getUserPermissions(telegramId);
-  return perms.positions;
-}
 // لكن مؤقتاً نتركها لتسهيل typecheck
 
 // ============================================
@@ -308,15 +296,44 @@ export function createAdminBot(
     const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     const perms = await getUserPermissions(ctx.from.id);
 
-    let roleLabel = "🛡 مسؤول مركزي (تجريبي)";
+    // تحقق أن المستخدم مسؤول فعلًا (له منصب نشط)
+    if (!perms.is_central && perms.positions.length === 0) {
+      await ctx.reply(
+        "⛔ *غير مصرّح لك بالدخول*\n\n" +
+        "لا تملك منصباً إدارياً نشطاً في النظام.\n\n" +
+        "_لو تعتقد أن هذا خطأ، تأكد من:_" +
+        "\n• أنك مسجّل في جدول `admin_users`" +
+        "\n• أنك معيّن في `position_holders` كـ `is_active = true`" +
+        "\n• أن الـ View `user_permissions` موجود في قاعدة البيانات",
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
+
+    // تحديد label المنصب من الصلاحيات الفعلية
+    let roleLabel = "🛡 مسؤول مركزي";
+    if (!perms.is_central && perms.positions.length > 0) {
+      const pos = perms.positions[0];
+      roleLabel = `${getPositionLevelLabel(pos.level)} ${pos.title}`;
+    }
+
+    // عدّ المساهمات المعلقة من Supabase
+    let pendingCount = 0;
+    try {
+      const pending = await supabase.select<{ id: number }>("contributions", {
+        columns: "id",
+        filter: "status=eq.pending",
+        limit: 100,
+      });
+      pendingCount = Array.isArray(pending) ? pending.length : 0;
+    } catch (e) {
+      console.error("Failed to count pending contributions:", e);
+    }
 
     await ctx.reply(
-      ADMIN_TEXTS.dashboard.title(session.first_name, roleLabel, 0 /* TODO: count pending */) +
-      "\n\nℹ️ *وضع التجربة:* يتم منحك صلاحية *مسؤول مركزي* افتراضياً.\n" +
-      "استخدم زر *🎭 تبديل الدور* لتجربة صلاحيات مختلفة.\n\n" +
-      "_في الإنتاج، سيتم التحقق من منصبك في قاعدة البيانات تلقائياً._",
+      ADMIN_TEXTS.dashboard.title(session.first_name, roleLabel, pendingCount),
       {
-        reply_markup: buildDynamicDashboard(perms, 0 /* TODO: count pending */),
+        reply_markup: buildDynamicDashboard(perms, pendingCount),
         parse_mode: "Markdown",
       }
     );
@@ -347,12 +364,29 @@ export function createAdminBot(
     session.content_filter = undefined;
 
     const perms = await getUserPermissions(ctx.from.id);
-    let roleLabel = "🛡 مسؤول مركزي (تجريبي)";
+    let roleLabel = "🛡 مسؤول مركزي";
+    if (!perms.is_central && perms.positions.length > 0) {
+      const pos = perms.positions[0];
+      roleLabel = `${getPositionLevelLabel(pos.level)} ${pos.title}`;
+    }
+
+    // عدّ المساهمات المعلقة من Supabase
+    let pendingCount = 0;
+    try {
+      const pending = await supabase.select<{ id: number }>("contributions", {
+        columns: "id",
+        filter: "status=eq.pending",
+        limit: 100,
+      });
+      pendingCount = Array.isArray(pending) ? pending.length : 0;
+    } catch (e) {
+      console.error("Failed to count pending contributions:", e);
+    }
 
     await ctx.editMessageText(
-      ADMIN_TEXTS.dashboard.title(session.first_name, roleLabel, 0 /* TODO: count pending */),
+      ADMIN_TEXTS.dashboard.title(session.first_name, roleLabel, pendingCount),
       {
-        reply_markup: buildDynamicDashboard(perms, 0 /* TODO: count pending */),
+        reply_markup: buildDynamicDashboard(perms, pendingCount),
         parse_mode: "Markdown",
       }
     );
@@ -376,25 +410,22 @@ export function createAdminBot(
         console.error("Supabase pending read error:", e);
       }
 
-    // دمج المساهمات من DB + Mock
-    const allPending = [
-      ...dbContributions.map((c: any) => ({
-        id: c.id,
-        file_name: c.file_name,
-        subject_id: c.subject_id,
-        subject_name: (getSubjectById(c.subject_id)?.name || "غير معروف") || "غير معروف",
-        content_type: c.content_type_id,
-        description: c.description,
-        file_size_mb: parseFloat(c.file_size_mb) || 0,
-        user_name: "طالب",
-        user_telegram_id: 0,
-        uploaded_at: "حديثاً",
-        specialty_id: 0,
-        college_id: 0,
-        level: 0,
-      })),
-      ...pendingContributions,
-    ];
+    // المساهمات المعلقة من Supabase فقط
+    const allPending = dbContributions.map((c: any) => ({
+      id: c.id,
+      file_name: c.file_name,
+      subject_id: c.subject_id,
+      subject_name: (getSubjectById(c.subject_id)?.name || "غير معروف") || "غير معروف",
+      content_type: c.content_type_id,
+      description: c.description,
+      file_size_mb: parseFloat(c.file_size_mb) || 0,
+      user_name: "طالب",
+      user_telegram_id: 0,
+      uploaded_at: "حديثاً",
+      specialty_id: 0,
+      college_id: 0,
+      level: 0,
+    }));
 
     if (allPending.length === 0) {
       await ctx.editMessageText(ADMIN_TEXTS.pending.empty, {
@@ -430,10 +461,7 @@ export function createAdminBot(
       } catch (e) {
         console.error("Supabase pending read error:", e);
       }
-    const allPending = [
-      ...dbContributions.map((c: any) => ({ id: c.id, file_name: c.file_name })),
-      ...pendingContributions,
-    ];
+    const allPending = dbContributions.map((c: any) => ({ id: c.id, file_name: c.file_name }));
 
     const kb = new InlineKeyboard();
     allPending.forEach((c) => {
@@ -449,17 +477,32 @@ export function createAdminBot(
   // ====== A4: مراجعة مساهمة ======
   bot.callbackQuery(/review_(\d+)/, async (ctx) => {
     const contribId = parseInt(ctx.match[1]);
-    const contrib = pendingContributions.find((c) => c.id === contribId);
     await ctx.answerCallbackQuery();
+
+    // اقرأ المساهمة من Supabase
+    let contrib: any = null;
+    try {
+      const result = await supabase.select("contributions", {
+        columns: "id,file_name,subject_id,content_type_id,description,file_size_mb,created_at,user_telegram_id",
+        filter: `id=eq.${contribId}`,
+        single: true,
+      });
+      contrib = Array.isArray(result) ? result[0] : result;
+    } catch (e) {
+      console.error("Failed to fetch contribution:", e);
+    }
+
     if (!contrib) {
       await ctx.reply("⚠️ المساهمة غير موجودة أو تمت معالجتها.");
       return;
     }
+
+    const subjectName = getSubjectById(contrib.subject_id)?.name || "غير معروف";
     await ctx.editMessageText(
       ADMIN_TEXTS.review.title({
-        id: contrib.id, fileName: contrib.file_name, subjectName: contrib.subject_name,
-        userName: contrib.user_name, uploadedAt: contrib.uploaded_at,
-        fileSizeMb: contrib.file_size_mb, description: contrib.description,
+        id: contrib.id, fileName: contrib.file_name, subjectName,
+        userName: "طالب", uploadedAt: contrib.created_at || "حديثاً",
+        fileSizeMb: parseFloat(contrib.file_size_mb) || 0, description: contrib.description,
       }),
       {
         reply_markup: new InlineKeyboard()
@@ -478,7 +521,6 @@ export function createAdminBot(
     const isStarred = ctx.match[0].includes("star");
     const contribId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery({ text: isStarred ? "⭐ تم الاعتماد المميز" : "✅ تم الاعتماد" });
-    pendingContributions = pendingContributions.filter((c) => c.id !== contribId);
 
     // 1. قراءة بيانات المساهمة الكاملة من Supabase
     let contribution: any = null;
@@ -645,7 +687,6 @@ export function createAdminBot(
       irrelevant: "🚫 لا يتعلق بالمادة", incomplete: "📝 غير مكتمل", skip: "بدون سبب محدد",
     };
     await ctx.answerCallbackQuery({ text: "❌ تم الرفض" });
-    pendingContributions = pendingContributions.filter((c) => c.id !== contribId);
 
     // تحديث المساهمة في Supabase
       try {
@@ -1324,7 +1365,7 @@ export function createAdminBot(
     let msg = ADMIN_TEXTS.positions.list_title(manageablePositions.length);
     const kb = new InlineKeyboard();
     for (const p of manageablePositions) {
-      const holder = mockHolders.find((h) => h.position_id === p.position_id && h.is_active);
+      const holder = await getPositionHolder(supabase, p.position_id);
       const holderUser = holder ? await getAdminUser(supabase, holder.user_telegram_id) : null;
       msg += ADMIN_TEXTS.positions.position_entry({
         title: p.title,
@@ -1346,7 +1387,7 @@ export function createAdminBot(
       await ctx.reply("⚠️ المنصب غير موجود.");
       return;
     }
-    const holder = mockHolders.find((h) => h.position_id === positionId && h.is_active);
+    const holder = await getPositionHolder(supabase, positionId);
     const holderUser = holder ? await getAdminUser(supabase, holder.user_telegram_id) : null;
 
     let msg = `💼 *تفاصيل المنصب*\n\n`;
@@ -1391,7 +1432,7 @@ export function createAdminBot(
   bot.callbackQuery(/revoke_position_(.+)/, async (ctx) => {
     const positionId = ctx.match[1];
     const position = await getPositionById(supabase, positionId);
-    const holder = mockHolders.find((h) => h.position_id === positionId && h.is_active);
+    const holder = await getPositionHolder(supabase, positionId);
     const holderUser = holder ? await getAdminUser(supabase, holder.user_telegram_id) : null;
     await ctx.answerCallbackQuery();
     if (!holder || !holderUser || !position) {
@@ -1415,9 +1456,15 @@ export function createAdminBot(
 
   bot.callbackQuery(/confirm_revoke_(.+)/, async (ctx) => {
     const positionId = ctx.match[1];
-    mockHolders = mockHolders.map((h) =>
-      h.position_id === positionId ? { ...h, is_active: false } : h
-    );
+    // تعطيل شاغل المنصب في DB
+    try {
+      await supabase.update("position_holders",
+        { is_active: false },
+        `position_id=eq.${positionId}&is_active=eq.true`
+      );
+    } catch (e) {
+      console.error("Failed to revoke position holder:", e);
+    }
     await ctx.answerCallbackQuery({ text: "✅ تم الإزالة" });
     await ctx.editMessageText(
       ADMIN_TEXTS.positions.revoke_success,
@@ -1434,8 +1481,9 @@ export function createAdminBot(
   bot.callbackQuery("my_positions", async (ctx) => {
     await ctx.answerCallbackQuery();
     const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const simulatedId = ctx.from.id;
-    const myPositions = await getUserPositions(simulatedId);
+    // قراءة مناصب المستخدم من getUserPermissions (من DB)
+    const userPerms = await getUserPermissions(ctx.from.id);
+    const myPositions = userPerms.positions;
 
     if (myPositions.length === 0) {
       await ctx.editMessageText(ADMIN_TEXTS.positions.my_positions_empty, {
@@ -1446,9 +1494,10 @@ export function createAdminBot(
     }
 
     let msg = ADMIN_TEXTS.positions.my_positions_title(myPositions.length);
-    myPositions.forEach((p) => {
-      msg += `• ${p.title}\n  📍 ${getPositionScopeText(p as any)}\n\n`;
-    });
+    for (const p of myPositions) {
+      const scope = await getPositionScopeText(p);
+      msg += `• ${p.title}\n  📍 ${scope}\n\n`;
+    }
     await ctx.editMessageText(msg, {
       reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
       parse_mode: "Markdown",
@@ -1465,10 +1514,32 @@ export function createAdminBot(
     if (perms.is_central) {
       statsText += ADMIN_TEXTS.statistics.content(await getStatistics(supabase));
     } else {
-      // إحصائيات محدودة للنطاق
+      // إحصائيات محدودة للنطاق (مسؤول كلية/مستوى)
+      const collegeIds = Array.from(perms.effective_scope.colleges);
       statsText += `📊 *إحصائيات نطاقك:*\n\n`;
-      statsText += `📁 إجمالي الملفات: ${0 /* TODO: count content */}\n`;
-      statsText += `📥 المساهمات المعلقة: ${0 /* TODO: count pending */}\n`;
+      // عدّ المحتوى في كليات المستخدم
+      let contentCount = 0;
+      let pendingCount = 0;
+      try {
+        if (collegeIds.length > 0) {
+          const content = await supabase.select<{ id: number }>("content", {
+            columns: "id",
+            filter: `college_id=in.(${collegeIds.join(",")})&is_active=eq.true`,
+          });
+          contentCount = Array.isArray(content) ? content.length : 0;
+        }
+        const pending = await supabase.select<{ id: number }>("contributions", {
+          columns: "id",
+          filter: "status=eq.pending",
+          limit: 100,
+        });
+        pendingCount = Array.isArray(pending) ? pending.length : 0;
+      } catch (e) {
+        console.error("Statistics count error:", e);
+      }
+      statsText += `📁 إجمالي الملفات في نطاقك: ${contentCount}\n`;
+      statsText += `📥 المساهمات المعلقة: ${pendingCount}\n`;
+      statsText += `🏛 الكليات التي تديرها: ${collegeIds.length}\n`;
     }
     await ctx.editMessageText(statsText, {
       reply_markup: new InlineKeyboard()
@@ -1621,7 +1692,8 @@ export function createAdminBot(
 
   bot.callbackQuery("channels_central", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const central = mockChannels.find((c) => c.scope_type === "central");
+    const allChannels = await getChannelsByScope(supabase);
+    const central = allChannels.find((c: any) => c.scope_type === "central");
     if (!central) {
       await ctx.editMessageText(ADMIN_TEXTS.channels.empty, {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.channels.btn_back_to_channels, "manage_channels"),
@@ -1646,7 +1718,7 @@ export function createAdminBot(
 
   bot.callbackQuery("channels_colleges", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const collegeChannels = mockChannels.filter((c) => c.scope_type === "college");
+    const collegeChannels = (await getChannelsByScope(supabase, "college"));
     let msg = ADMIN_TEXTS.channels.colleges_title;
     const kb = new InlineKeyboard();
     collegeChannels.forEach((c) => {
@@ -1660,7 +1732,7 @@ export function createAdminBot(
 
   bot.callbackQuery("channels_levels", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const levelChannels = mockChannels.filter((c) => c.scope_type === "specialty_level");
+    const levelChannels = (await getChannelsByScope(supabase, "specialty_level"));
     if (levelChannels.length === 0) {
       await ctx.editMessageText(ADMIN_TEXTS.channels.empty, {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.channels.btn_back_to_channels, "manage_channels"),
@@ -1682,7 +1754,7 @@ export function createAdminBot(
 
   bot.callbackQuery(/edit_channel_(\d+)/, async (ctx) => {
     const channelId = parseInt(ctx.match[1]);
-    const channel = mockChannels.find((c) => c.id === channelId);
+    const channel = await getChannelById(supabase, channelId);
     await ctx.answerCallbackQuery();
     if (!channel) return;
     const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
@@ -1789,18 +1861,29 @@ export function createAdminBot(
           await ctx.reply("⚠️ المعرّف يجب أن يكون رقماً. أعد المحاولة:");
           return;
         }
-        // محاكاة التعيين
-        mockHolders = mockHolders.map((h) =>
-          h.position_id === assign.position_id ? { ...h, is_active: false } : h
-        );
-        mockHolders.push({
-          position_id: assign.position_id,
-          user_telegram_id: tid,
-          assigned_at: new Date().toISOString().substring(0, 10),
-          assigned_by: ctx.from.id,
-          is_active: true,
-        });
-        // إضافة المستخدم للقائمة (محاكاة)
+        // تعطيل أي شاغل سابق نشط لهذا المنصب
+        try {
+          await supabase.update("position_holders",
+            { is_active: false },
+            `position_id=eq.${assign.position_id}&is_active=eq.true`
+          );
+        } catch (e) {
+          console.error("Failed to deactivate previous holder:", e);
+        }
+        // إدراج شاغل جديد
+        try {
+          await supabase.insert("position_holders", {
+            position_id: assign.position_id,
+            user_telegram_id: tid,
+            assigned_by: ctx.from.id,
+            is_active: true,
+          });
+        } catch (e) {
+          console.error("Failed to assign new holder:", e);
+          await ctx.reply("⚠️ فشل تعيين المنصب. حاول مرة أخرى.");
+          return;
+        }
+        // قراءة بيانات المنصب
         const position = await getPositionById(supabase, assign.position_id);
         const successMsg = ADMIN_TEXTS.positions.assign_success(assign.name || "المستخدم", position?.title || "المنصب");
         session.awaiting_position_assign = undefined;
@@ -1818,7 +1901,7 @@ export function createAdminBot(
     // استقبال رابط قناة جديد
     if (session.awaiting_channel_edit) {
       const channelId = session.awaiting_channel_edit;
-      const channel = mockChannels.find((c) => c.id === channelId);
+      const channel = await getChannelById(supabase, channelId);
       if (channel) {
         channel.channel_url = ctx.message.text;
         channel.updated_at = new Date().toISOString().substring(0, 10);
@@ -1884,26 +1967,41 @@ export function createAdminBot(
         return;
       }
       const data = session.awaiting_honor_new_data!;
-      // إنشاء تكريم جديد
-      const newHonor: any = {
-        id: (await getHonors(supabase)).length + 1,
-        student_telegram_id: data.student_id!,
-        student_name: `طالب ${data.student_id}`,
-        honor_type: "manual",
-        honor_title: data.title!,
-        honor_period: "يدوي",
-        points_at_honor: 0,
-        bonus_points: bonus,
-        status: "approved",
-        approved_by_telegram_id: ctx.from.id,
-        approved_at: new Date().toISOString().substring(0, 10),
-        created_at: new Date().toISOString().substring(0, 10),
-      };
-      /* TODO: await supabase.insert("contribution_honors", newHonor); */
+      // قراءة اسم الطالب من DB
+      let studentName = `طالب ${data.student_id}`;
+      try {
+        const studentResult = await supabase.select("students", {
+          columns: "first_name",
+          filter: `telegram_id=eq.${data.student_id}`,
+          single: true,
+        });
+        const student = Array.isArray(studentResult) ? studentResult[0] : studentResult;
+        if (student?.first_name) studentName = student.first_name;
+      } catch {}
+
+      // إدراج تكريم جديد في DB
+      try {
+        await supabase.insert("contribution_honors", {
+          student_telegram_id: data.student_id!,
+          honor_type: "manual",
+          honor_title: data.title!,
+          honor_period: "يدوي",
+          bonus_points: bonus,
+          status: "approved",
+          approved_by_telegram_id: ctx.from.id,
+          approved_at: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.error("Failed to insert honor:", e);
+        await ctx.reply("⚠️ فشل إنشاء التكريم. حاول مرة أخرى.");
+        return;
+      }
+
       session.awaiting_honor_new_step = undefined;
       session.awaiting_honor_new_data = undefined;
+      await saveSession(session);
       await ctx.reply(
-        ADMIN_TEXTS.honors.new_honor_success(newHonor.student_name, newHonor.honor_title),
+        ADMIN_TEXTS.honors.new_honor_success(studentName, data.title!),
         {
           reply_markup: new InlineKeyboard()
             .text("🏆 إدارة التكريم", "manage_honors")

@@ -94,21 +94,64 @@ export async function getUserPermissions(telegramId: number): Promise<UserPermis
   }
 
   // 2. اقرأ من Supabase عبر View `user_permissions`
-  const rows = await supabaseClient.select<{
-    position_id: string;
-    position_level: PositionLevel;
-    position_title: string;
-    college_id: number | null;
-    specialty_id: number | null;
-    level_num: number | null;
-    permission_id: string;
-    permission_name: string;
-  }>("user_permissions", {
-    columns: "position_id,position_level,position_title,college_id,specialty_id,level_num,permission_id,permission_name",
-    filter: `user_telegram_id=eq.${telegramId}`,
-  });
+  let rows: any[] = [];
+  try {
+    const result = await supabaseClient.select<{
+      position_id: string;
+      position_level: PositionLevel;
+      position_title: string;
+      college_id: number | null;
+      specialty_id: number | null;
+      level_num: number | null;
+      permission_id: string;
+      permission_name: string;
+    }>("user_permissions", {
+      columns: "position_id,position_level,position_title,college_id,specialty_id,level_num,permission_id,permission_name",
+      filter: `user_telegram_id=eq.${telegramId}`,
+    });
+    rows = Array.isArray(result) ? result : [];
+  } catch (e: any) {
+    // تشخيص مفصل للأخطاء
+    const errMsg = String(e?.message || e);
+    if (errMsg.includes("404") || errMsg.includes("Does not exist") || errMsg.includes("schema cache")) {
+      console.error("❌ View 'user_permissions' not found in database!");
+      console.error("   → Apply db/schema.sql to Supabase via SQL Editor");
+      console.error("   → OR run: psql $SUPABASE_DB_URL -f db/schema.sql");
+    } else if (errMsg.includes("permission denied")) {
+      console.error("❌ Permission denied on 'user_permissions' view");
+      console.error("   → Check RLS policies or use service_role key");
+    } else {
+      console.error("❌ getUserPermissions: Supabase error:", errMsg);
+    }
+    return emptyPermissions();
+  }
 
-  if (!Array.isArray(rows) || rows.length === 0) {
+  if (rows.length === 0) {
+    // تحقق إضافي: هل المستخدم موجود في admin_users أصلاً؟
+    try {
+      const adminUser = await supabaseClient.select("admin_users", {
+        columns: "telegram_id",
+        filter: `telegram_id=eq.${telegramId}`,
+        limit: 1,
+      });
+      if (!Array.isArray(adminUser) || adminUser.length === 0) {
+        console.warn(`⚠️  User ${telegramId} not found in admin_users table`);
+        console.warn("   → Run: INSERT INTO admin_users (telegram_id, first_name) VALUES (...)");
+      } else {
+        // المستخدم موجود لكن ليس له منصب
+        const holder = await supabaseClient.select("position_holders", {
+          columns: "position_id",
+          filter: `user_telegram_id=eq.${telegramId}&is_active=eq.true`,
+          limit: 1,
+        });
+        if (!Array.isArray(holder) || holder.length === 0) {
+          console.warn(`⚠️  User ${telegramId} has no active position in position_holders`);
+          console.warn("   → Run: INSERT INTO position_holders (position_id, user_telegram_id, assigned_by, is_active) VALUES ('central_chair', ..., ..., true)");
+        }
+      }
+    } catch (e) {
+      // تجاهل أخطاء التشخيص
+    }
     return emptyPermissions();
   }
 
