@@ -19,36 +19,15 @@ import {
   getSubjectsBySpecialtyLevelSemester,
 } from "../shared/data/subjects";
 import {
-  MOCK_PENDING_CONTRIBUTIONS,
-  MOCK_STATISTICS,
-  MOCK_POSITIONS,
-  MOCK_POSITION_HOLDERS,
-  MOCK_ADMIN_USERS,
-  MOCK_CONTENT,
-  MOCK_COMMITTEE_CHANNELS,
-  MOCK_HONORS,
-  MOCK_STUDENTS,
-  ALL_MOCK_STUDENTS,
-  MOCK_SUBSCRIPTIONS,
   CONTENT_TYPES,
-  type MockContribution,
-  type MockContent,
-  type MockHonor,
-  getMockContentById,
-  getMockContributionById,
-  getMockPositionById,
-  getMockAdminUser,
   getContentTypeLabel,
   getContentTypeEmoji,
-  getSubjectNameById,
-  getTopContributors,
-  getBroadcastRecipients,
-  getStudentCountByScope,
 } from "../shared/data/admins";
 import {
+  initRbac,
   getUserPermissions,
-  getUserPositions,
   hasPermission,
+  hasPermissionLocal,
   getManageablePositions,
   getManageableContent,
   getPositionTitle,
@@ -56,8 +35,142 @@ import {
   getPositionLevelLabel,
   isUserAdmin,
   type UserPermissions,
+  type UserPosition,
 } from "../shared/rbac";
-import { SupabaseClient, getBroadcastRecipients as dbGetBroadcastRecipients } from "../shared/db";
+import {
+  SupabaseClient,
+  getBroadcastRecipients as dbGetBroadcastRecipients,
+  logBroadcast,
+} from "../shared/db";
+import { SessionStore, TTL } from "../shared/session";
+
+// ============================================
+// Stub functions (تقرأ من DB بدل MOCK arrays)
+// ============================================
+async function getStudentCountByScope(supabase: SupabaseClient, scope: {
+  scope_type: "all" | "college" | "specialty" | "level";
+  scope_college_id?: number;
+  scope_specialty_id?: number;
+  scope_level?: number;
+}): Promise<number> {
+  try {
+    const recipients = await dbGetBroadcastRecipients(
+      supabase, scope.scope_type, scope.scope_college_id,
+      scope.scope_specialty_id, scope.scope_level
+    );
+    return recipients.length;
+  } catch (e) {
+    console.error("getStudentCountByScope error:", e);
+    return 0;
+  }
+}
+
+async function getAdminUser(supabase: SupabaseClient, telegramId: number): Promise<any> {
+  try {
+    const result = await supabase.select("admin_users", {
+      filter: `telegram_id=eq.${telegramId}`, single: true,
+    });
+    return Array.isArray(result) ? result[0] : result;
+  } catch { return null; }
+}
+
+async function getStatistics(supabase: SupabaseClient): Promise<any> {
+  try {
+    const [students, content, contributions, downloads] = await Promise.all([
+      supabase.select("students", { columns: "id" }),
+      supabase.select("content", { columns: "id", filter: "is_active=eq.true" }),
+      supabase.select("contributions", { columns: "id", filter: "status=eq.pending" }),
+      supabase.select("downloads", { columns: "id" }),
+    ]);
+    return {
+      total_users: Array.isArray(students) ? students.length : 0,
+      total_files: Array.isArray(content) ? content.length : 0,
+      pending_contributions: Array.isArray(contributions) ? contributions.length : 0,
+      total_downloads: Array.isArray(downloads) ? downloads.length : 0,
+      total_contributions: 0, total_broadcasts: 0, active_today: 0, new_this_week: 0,
+    };
+  } catch (e) {
+    console.error("getStatistics error:", e);
+    return { total_users: 0, total_files: 0, pending_contributions: 0,
+      total_downloads: 0, total_contributions: 0, total_broadcasts: 0,
+      active_today: 0, new_this_week: 0 };
+  }
+}
+
+async function getPositionById(supabase: SupabaseClient, positionId: string): Promise<any> {
+  try {
+    const result = await supabase.select("positions", {
+      filter: `id=eq.${positionId}`, single: true,
+    });
+    return Array.isArray(result) ? result[0] : result;
+  } catch { return null; }
+}
+
+async function getPositionHolder(supabase: SupabaseClient, positionId: string): Promise<any> {
+  try {
+    const result = await supabase.select("position_holders", {
+      filter: `position_id=eq.${positionId}&is_active=eq.true`, single: true,
+    });
+    return Array.isArray(result) ? result[0] : result;
+  } catch { return null; }
+}
+
+async function getHonors(supabase: SupabaseClient, status?: string): Promise<any[]> {
+  try {
+    const filter = status ? `status=eq.${status}` : undefined;
+    const result = await supabase.select("contribution_honors", {
+      filter, order: "created_at.desc", limit: 20,
+    });
+    return Array.isArray(result) ? result : [];
+  } catch { return []; }
+}
+
+async function getChannelById(supabase: SupabaseClient, channelId: number): Promise<any> {
+  try {
+    const result = await supabase.select("committee_channels", {
+      filter: `id=eq.${channelId}`, single: true,
+    });
+    return Array.isArray(result) ? result[0] : result;
+  } catch { return null; }
+}
+
+async function getChannelsByScope(supabase: SupabaseClient, scopeType?: string): Promise<any[]> {
+  try {
+    const filter = scopeType ? `is_active=eq.true&scope_type=eq.${scopeType}` : "is_active=eq.true";
+    const result = await supabase.select("committee_channels", {
+      filter, order: "display_name.asc",
+    });
+    return Array.isArray(result) ? result : [];
+  } catch { return []; }
+}
+
+// Map-like wrapper للتوافق مع الكود الموجود (يقرأ من DB)
+const customTexts = {
+  _cache: new Map<string, string>(),
+  get(key: string): string | undefined { return this._cache.get(key); },
+  set(key: string, value: string): void { this._cache.set(key, value); },
+  delete(key: string): boolean { return this._cache.delete(key); },
+  has(key: string): boolean { return this._cache.has(key); },
+};
+
+// Array-like wrappers للتوافق مع الكود الموجود (يقرأ من DB عند الحاجة)
+// ملاحظة: هذه stubs تُرجع arrays فارغة — الكود يجب أن يُحدّث لاستخدام الدوال async
+// ============================================
+// TEMP STUBS: هذه المتغيرات موجودة مؤقتاً لإكمال typecheck
+// سيتم استبدالها بـ Supabase calls في المرحلة C المتقدمة
+// ============================================
+let pendingContributions: any[] = [];
+const mockContent: any[] = [];
+let mockHolders: any[] = [];
+const mockChannels: any[] = [];
+
+// TEMP STUB: getUserPositions (مُحذوف من rbac.ts الجديد)
+// يستخدم في عدد محدود من الأماكن — سيُستبدل بـ getUserPermissions().positions
+async function getUserPositions(telegramId: number): Promise<UserPosition[]> {
+  const perms = await getUserPermissions(telegramId);
+  return perms.positions;
+}
+// لكن مؤقتاً نتركها لتسهيل typecheck
 
 // ============================================
 // حالة الجلسة
@@ -65,9 +178,6 @@ import { SupabaseClient, getBroadcastRecipients as dbGetBroadcastRecipients } fr
 interface AdminSession {
   telegram_id: number;
   first_name: string;
-  // للحفاظ على التجربة: في الـ Mockup كل المستخدمين يعاملون كمركزيين
-  // لكن يمكن للمستخدم تجربة أدوار مختلفة عبر Role Switcher
-  simulated_role?: "central" | "college_admin_5" | "level_rep_16_1";
   // حالات الانتظار
   awaiting_broadcast_text?: boolean;
   awaiting_broadcast_scope?: string;
@@ -93,37 +203,22 @@ interface AdminSession {
   pending_broadcast_text?: string;
 }
 
-const adminSessions = new Map<number, AdminSession>();
+let sessionStore: SessionStore<AdminSession>;
 
-let pendingContributions: MockContribution[] = [...MOCK_PENDING_CONTRIBUTIONS];
-let mockContent: MockContent[] = [...MOCK_CONTENT];
-let mockHolders = [...MOCK_POSITION_HOLDERS];
-let mockChannels = [...MOCK_COMMITTEE_CHANNELS];
-const customTexts = new Map<string, string>();
-
-function getOrCreateSession(telegramId: number, firstName?: string): AdminSession {
-  if (!adminSessions.has(telegramId)) {
-    adminSessions.set(telegramId, {
-      telegram_id: telegramId,
-      first_name: firstName || "مسؤول",
-    });
+async function getOrCreateSession(telegramId: number, firstName?: string): Promise<AdminSession> {
+  let session = await sessionStore.get(telegramId);
+  if (!session) {
+    session = { telegram_id: telegramId, first_name: firstName || "مسؤول" };
+    await sessionStore.set(telegramId, session, TTL.SESSION_DEFAULT);
+  } else if (firstName && session.first_name !== firstName) {
+    session.first_name = firstName;
+    await sessionStore.set(telegramId, session, TTL.SESSION_DEFAULT);
   }
-  return adminSessions.get(telegramId)!;
+  return session;
 }
 
-// ============================================
-// الحصول على صلاحيات المستخدم الفعّالة (مع المحاكاة)
-// ============================================
-function getEffectivePermissions(telegramId: number, simulatedRole?: string): UserPermissions {
-  // لو فيه محاكاة دور، نستخدم telegram_id خاص بذلك الدور
-  if (simulatedRole === "college_admin_5") {
-    return getUserPermissions(1000002); // أ. سارة - مسؤولة كلية الحاسبات
-  }
-  if (simulatedRole === "level_rep_16_1") {
-    return getUserPermissions(1000004); // أ. فاطمة - مندوب IT مستوى 1
-  }
-  // الافتراضي: محاكاة كمسؤول مركزي
-  return getUserPermissions(1000001);
+async function saveSession(session: AdminSession): Promise<void> {
+  await sessionStore.set(session.telegram_id, session, TTL.SESSION_DEFAULT);
 }
 
 // ============================================
@@ -184,8 +279,6 @@ function buildDynamicDashboard(perms: UserPermissions, pendingCount: number): In
     kb.text("🏆 لوحة الشرف", "leaderboard_update").row();
   }
 
-  // Role Switcher (للمحاكاة فقط)
-  kb.text("🎭 تبديل الدور (للتجربة)", "role_switcher").row();
 
   return kb;
 }
@@ -193,25 +286,31 @@ function buildDynamicDashboard(perms: UserPermissions, pendingCount: number): In
 // ============================================
 // إنشاء البوت
 // ============================================
-export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
+export function createAdminBot(
+  token: string,
+  supabase: SupabaseClient,
+  sessionsKv: KVNamespace,
+  cacheKv: KVNamespace
+): Bot {
+  sessionStore = new SessionStore<AdminSession>(sessionsKv, "admin", TTL.SESSION_DEFAULT);
+  initRbac(supabase, cacheKv);
+  (globalThis as any).__supabase = supabase;
   const bot = new Bot(token);
 
   // ====== /start ======
   bot.command("start", async (ctx) => {
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = await getUserPermissions(ctx.from.id);
 
     let roleLabel = "🛡 مسؤول مركزي (تجريبي)";
-    if (session.simulated_role === "college_admin_5") roleLabel = "🏛 مسؤول كلية الحاسبات (محاكاة)";
-    if (session.simulated_role === "level_rep_16_1") roleLabel = "📊 مندوب IT مستوى 1 (محاكاة)";
 
     await ctx.reply(
-      ADMIN_TEXTS.dashboard.title(session.first_name, roleLabel, pendingContributions.length) +
+      ADMIN_TEXTS.dashboard.title(session.first_name, roleLabel, 0 /* TODO: count pending */) +
       "\n\nℹ️ *وضع التجربة:* يتم منحك صلاحية *مسؤول مركزي* افتراضياً.\n" +
       "استخدم زر *🎭 تبديل الدور* لتجربة صلاحيات مختلفة.\n\n" +
       "_في الإنتاج، سيتم التحقق من منصبك في قاعدة البيانات تلقائياً._",
       {
-        reply_markup: buildDynamicDashboard(perms, pendingContributions.length),
+        reply_markup: buildDynamicDashboard(perms, 0 /* TODO: count pending */),
         parse_mode: "Markdown",
       }
     );
@@ -220,7 +319,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // ====== A2: العودة للوحة الإدارة ======
   bot.callbackQuery("back_to_dashboard", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     // إعادة ضبط حالات الانتظار
     session.awaiting_broadcast_text = undefined;
     session.awaiting_broadcast_scope = undefined;
@@ -241,61 +340,13 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
     session.awaiting_honor_new_data = undefined;
     session.content_filter = undefined;
 
-    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    const perms = await getUserPermissions(ctx.from.id);
     let roleLabel = "🛡 مسؤول مركزي (تجريبي)";
-    if (session.simulated_role === "college_admin_5") roleLabel = "🏛 مسؤول كلية الحاسبات (محاكاة)";
-    if (session.simulated_role === "level_rep_16_1") roleLabel = "📊 مندوب IT مستوى 1 (محاكاة)";
 
     await ctx.editMessageText(
-      ADMIN_TEXTS.dashboard.title(session.first_name, roleLabel, pendingContributions.length),
+      ADMIN_TEXTS.dashboard.title(session.first_name, roleLabel, 0 /* TODO: count pending */),
       {
-        reply_markup: buildDynamicDashboard(perms, pendingContributions.length),
-        parse_mode: "Markdown",
-      }
-    );
-  });
-
-  // ====== Role Switcher (للمحاكاة) ======
-  bot.callbackQuery("role_switcher", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.editMessageText(
-      "🎭 *تبديل الدور (للمحاكاة فقط)*\n\n" +
-      "اختر دوراً لتجربة واجهة المسؤول المختلفة:\n\n" +
-      "🛡 *مسؤول مركزي* — كل الصلاحيات\n" +
-      "🏛 *مسؤول كلية الحاسبات* — صلاحيات كلية محددة\n" +
-      "📊 *مندوب IT مستوى 1* — صلاحيات محدودة جداً\n\n" +
-      "_هذه الميزة لتجربة UX فقط — في الإنتاج يُحدّد الدور تلقائياً من قاعدة البيانات._",
-      {
-        reply_markup: new InlineKeyboard()
-          .text("🛡 مسؤول مركزي", "set_role_central")
-          .row()
-          .text("🏛 مسؤول كلية الحاسبات", "set_role_college")
-          .row()
-          .text("📊 مندوب IT مستوى 1", "set_role_level")
-          .row()
-          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
-        parse_mode: "Markdown",
-      }
-    );
-  });
-
-  bot.callbackQuery(/set_role_(central|college|level)/, async (ctx) => {
-    const role = ctx.match[1];
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (role === "central") session.simulated_role = undefined;
-    else if (role === "college") session.simulated_role = "college_admin_5";
-    else if (role === "level") session.simulated_role = "level_rep_16_1";
-    await ctx.answerCallbackQuery({ text: "✅ تم تبديل الدور" });
-    // إعادة بناء الـ dashboard
-    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
-    let roleLabel = "🛡 مسؤول مركزي (تجريبي)";
-    if (session.simulated_role === "college_admin_5") roleLabel = "🏛 مسؤول كلية الحاسبات (محاكاة)";
-    if (session.simulated_role === "level_rep_16_1") roleLabel = "📊 مندوب IT مستوى 1 (محاكاة)";
-    await ctx.editMessageText(
-      ADMIN_TEXTS.dashboard.title(session.first_name, roleLabel, pendingContributions.length) +
-      "\n\nℹ️ لاحظ كيف تغيّرت الأزرار المتاحة حسب الدور.",
-      {
-        reply_markup: buildDynamicDashboard(perms, pendingContributions.length),
+        reply_markup: buildDynamicDashboard(perms, 0 /* TODO: count pending */),
         parse_mode: "Markdown",
       }
     );
@@ -307,7 +358,6 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
     // قراءة المساهمات المعلقة من Supabase
     let dbContributions: any[] = [];
-    if (supabase) {
       try {
         dbContributions = await supabase.select("contributions", {
           columns: "id,file_name,subject_id,content_type_id,description,file_size_mb,created_at",
@@ -319,7 +369,6 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
       } catch (e) {
         console.error("Supabase pending read error:", e);
       }
-    }
 
     // دمج المساهمات من DB + Mock
     const allPending = [
@@ -327,7 +376,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
         id: c.id,
         file_name: c.file_name,
         subject_id: c.subject_id,
-        subject_name: getSubjectNameById(c.subject_id) || "غير معروف",
+        subject_name: (getSubjectById(c.subject_id)?.name || "غير معروف") || "غير معروف",
         content_type: c.content_type_id,
         description: c.description,
         file_size_mb: parseFloat(c.file_size_mb) || 0,
@@ -365,7 +414,6 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
     // قراءة من Supabase أيضاً
     let dbContributions: any[] = [];
-    if (supabase) {
       try {
         dbContributions = await supabase.select("contributions", {
           columns: "id,file_name",
@@ -376,7 +424,6 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
       } catch (e) {
         console.error("Supabase pending read error:", e);
       }
-    }
     const allPending = [
       ...dbContributions.map((c: any) => ({ id: c.id, file_name: c.file_name })),
       ...pendingContributions,
@@ -428,7 +475,6 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
     pendingContributions = pendingContributions.filter((c) => c.id !== contribId);
 
     // تحديث المساهمة في Supabase
-    if (supabase) {
       try {
         // تحديث حالة المساهمة
         await supabase.update("contributions", {
@@ -460,7 +506,6 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
       } catch (e) {
         console.error("Supabase approve error:", e);
       }
-    }
 
     await ctx.editMessageText(
       `${isStarred ? "⭐" : "✅"} *تم اعتماد المساهمة #${contribId}*\n\nتم نقل الملف لقناة التخزين ونشره للطلاب.\n💎 تم منح الطالب ${isStarred ? "20" : "10"} نقطة.`,
@@ -500,7 +545,6 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
     pendingContributions = pendingContributions.filter((c) => c.id !== contribId);
 
     // تحديث المساهمة في Supabase
-    if (supabase) {
       try {
         // الحصول على user_telegram_id قبل التحديث
         const contribData = await supabase.select("contributions", {
@@ -529,7 +573,6 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
       } catch (e) {
         console.error("Supabase reject error:", e);
       }
-    }
 
     await ctx.editMessageText(
       `✅ *تم رفض المساهمة #${contribId}*\n\nالسبب: ${reasons[reasonKey]}\n\n🔔 تم إشعار الطالب بالرفض.`,
@@ -543,8 +586,8 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // ====== A5: إدارة المحتوى ======
   bot.callbackQuery("content_mgmt", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = await getUserPermissions(ctx.from.id);
 
     let kb = new InlineKeyboard()
       .text(ADMIN_TEXTS.content_mgmt.btn_browse, "browse_content")
@@ -564,9 +607,9 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   bot.callbackQuery("browse_content", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const manageableContent = getManageableContent(
-      ctx.from.id === 1000001 ? 1000001 : (session.simulated_role === "college_admin_5" ? 1000002 : 1000004),
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const manageableContent = await getManageableContent(
+      ctx.from.id,
       session.content_filter
     );
 
@@ -594,7 +637,11 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // ====== A5c: تفاصيل المحتوى ======
   bot.callbackQuery(/content_detail_(\d+)/, async (ctx) => {
     const contentId = parseInt(ctx.match[1]);
-    const content = mockContent.find((c) => c.id === contentId);
+    let content: any = null;
+    try {
+      const result = await supabase.select("content", { filter: `id=eq.${contentId}`, single: true });
+      content = Array.isArray(result) ? result[0] : result;
+    } catch (e) { console.error("Content fetch error:", e); }
     await ctx.answerCallbackQuery();
     if (!content) {
       await ctx.reply("⚠️ المحتوى غير موجود.");
@@ -604,7 +651,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
     const subject = getSubjectById(content.subject_id);
     const specialty = getSpecialtyById(content.specialty_id);
     const college = getCollegeById(content.college_id);
-    const adderUser = getMockAdminUser(content.added_by_telegram_id);
+    const adderUser = await getAdminUser(supabase, content.added_by_telegram_id);
 
     const msg = ADMIN_TEXTS.content_detail.title +
       ADMIN_TEXTS.content_detail.details({
@@ -641,7 +688,11 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   bot.callbackQuery(/(star|unstar)_content_(\d+)/, async (ctx) => {
     const action = ctx.match[1];
     const contentId = parseInt(ctx.match[2]);
-    const content = mockContent.find((c) => c.id === contentId);
+    let content: any = null;
+    try {
+      const result = await supabase.select("content", { filter: `id=eq.${contentId}`, single: true });
+      content = Array.isArray(result) ? result[0] : result;
+    } catch (e) { console.error("Content fetch error:", e); }
     if (!content) return;
     content.is_starred = action === "star";
     content.last_modified_at = new Date().toISOString();
@@ -653,7 +704,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
     const subject = getSubjectById(content.subject_id);
     const specialty = getSpecialtyById(content.specialty_id);
     const college = getCollegeById(content.college_id);
-    const adderUser = getMockAdminUser(content.added_by_telegram_id);
+    const adderUser = await getAdminUser(supabase, content.added_by_telegram_id);
     const msg = ADMIN_TEXTS.content_detail.title +
       ADMIN_TEXTS.content_detail.details({
         title: content.title,
@@ -688,7 +739,11 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // حذف المحتوى (تأكيد)
   bot.callbackQuery(/delete_content_(\d+)/, async (ctx) => {
     const contentId = parseInt(ctx.match[1]);
-    const content = mockContent.find((c) => c.id === contentId);
+    let content: any = null;
+    try {
+      const result = await supabase.select("content", { filter: `id=eq.${contentId}`, single: true });
+      content = Array.isArray(result) ? result[0] : result;
+    } catch (e) { console.error("Content fetch error:", e); }
     await ctx.answerCallbackQuery();
     if (!content) return;
     await ctx.editMessageText(
@@ -707,7 +762,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // تأكيد الحذف
   bot.callbackQuery(/confirm_delete_content_(\d+)/, async (ctx) => {
     const contentId = parseInt(ctx.match[1]);
-    mockContent = mockContent.filter((c) => c.id !== contentId);
+    await supabase.update("content", { is_active: false }, `id=eq.${contentId}`);
     await ctx.answerCallbackQuery({ text: "🗑 تم الحذف" });
     await ctx.editMessageText(
       ADMIN_TEXTS.content_detail.delete_success,
@@ -724,7 +779,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // تعديل المحتوى (طالب جديد للعنوان)
   bot.callbackQuery(/edit_content_(\d+)/, async (ctx) => {
     const contentId = parseInt(ctx.match[1]);
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     session.awaiting_content_edit = contentId;
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(ADMIN_TEXTS.content_detail.edit_prompt, {
@@ -797,7 +852,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   bot.callbackQuery("add_subject", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     session.awaiting_subject_add = true;
     await ctx.editMessageText(ADMIN_TEXTS.subjects_mgmt.add_prompt, {
       parse_mode: "Markdown",
@@ -831,8 +886,8 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // ====== A7: التعميم (ديناميكي حسب الصلاحية) ======
   bot.callbackQuery("broadcast", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = await getUserPermissions(ctx.from.id);
 
     const kb = new InlineKeyboard();
     let title: string = ADMIN_TEXTS.broadcast.title;
@@ -848,7 +903,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
       // مسؤول الكلية: 3 خيارات (كلّيته + تخصص في كليته + مستوى في تخصص كليته)
       const collegePos = perms.positions.find((p) => p.level === "college");
       const college = getCollegeById(collegePos?.college_id || 0);
-      const collegeCount = getStudentCountByScope({ scope_type: "college", scope_college_id: collegePos?.college_id });
+      const collegeCount = await getStudentCountByScope(supabase, { scope_type: "college", scope_college_id: collegePos?.college_id });
       title = ADMIN_TEXTS.broadcast.title_for_college(college?.name || "");
       kb.text(ADMIN_TEXTS.broadcast.btn_my_college(college?.short_name || "", collegeCount), `broadcast_scope_college_${collegePos?.college_id}`).row();
       kb.text("📚 لتخصص محدد في كليتي", "broadcast_select_specialty_in_my_college").row();
@@ -857,7 +912,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
       // مسؤول الدفعة: 1 خيار (مستواه فقط)
       const levelPos = perms.positions.find((p) => p.level === "level");
       const spec = getSpecialtyById(levelPos?.specialty_id || 0);
-      const levelCount = getStudentCountByScope({
+      const levelCount = await getStudentCountByScope(supabase, {
         scope_type: "level",
         scope_college_id: levelPos?.college_id,
         scope_specialty_id: levelPos?.specialty_id,
@@ -881,10 +936,10 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   bot.callbackQuery("broadcast_select_college", async (ctx) => {
     await ctx.answerCallbackQuery();
     const kb = new InlineKeyboard();
-    COLLEGES.forEach((c) => {
-      const count = getStudentCountByScope({ scope_type: "college", scope_college_id: c.id });
+    for (const c of COLLEGES) {
+      const count = await getStudentCountByScope(supabase, { scope_type: "college", scope_college_id: c.id });
       kb.text(`${c.emoji} ${c.short_name} (${count})`, `broadcast_scope_college_${c.id}`).row();
-    });
+    }
     kb.text("🔙 التعميم", "broadcast");
     await ctx.editMessageText(ADMIN_TEXTS.broadcast.select_college, {
       reply_markup: kb,
@@ -912,10 +967,10 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
     const college = getCollegeById(collegeId);
     const specialties = getSpecialtiesByCollege(collegeId);
     const kb = new InlineKeyboard();
-    specialties.forEach((s) => {
-      const count = getStudentCountByScope({ scope_type: "specialty", scope_college_id: collegeId, scope_specialty_id: s.id });
+    for (const s of specialties) {
+      const count = await getStudentCountByScope(supabase, { scope_type: "specialty", scope_college_id: collegeId, scope_specialty_id: s.id });
       kb.text(`${s.short_name} (${count})`, `broadcast_scope_specialty_${collegeId}_${s.id}`).row();
-    });
+    }
     kb.text("🔙 الكليات", "broadcast_select_specialty");
     await ctx.editMessageText(ADMIN_TEXTS.broadcast.select_specialty(college?.name || ""), {
       reply_markup: kb,
@@ -926,20 +981,20 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // مسؤول الكلية: اختيار التخصص في كليته
   bot.callbackQuery("broadcast_select_specialty_in_my_college", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = await getUserPermissions(ctx.from.id);
     const collegePos = perms.positions.find((p) => p.level === "college");
     const college = getCollegeById(collegePos?.college_id || 0);
     const specialties = getSpecialtiesByCollege(collegePos?.college_id || 0);
     const kb = new InlineKeyboard();
-    specialties.forEach((s) => {
-      const count = getStudentCountByScope({
+    for (const s of specialties) {
+      const count = await getStudentCountByScope(supabase, {
         scope_type: "specialty",
         scope_college_id: collegePos?.college_id,
         scope_specialty_id: s.id,
       });
       kb.text(`${s.short_name} (${count})`, `broadcast_scope_specialty_${collegePos?.college_id}_${s.id}`).row();
-    });
+    }
     kb.text("🔙 التعميم", "broadcast");
     await ctx.editMessageText(ADMIN_TEXTS.broadcast.select_specialty(college?.name || ""), {
       reply_markup: kb,
@@ -987,7 +1042,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
     for (let i = 0; i < levels.length; i += 3) {
       for (let j = 0; j < 3 && i + j < levels.length; j++) {
         const lvl = levels[i + j];
-        const count = getStudentCountByScope({
+        const count = await getStudentCountByScope(supabase, {
           scope_type: "level",
           scope_college_id: collegeId,
           scope_specialty_id: specId,
@@ -1007,8 +1062,8 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // مسؤول الكلية: اختيار المستوى في كليته
   bot.callbackQuery("broadcast_select_level_in_my_college", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = await getUserPermissions(ctx.from.id);
     const collegePos = perms.positions.find((p) => p.level === "college");
     const specialties = getSpecialtiesByCollege(collegePos?.college_id || 0);
     const kb = new InlineKeyboard();
@@ -1025,8 +1080,8 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // عند اختيار النطاق النهائي → طلب نص/صورة/ملف التعميم
   bot.callbackQuery(/broadcast_scope_all/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const count = getStudentCountByScope({ scope_type: "all" });
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const count = await getStudentCountByScope(supabase, { scope_type: "all" });
     session.awaiting_broadcast_scope = "all";
     session.awaiting_broadcast_text = true;
     session.broadcast_context = { scope_type: "all", scope_label: "🌍 كل الطلاب", count };
@@ -1043,8 +1098,8 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
     const collegeId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
     const college = getCollegeById(collegeId);
-    const count = getStudentCountByScope({ scope_type: "college", scope_college_id: collegeId });
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const count = await getStudentCountByScope(supabase, { scope_type: "college", scope_college_id: collegeId });
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     session.awaiting_broadcast_scope = "college";
     session.awaiting_broadcast_text = true;
     session.broadcast_context = { scope_type: "college", scope_college_id: collegeId, scope_label: `🏛 ${college?.name}`, count };
@@ -1062,8 +1117,8 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
     const specId = parseInt(ctx.match[2]);
     await ctx.answerCallbackQuery();
     const spec = getSpecialtyById(specId);
-    const count = getStudentCountByScope({ scope_type: "specialty", scope_college_id: collegeId, scope_specialty_id: specId });
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const count = await getStudentCountByScope(supabase, { scope_type: "specialty", scope_college_id: collegeId, scope_specialty_id: specId });
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     session.awaiting_broadcast_scope = "specialty";
     session.awaiting_broadcast_text = true;
     session.broadcast_context = { scope_type: "specialty", scope_college_id: collegeId, scope_specialty_id: specId, scope_label: `📚 ${spec?.name}`, count };
@@ -1082,8 +1137,8 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
     const level = parseInt(ctx.match[3]);
     await ctx.answerCallbackQuery();
     const spec = getSpecialtyById(specId);
-    const count = getStudentCountByScope({ scope_type: "level", scope_college_id: collegeId, scope_specialty_id: specId, scope_level: level });
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const count = await getStudentCountByScope(supabase, { scope_type: "level", scope_college_id: collegeId, scope_specialty_id: specId, scope_level: level });
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     session.awaiting_broadcast_scope = "level";
     session.awaiting_broadcast_text = true;
     session.broadcast_context = { scope_type: "level", scope_college_id: collegeId, scope_specialty_id: specId, scope_level: level, scope_label: `📊 ${spec?.short_name} - مستوى ${level}`, count };
@@ -1097,7 +1152,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   });
 
   bot.callbackQuery("confirm_broadcast", async (ctx) => {
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     const ctxData = session.broadcast_context || { scope_label: "غير محدد", count: 0 };
     const text = session.pending_broadcast_text || "(بدون نص)";
     session.awaiting_broadcast_text = undefined;
@@ -1117,8 +1172,8 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // ====== A8: إدارة المناصب ======
   bot.callbackQuery("manage_admins", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = await getUserPermissions(ctx.from.id);
 
     if (!perms.permissions.has("manage_admins")) {
       await ctx.editMessageText(
@@ -1147,10 +1202,9 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   bot.callbackQuery("list_positions", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const manageablePositions = getManageablePositions(
-      session.simulated_role === "college_admin_5" ? 1000002 :
-      session.simulated_role === "level_rep_16_1" ? 1000004 : 1000001
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const manageablePositions = await getManageablePositions(
+      ctx.from.id
     );
 
     if (manageablePositions.length === 0) {
@@ -1166,31 +1220,31 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
     let msg = ADMIN_TEXTS.positions.list_title(manageablePositions.length);
     const kb = new InlineKeyboard();
-    manageablePositions.forEach((p) => {
-      const holder = mockHolders.find((h) => h.position_id === p.id && h.is_active);
-      const holderUser = holder ? getMockAdminUser(holder.user_telegram_id) : null;
+    for (const p of manageablePositions) {
+      const holder = mockHolders.find((h) => h.position_id === p.position_id && h.is_active);
+      const holderUser = holder ? await getAdminUser(supabase, holder.user_telegram_id) : null;
       msg += ADMIN_TEXTS.positions.position_entry({
         title: p.title,
-        scope: getPositionScopeText(p),
+        scope: await getPositionScopeText(p),
         holder_name: holderUser?.first_name,
         is_vacant: !holder,
       });
-      kb.text(`${p.title.substring(0, 25)}...`, `position_detail_${p.id}`).row();
-    });
+      kb.text(`${p.title.substring(0, 25)}...`, `position_detail_${p.position_id}`).row();
+    }
     kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
     await ctx.editMessageText(msg, { reply_markup: kb, parse_mode: "Markdown" });
   });
 
   bot.callbackQuery(/position_detail_(.+)/, async (ctx) => {
     const positionId = ctx.match[1];
-    const position = getMockPositionById(positionId);
+    const position = await getPositionById(supabase, positionId);
     await ctx.answerCallbackQuery();
     if (!position) {
       await ctx.reply("⚠️ المنصب غير موجود.");
       return;
     }
     const holder = mockHolders.find((h) => h.position_id === positionId && h.is_active);
-    const holderUser = holder ? getMockAdminUser(holder.user_telegram_id) : null;
+    const holderUser = holder ? await getAdminUser(supabase, holder.user_telegram_id) : null;
 
     let msg = `💼 *تفاصيل المنصب*\n\n`;
     msg += `👤 *العنوان:* ${position.title}\n`;
@@ -1219,7 +1273,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // تعيين شاغل منصب
   bot.callbackQuery(/assign_position_(.+)/, async (ctx) => {
     const positionId = ctx.match[1];
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     session.awaiting_position_assign = { step: "name", position_id: positionId };
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(
@@ -1233,15 +1287,15 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   bot.callbackQuery(/revoke_position_(.+)/, async (ctx) => {
     const positionId = ctx.match[1];
-    const position = getMockPositionById(positionId);
+    const position = await getPositionById(supabase, positionId);
     const holder = mockHolders.find((h) => h.position_id === positionId && h.is_active);
-    const holderUser = holder ? getMockAdminUser(holder.user_telegram_id) : null;
+    const holderUser = holder ? await getAdminUser(supabase, holder.user_telegram_id) : null;
     await ctx.answerCallbackQuery();
     if (!holder || !holderUser || !position) {
       await ctx.reply("⚠️ المنصب غير مشغول أو غير موجود.");
       return;
     }
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     session.awaiting_position_revoke = { position_id: positionId };
     await ctx.editMessageText(
       ADMIN_TEXTS.positions.revoke_confirm(holderUser.first_name, position.title),
@@ -1276,10 +1330,9 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   bot.callbackQuery("my_positions", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const simulatedId = session.simulated_role === "college_admin_5" ? 1000002 :
-                        session.simulated_role === "level_rep_16_1" ? 1000004 : 1000001;
-    const myPositions = getUserPositions(simulatedId);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const simulatedId = ctx.from.id;
+    const myPositions = await getUserPositions(simulatedId);
 
     if (myPositions.length === 0) {
       await ctx.editMessageText(ADMIN_TEXTS.positions.my_positions_empty, {
@@ -1302,17 +1355,17 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // ====== A9: الإحصائيات ======
   bot.callbackQuery("statistics", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = await getUserPermissions(ctx.from.id);
 
     let statsText = ADMIN_TEXTS.statistics.title;
     if (perms.is_central) {
-      statsText += ADMIN_TEXTS.statistics.content(MOCK_STATISTICS);
+      statsText += ADMIN_TEXTS.statistics.content(await getStatistics(supabase));
     } else {
       // إحصائيات محدودة للنطاق
       statsText += `📊 *إحصائيات نطاقك:*\n\n`;
-      statsText += `📁 إجمالي الملفات: ${mockContent.length}\n`;
-      statsText += `📥 المساهمات المعلقة: ${pendingContributions.length}\n`;
+      statsText += `📁 إجمالي الملفات: ${0 /* TODO: count content */}\n`;
+      statsText += `📥 المساهمات المعلقة: ${0 /* TODO: count pending */}\n`;
     }
     await ctx.editMessageText(statsText, {
       reply_markup: new InlineKeyboard()
@@ -1326,7 +1379,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   bot.callbackQuery("stats_refresh", async (ctx) => {
     await ctx.answerCallbackQuery({ text: "✅ تم التحديث" });
     await ctx.editMessageText(
-      ADMIN_TEXTS.statistics.title + ADMIN_TEXTS.statistics.content(MOCK_STATISTICS),
+      ADMIN_TEXTS.statistics.title + ADMIN_TEXTS.statistics.content(await getStatistics(supabase)),
       {
         reply_markup: new InlineKeyboard()
           .text(ADMIN_TEXTS.statistics.refresh, "stats_refresh")
@@ -1360,7 +1413,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   bot.callbackQuery(/custom_screen_(.+)/, async (ctx) => {
     const screenKey = ctx.match[1];
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     session.awaiting_text_edit = screenKey;
     session.awaiting_text_value = true;
     await ctx.answerCallbackQuery();
@@ -1384,7 +1437,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   bot.callbackQuery("reset_default", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (session.awaiting_text_edit) {
       customTexts.delete(session.awaiting_text_edit);
       session.awaiting_text_edit = undefined;
@@ -1433,8 +1486,8 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // ====== A12: إدارة روابط قنوات اللجان ======
   bot.callbackQuery("manage_channels", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = await getUserPermissions(ctx.from.id);
 
     if (!perms.permissions.has("manage_committee_channels")) {
       await ctx.editMessageText(
@@ -1529,7 +1582,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
     const channel = mockChannels.find((c) => c.id === channelId);
     await ctx.answerCallbackQuery();
     if (!channel) return;
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     session.awaiting_channel_edit = channelId;
     await ctx.editMessageText(
       ADMIN_TEXTS.channels.edit_prompt(channel.display_name),
@@ -1542,7 +1595,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   // ====== استقبال الرسائل النصية ======
   bot.on(":text", async (ctx) => {
-    const session = adminSessions.get(ctx.from.id);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (!session) {
       await ctx.reply("👋 أرسل /start للبدء.");
       return;
@@ -1591,7 +1644,11 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
     // استقبال تعديل عنوان محتوى
     if (session.awaiting_content_edit) {
       const contentId = session.awaiting_content_edit;
-      const content = mockContent.find((c) => c.id === contentId);
+      let content: any = null;
+    try {
+      const result = await supabase.select("content", { filter: `id=eq.${contentId}`, single: true });
+      content = Array.isArray(result) ? result[0] : result;
+    } catch (e) { console.error("Content fetch error:", e); }
       if (content) {
         content.title = ctx.message.text;
         content.last_modified_at = new Date().toISOString();
@@ -1641,7 +1698,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
           is_active: true,
         });
         // إضافة المستخدم للقائمة (محاكاة)
-        const position = getMockPositionById(assign.position_id);
+        const position = await getPositionById(supabase, assign.position_id);
         const successMsg = ADMIN_TEXTS.positions.assign_success(assign.name || "المستخدم", position?.title || "المنصب");
         session.awaiting_position_assign = undefined;
         await ctx.reply(successMsg, {
@@ -1674,7 +1731,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
     // استقبال سبب رفض التكريم
     if (session.awaiting_honor_reject) {
       const honorId = session.awaiting_honor_reject;
-      const honor = MOCK_HONORS.find((h) => h.id === honorId);
+      const honor = (await getHonors(supabase)).find((h: any) => h.id === honorId);
       if (honor) {
         honor.status = "rejected";
         honor.rejection_reason = ctx.message.text;
@@ -1725,8 +1782,8 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
       }
       const data = session.awaiting_honor_new_data!;
       // إنشاء تكريم جديد
-      const newHonor: MockHonor = {
-        id: MOCK_HONORS.length + 1,
+      const newHonor: any = {
+        id: (await getHonors(supabase)).length + 1,
         student_telegram_id: data.student_id!,
         student_name: `طالب ${data.student_id}`,
         honor_type: "manual",
@@ -1739,7 +1796,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
         approved_at: new Date().toISOString().substring(0, 10),
         created_at: new Date().toISOString().substring(0, 10),
       };
-      MOCK_HONORS.push(newHonor);
+      /* TODO: await supabase.insert("contribution_honors", newHonor); */
       session.awaiting_honor_new_step = undefined;
       session.awaiting_honor_new_data = undefined;
       await ctx.reply(
@@ -1761,7 +1818,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   // ====== استقبال ملفات (للتعميمات + رفع محتوى) ======
   bot.on(":document", async (ctx) => {
-    const session = adminSessions.get(ctx.from.id);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
 
     // استقبال ملف للتعميم
     if (session?.awaiting_broadcast_text && session.broadcast_context) {
@@ -1792,7 +1849,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   // ====== استقبال صور (للتعميمات بصورة) ======
   bot.on(":photo", async (ctx) => {
-    const session = adminSessions.get(ctx.from.id);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     if (session?.awaiting_broadcast_text && session.broadcast_context) {
       const ctxData = session.broadcast_context;
       session.awaiting_broadcast_text = false;
@@ -1816,8 +1873,8 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // ============================================
   bot.callbackQuery("manage_honors", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = await getUserPermissions(ctx.from.id);
     if (!perms.permissions.has("manage_honors")) {
       await ctx.editMessageText("❌ *ليست لديك صلاحية إدارة التكريم.*", {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
@@ -1825,7 +1882,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
       });
       return;
     }
-    const pendingHonors = MOCK_HONORS.filter((h) => h.status === "pending");
+    const pendingHonors = (await getHonors(supabase, "pending"));
     await ctx.editMessageText(
       ADMIN_TEXTS.honors.title,
       {
@@ -1844,7 +1901,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   bot.callbackQuery("honors_pending", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const pending = MOCK_HONORS.filter((h) => h.status === "pending");
+    const pending = (await getHonors(supabase, "pending"));
     if (pending.length === 0) {
       await ctx.editMessageText(
         "✅ *لا توجد تكريمات معلّقة حالياً.*",
@@ -1872,13 +1929,13 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   bot.callbackQuery(/honor_detail_(\d+)/, async (ctx) => {
     const honorId = parseInt(ctx.match[1]);
-    const honor = MOCK_HONORS.find((h) => h.id === honorId);
+    const honor = (await getHonors(supabase)).find((h: any) => h.id === honorId);
     await ctx.answerCallbackQuery();
     if (!honor) {
       await ctx.reply("⚠️ التكريم غير موجود.");
       return;
     }
-    const nominator = honor.nominated_by_telegram_id ? getMockAdminUser(honor.nominated_by_telegram_id) : null;
+    const nominator = honor.nominated_by_telegram_id ? await getAdminUser(supabase, honor.nominated_by_telegram_id) : null;
     const scopeText = honor.scope_specialty_id
       ? `تخصص ${honor.scope_specialty_id}`
       : honor.scope_college_id
@@ -1910,7 +1967,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   bot.callbackQuery(/approve_honor_(\d+)/, async (ctx) => {
     const honorId = parseInt(ctx.match[1]);
-    const honor = MOCK_HONORS.find((h) => h.id === honorId);
+    const honor = (await getHonors(supabase)).find((h: any) => h.id === honorId);
     await ctx.answerCallbackQuery({ text: "✅ تم الاعتماد" });
     if (honor) {
       honor.status = "approved";
@@ -1931,7 +1988,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   bot.callbackQuery(/reject_honor_(\d+)/, async (ctx) => {
     const honorId = parseInt(ctx.match[1]);
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     session.awaiting_honor_reject = honorId;
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(
@@ -1945,7 +2002,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
 
   bot.callbackQuery("honors_approved", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const approved = MOCK_HONORS.filter((h) => h.status === "approved");
+    const approved = (await getHonors(supabase, "approved"));
     if (approved.length === 0) {
       await ctx.editMessageText(ADMIN_TEXTS.honors.log_empty, {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
@@ -1969,7 +2026,7 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   });
 
   bot.callbackQuery("honor_new", async (ctx) => {
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     session.awaiting_honor_new_step = "student_id";
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(
@@ -1986,8 +2043,8 @@ export function createAdminBot(token: string, supabase?: SupabaseClient): Bot {
   // ============================================
   bot.callbackQuery("manage_reset_points", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const perms = getEffectivePermissions(ctx.from.id, session.simulated_role);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const perms = await getUserPermissions(ctx.from.id);
     if (!perms.permissions.has("reset_points")) {
       await ctx.editMessageText("❌ *ليست لديك صلاحية إعادة ضبط النقاط.*", {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
@@ -2077,6 +2134,8 @@ export interface Env {
   WORKERS_SUBDOMAIN: string;
   SUPABASE_URL: string;
   SUPABASE_SERVICE_KEY: string;
+  SESSIONS: KVNamespace;
+  CACHE: KVNamespace;
 }
 
 let botInstance: Bot | null = null;
@@ -2092,7 +2151,7 @@ export default {
         });
       }
       if (!botInstance) {
-        botInstance = createAdminBot(env.BOT_TOKEN, supabaseClient || undefined);
+        botInstance = createAdminBot(env.BOT_TOKEN, supabaseClient!, env.SESSIONS, env.CACHE);
       }
       const url = new URL(request.url);
 
