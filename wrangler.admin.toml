@@ -12,5 +12,33 @@ BOT_USERNAME = "usttesteradminbot"
 ENVIRONMENT = "production"
 WORKERS_SUBDOMAIN = "atow73768"
 
+# ============================================
+# KV Namespaces (للجلسات والـ cache)
+# ============================================
+# ملاحظة: يجب إنشاء الـ namespaces أولاً عبر:
+#   npx wrangler kv namespace create SESSIONS --config wrangler.admin.toml
+#   npx wrangler kv namespace create CACHE --config wrangler.admin.toml
+# ثم استبدل placeholder IDs أدناه بالـ IDs المُستعادة من Cloudflare
+# ============================================
+
+# KV لجلسات المسؤولين (حالة await upload، broadcast context، إلخ)
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "ADMIN_SESSIONS_KV_ID_PLACEHOLDER"
+
+# KV للـ cache (الصلاحيات، الكليات، التخصصات)
+[[kv_namespaces]]
+binding = "CACHE"
+id = "ADMIN_CACHE_KV_ID_PLACEHOLDER"
+
+# ============================================
+# Secrets (تُحدد عبر wrangler secret put)
+# ============================================
 # Secret: BOT_TOKEN
 # لتعيينه: echo "TOKEN" | npx wrangler secret put BOT_TOKEN --config wrangler.admin.toml
+#
+# Secret: SUPABASE_URL
+# لتعيينه: echo "https://xxx.supabase.co" | npx wrangler secret put SUPABASE_URL --config wrangler.admin.toml
+#
+# Secret: SUPABASE_SERVICE_KEY
+# لتعيينه: echo "eyJhbGc..." | npx wrangler secret put SUPABASE_SERVICE_KEY --config wrangler.admin.toml

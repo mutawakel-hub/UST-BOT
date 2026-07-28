@@ -25,6 +25,7 @@ import { SupabaseClient, registerStudent, isStudentRegistered, getStudent,
   markNotificationsRead, getTopContributorsFromDB, getStudentContributions,
   logDownload, getRecentDownloads
 } from "../shared/db";
+import { SessionStore, TTL } from "../shared/session";
 import {
   mainMenuKeyboard,
   collegesKeyboard,
@@ -106,94 +107,109 @@ interface UserState {
   last_file_id?: string;
 }
 
-// مخزن مؤقت للحالات
-const userStates = new Map<number, UserState>();
+// مخزن الجلسات عبر KV (يحل مشكلة Map بين isolates)
+let sessionStore: SessionStore<UserState>;
 
-function getUserState(telegramId: number, firstName?: string, username?: string): UserState {
-  if (!userStates.has(telegramId)) {
-    // بيانات ثابتة لكل مستخدم (بدل Math.random)
-    const seed = telegramId % 100;
-    userStates.set(telegramId, {
-      telegram_id: telegramId,
-      first_name: firstName,
-      username,
-      is_registered: false,
-      total_downloads: 12 + (seed % 30),
-      accepted_contributions: 1 + (seed % 4),
-      recent_downloads: [
-        {
-          file_name: "مقدمة في تقنية المعلومات - المقرر النظري.pdf",
-          subject_name: "مقدمة في تقنية المعلومات",
-          date: "اليوم",
-        },
-        {
-          file_name: "برمجة حاسوب (1) - اختبار نهائي.pdf",
-          subject_name: "برمجة حاسوب (1) - Python",
-          date: "أمس",
-        },
-        {
-          file_name: "تراكيب البيانات - ملخص شامل.pdf",
-          subject_name: "تراكيب البيانات",
-          date: "قبل 3 أيام",
-        },
-      ],
-      my_contributions: [
-        {
-          id: 9901,
-          file_name: "ملخص Python.pdf",
-          subject_name: "برمجة حاسوب (1) - Python",
-          status: "approved",
-          submitted_at: "قبل أسبوع",
-        },
-        {
-          id: 9902,
-          file_name: "نموذج اختبار قواعد بيانات.pdf",
-          subject_name: "قواعد البيانات (1)",
-          status: "pending",
-          submitted_at: "قبل يومين",
-        },
-      ],
-    });
+// إنشاء حالة افتراضية فارغة (تُملأ من DB عند الحاجة)
+function createDefaultState(telegramId: number, firstName?: string, username?: string): UserState {
+  return {
+    telegram_id: telegramId,
+    first_name: firstName,
+    username,
+    is_registered: false,
+    total_downloads: 0,
+    accepted_contributions: 0,
+    recent_downloads: [],
+    my_contributions: [],
+  };
+}
+
+// قراءة/إنشاء حالة المستخدم — من KV، مع fallback إلى default
+// ملاحظة: أصبحت async لأن KV.async
+async function getUserState(
+  telegramId: number,
+  firstName?: string,
+  username?: string
+): Promise<UserState> {
+  // 1. اقرأ من KV
+  const cached = await sessionStore.get(telegramId);
+  if (cached) {
+    // حدّث first_name/username لو تغيرت (Telegram قد يُرجع قيماً مختلفة)
+    let changed = false;
+    if (firstName && cached.first_name !== firstName) {
+      cached.first_name = firstName;
+      changed = true;
+    }
+    if (username && cached.username !== username) {
+      cached.username = username;
+      changed = true;
+    }
+    if (changed) {
+    await sessionStore.set(telegramId, cached, TTL.SESSION_DEFAULT);
+    }
+    return cached;
   }
-  return userStates.get(telegramId)!;
+
+  // 2. أنشئ حالة افتراضية
+  const fresh = createDefaultState(telegramId, firstName, username);
+  await sessionStore.set(telegramId, fresh, TTL.SESSION_DEFAULT);
+  return fresh;
+}
+
+// حفظ حالة مستخدم (upsert في KV)
+async function saveUserState(state: UserState): Promise<void> {
+  await sessionStore.set(state.telegram_id, state, TTL.SESSION_DEFAULT);
+}
+
+// تحديث جزئي للحالة (merge)
+async function updateUserState(
+  telegramId: number,
+  patch: Partial<UserState>
+): Promise<UserState | null> {
+  return await sessionStore.update(telegramId, patch, TTL.SESSION_DEFAULT);
 }
 
 // ============================================
 // إنشاء البوت
 // ============================================
-export function createStudentBot(token: string, supabase?: SupabaseClient): Bot {
+export function createStudentBot(
+  token: string,
+  supabase: SupabaseClient,
+  sessionsKv: KVNamespace,
+  cacheKv: KVNamespace
+): Bot {
+  // تهيئة SessionStore (KV-bound)
+  sessionStore = new SessionStore<UserState>(sessionsKv, "student", TTL.SESSION_DEFAULT);
   const bot = new Bot(token);
 
   // ====== S1: القائمة الرئيسية ======
   bot.command("start", async (ctx) => {
-    const userState = getUserState(ctx.from.id, ctx.from.first_name, ctx.from.username);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name, ctx.from.username);
     if (ctx.from.username) userState.username = ctx.from.username;
     if (ctx.from.first_name) userState.first_name = ctx.from.first_name;
 
     // التحقق من حالة التسجيل (أولاً من Supabase، ثم من الذاكرة)
     let dbRegistered = false;
     let dbStudent: any = null;
-    if (supabase) {
-      try {
+    try {
         dbRegistered = await isStudentRegistered(supabase, ctx.from.id);
         if (dbRegistered) {
           dbStudent = await getStudent(supabase, ctx.from.id);
         }
-      } catch (e) {
+    } catch (e) {
         console.error("Supabase registration check error:", e);
-      }
     }
 
     if (!dbRegistered && !userState.is_registered) {
-      // طالب جديد - عرض شاشة التسجيل الإلزامي
-      await ctx.reply(TEXTS.registration.intro, {
+    // طالب جديد - عرض شاشة التسجيل الإلزامي
+    await ctx.reply(TEXTS.registration.intro, {
         reply_markup: new InlineKeyboard()
           .text(TEXTS.registration.btn_start, "start_registration")
           .row()
           .text(TEXTS.registration.btn_later, "skip_registration"),
         parse_mode: "Markdown",
       });
-      return;
+    return;
     }
 
     // طالب مسجّل - استخدام بيانات Supabase إن وجدت
@@ -213,21 +229,21 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
       {
         reply_markup: mainMenuKeyboard(),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
   // ====== شاشة التسجيل الإلزامي ======
   bot.callbackQuery("start_registration", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.registration_step = "college";
     await ctx.editMessageText(
       TEXTS.registration.step(1, 3, TEXTS.registration.select_college),
       {
         reply_markup: collegesKeyboard(0, "reg_col"),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
@@ -238,7 +254,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
       {
         reply_markup: mainMenuKeyboard(),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
@@ -246,7 +262,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
   bot.callbackQuery(/reg_col_(\d+)/, async (ctx) => {
     const collegeId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.registration_context = { college_id: collegeId };
     userState.registration_step = "specialty";
     await ctx.editMessageText(
@@ -254,14 +270,14 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
       {
         reply_markup: majorsKeyboard(collegeId, 0, "reg_major"),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
   bot.callbackQuery(/reg_major_(\d+)/, async (ctx) => {
     const specId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.registration_context = { ...userState.registration_context, specialty_id: specId };
     userState.registration_step = "level";
     await ctx.editMessageText(
@@ -269,7 +285,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
       {
         reply_markup: levelsKeyboard(specId, "reg_level"),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
@@ -277,7 +293,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const level = parseInt(ctx.match[1]);
     const specId = parseInt(ctx.match[2]);
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     const spec = getSpecialtyById(specId);
     const college = getCollegeById(spec?.college_id || 0);
 
@@ -290,8 +306,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     userState.registration_context = undefined;
 
     // حفظ في Supabase
-    if (supabase) {
-      try {
+    try {
         await registerStudent(
           supabase,
           ctx.from.id,
@@ -302,9 +317,8 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
           level
         );
         console.log(`✅ Student ${ctx.from.id} registered in Supabase`);
-      } catch (e) {
+    } catch (e) {
         console.error("Supabase registration error:", e);
-      }
     }
 
     await ctx.editMessageText(
@@ -317,7 +331,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
       {
         reply_markup: mainMenuKeyboard(),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
@@ -347,13 +361,13 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const college = getCollegeById(collegeId);
     await ctx.answerCallbackQuery();
     if (!college) {
-      await ctx.reply("⚠️ الكلية غير موجودة.");
-      return;
+    await ctx.reply("⚠️ الكلية غير موجودة.");
+    return;
     }
     const specialties = getSpecialtiesByCollege(collegeId);
     if (specialties.length === 0) {
-      await ctx.reply(TEXTS.choose_major.no_specialties);
-      return;
+    await ctx.reply(TEXTS.choose_major.no_specialties);
+    return;
     }
     const bc = breadcrumb("🏛 الكليات", `${college.emoji} ${college.short_name}`);
     await ctx.editMessageText(`${bc}\n\n${TEXTS.choose_major.title}`, {
@@ -380,10 +394,10 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const spec = getSpecialtyById(specId);
     await ctx.answerCallbackQuery();
     if (!spec) {
-      await ctx.reply("⚠️ التخصص غير موجود.");
-      return;
+    await ctx.reply("⚠️ التخصص غير موجود.");
+    return;
     }
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.current_specialty_id = specId;
     userState.current_college_id = spec.college_id;
 
@@ -424,7 +438,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const spec = getSpecialtyById(specId);
     await ctx.answerCallbackQuery();
     if (!spec) return;
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.current_level = level;
 
     const college = getCollegeById(spec.college_id);
@@ -461,14 +475,14 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     );
 
     if (subjects.length === 0) {
-      await ctx.editMessageText(`${bc}\n\n${TEXTS.choose_subject.no_subjects}`, {
+    await ctx.editMessageText(`${bc}\n\n${TEXTS.choose_subject.no_subjects}`, {
         reply_markup: new InlineKeyboard().text(
           TEXTS.navigation.back_to_semesters,
           `back_to_semesters_${specId}_${level}`
         ),
         parse_mode: "Markdown",
       });
-      return;
+    return;
     }
 
     await ctx.editMessageText(`${bc}\n\n${TEXTS.choose_subject.title}`, {
@@ -504,8 +518,8 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const subject = getSubjectByIdWithFallback(subjectId);
     await ctx.answerCallbackQuery();
     if (!subject) {
-      await ctx.reply("⚠️ المادة غير موجودة.");
-      return;
+    await ctx.reply("⚠️ المادة غير موجودة.");
+    return;
     }
     const spec = getSpecialtyById(subject.specialty_id);
     const college = getCollegeById(spec?.college_id || 0);
@@ -535,8 +549,8 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
   bot.callbackQuery(/type_book_practical_(\d+)/, async (ctx) => {
     const subject = getSubjectByIdWithFallback(parseInt(ctx.match[1]));
     if (!subject?.has_practical) {
-      await ctx.answerCallbackQuery({ text: "⚠️ هذه المادة لا تحتوي على مقرر عملي.", show_alert: true });
-      return;
+    await ctx.answerCallbackQuery({ text: "⚠️ هذه المادة لا تحتوي على مقرر عملي.", show_alert: true });
+    return;
     }
     await showFilesList(ctx, parseInt(ctx.match[1]), "book_practical");
   });
@@ -552,32 +566,30 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
   async function showFilesList(ctx: any, subjectId: number, category: string) {
     const subject = getSubjectByIdWithFallback(subjectId);
     if (!subject) {
-      await ctx.answerCallbackQuery();
-      await ctx.reply("⚠️ المادة غير موجودة.");
-      return;
+    await ctx.answerCallbackQuery();
+    await ctx.reply("⚠️ المادة غير موجودة.");
+    return;
     }
     await ctx.answerCallbackQuery();
 
     // قراءة المحتوى من Supabase فقط
     let files: any[] = [];
-    if (supabase) {
-      try {
+    try {
         files = await getContentForSubject(supabase, subjectId, category);
-      } catch (e) {
+    } catch (e) {
         console.error("Supabase content read error:", e);
-      }
     }
 
     if (files.length === 0) {
-      const bc = `📄 *${subject.name} - ${TYPE_LABELS[category]}*`;
-      await ctx.editMessageText(`${bc}\n\n📭 لا توجد ملفات في هذا التصنيف حالياً.\n💡 يمكنك المساهمة بأول ملف!`, {
+    const bc = `📄 *${subject.name} - ${TYPE_LABELS[category]}*`;
+    await ctx.editMessageText(`${bc}\n\n📭 لا توجد ملفات في هذا التصنيف حالياً.\n💡 يمكنك المساهمة بأول ملف!`, {
         reply_markup: new InlineKeyboard().text(
           TEXTS.navigation.back_to_subject_menu,
           `back_to_subject_menu_${subjectId}`
         ),
         parse_mode: "Markdown",
       });
-      return;
+    return;
     }
 
     // تحويل البيانات من Supabase إلى صيغة موحدة
@@ -611,27 +623,25 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
 
     // قراءة من Supabase فقط (fileId هو رقم المحتوى في DB)
     if (/^\d+$/.test(fileId)) {
-      const contentId = parseInt(fileId);
-      if (supabase) {
+    const contentId = parseInt(fileId);
         try {
           fileData = await getContentById(supabase, contentId);
         } catch (e) {
           console.error("Supabase content read error:", e);
         }
-      }
-      if (fileData) {
+    if (fileData) {
         subjectId = fileData.subject_id;
         category = fileData.content_type_id;
-      }
+    }
     }
 
     if (!fileData) {
-      await ctx.reply("⚠️ الملف غير موجود.");
-      return;
+    await ctx.reply("⚠️ الملف غير موجود.");
+    return;
     }
 
     const subject = getSubjectByIdWithFallback(subjectId);
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.last_file_id = fileId;
 
     const msg =
@@ -664,28 +674,26 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
 
     // قراءة من Supabase فقط
     if (/^\d+$/.test(fileId)) {
-      const contentId = parseInt(fileId);
-      if (supabase) {
+    const contentId = parseInt(fileId);
         try {
           fileData = await getContentById(supabase, contentId);
         } catch (e) {
           console.error("Supabase content read error:", e);
         }
-      }
-      if (fileData) {
+    if (fileData) {
         subjectId = fileData.subject_id;
         category = fileData.content_type_id;
-      }
+    }
     }
 
     const subject = getSubjectByIdWithFallback(subjectId);
     if (!fileData || !subject) {
-      await ctx.reply("⚠️ الملف غير موجود.");
-      return;
+    await ctx.reply("⚠️ الملف غير موجود.");
+    return;
     }
 
     const fileName = fileData.title || fileData.file_name || "ملف";
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.total_downloads++;
     userState.recent_downloads.unshift({
       file_name: fileName,
@@ -696,12 +704,12 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
 
     // تحديث عدّاد التحميلات في Supabase
     if (supabase && /^\d+$/.test(fileId)) {
-      try {
+    try {
         await incrementDownloadCount(supabase, parseInt(fileId));
         await logDownload(supabase, ctx.from.id, parseInt(fileId));
-      } catch (e) {
+    } catch (e) {
         console.error("Supabase download log error:", e);
-      }
+    }
     }
 
     // إرسال الملف من قناة التخزين (forwardMessage)
@@ -712,7 +720,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
 
     let fileSent = false;
     if (storageChannelId && telegramMessageId) {
-      try {
+    try {
         await ctx.api.forwardMessage(
           ctx.chat.id,
           storageChannelId,
@@ -725,15 +733,15 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
             .replace("{subjectName}", subject.name),
           { parse_mode: "Markdown" }
         );
-      } catch (err) {
+    } catch (err) {
         console.error("forwardMessage error:", err);
         await ctx.reply(
           "⚠️ تعذّر إرسال الملف من قناة التخزين. تأكد من أن البوت مشرف في القناة.",
           { parse_mode: "Markdown" }
         );
-      }
+    }
     } else {
-      await ctx.reply(
+    await ctx.reply(
         "⚠️ لا توجد قناة تخزين لهذه الكلية أو الملف لا يحتوي على معرف رسالة صالح.",
         { parse_mode: "Markdown" }
       );
@@ -758,20 +766,20 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     // قراءة من Supabase
     let fileData: any = null;
     if (/^\d+$/.test(fileId) && supabase) {
-      try {
+    try {
         fileData = await getContentById(supabase, parseInt(fileId));
-      } catch (e) {
+    } catch (e) {
         console.error("Supabase content read error:", e);
-      }
+    }
     }
 
     if (!fileData) {
-      await ctx.reply("⚠️ الملف غير موجود.");
-      return;
+    await ctx.reply("⚠️ الملف غير موجود.");
+    return;
     }
 
     const subject = getSubjectByIdWithFallback(fileData.subject_id);
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.last_file_id = fileId;
 
     const msg =
@@ -800,7 +808,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const subjectId = parseInt(ctx.match[1]);
     const subject = getSubjectByIdWithFallback(subjectId);
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.awaiting_contribution_for_subject = subjectId;
 
     // بناء keyboard لأنواع المساهمة
@@ -821,7 +829,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
       {
         reply_markup: kb,
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
@@ -831,7 +839,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const subjectId = parseInt(ctx.match[2]);
     const subject = getSubjectByIdWithFallback(subjectId);
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.awaiting_contribution_type = contentType;
     userState.awaiting_contribution_step = "title";
 
@@ -849,14 +857,14 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
       {
         reply_markup: new InlineKeyboard().text("❌ إلغاء", `cancel_contribute_${subjectId}`),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
   bot.callbackQuery(/cancel_contribute_(\d+)/, async (ctx) => {
     const subjectId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.awaiting_contribution_for_subject = undefined;
     userState.awaiting_contribution_type = undefined;
     userState.awaiting_contribution_step = undefined;
@@ -885,7 +893,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
 
   bot.callbackQuery("contribute_main_start", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.contribution_main_context = {};
     userState.contribution_main_step = "college";
     // عرض الكليات
@@ -894,7 +902,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
       {
         reply_markup: collegesKeyboard(0),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
@@ -902,7 +910,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
   bot.callbackQuery(/cm_col_(\d+)/, async (ctx) => {
     const collegeId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.contribution_main_context = { ...userState.contribution_main_context, college_id: collegeId };
     userState.contribution_main_step = "specialty";
     await ctx.editMessageText(
@@ -914,7 +922,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
   bot.callbackQuery(/cm_major_(\d+)/, async (ctx) => {
     const specId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.contribution_main_context = { ...userState.contribution_main_context, specialty_id: specId };
     userState.contribution_main_step = "level";
     await ctx.editMessageText(
@@ -927,7 +935,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const level = parseInt(ctx.match[1]);
     const specId = parseInt(ctx.match[2]);
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.contribution_main_context = { ...userState.contribution_main_context, level };
     userState.contribution_main_step = "semester";
     const kb = new InlineKeyboard();
@@ -945,13 +953,13 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const specId = parseInt(ctx.match[2]);
     const level = parseInt(ctx.match[3]);
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.contribution_main_context = { ...userState.contribution_main_context, semester };
     userState.contribution_main_step = "subject";
     const subjects = getSubjectsBySpecialtyLevelSemester(specId, level, semester);
     if (subjects.length === 0) {
-      await ctx.editMessageText("⚠️ لا توجد مواد في هذا الفصل.");
-      return;
+    await ctx.editMessageText("⚠️ لا توجد مواد في هذا الفصل.");
+    return;
     }
     const kb = new InlineKeyboard();
     subjects.forEach((s) => kb.text(`📖 ${s.name}`, `cm_subj_${s.id}`).row());
@@ -966,7 +974,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const subjectId = parseInt(ctx.match[1]);
     const subject = getSubjectByIdWithFallback(subjectId);
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.contribution_main_context = { ...userState.contribution_main_context, subject_id: subjectId };
     userState.contribution_main_step = "type";
     // عرض أنواع المساهمة
@@ -990,7 +998,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
   bot.callbackQuery(/cm_type_(\w+)/, async (ctx) => {
     const contentType = ctx.match[1];
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.contribution_main_context = { ...userState.contribution_main_context, content_type: contentType };
     userState.contribution_main_step = "title";
     const subject = getSubjectByIdWithFallback(userState.contribution_main_context.subject_id);
@@ -1007,13 +1015,13 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
       {
         reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_contribute_main"),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
   bot.callbackQuery("cancel_contribute_main", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.contribution_main_context = undefined;
     userState.contribution_main_step = undefined;
     userState.contribution_main_title = undefined;
@@ -1022,23 +1030,23 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
       {
         reply_markup: new InlineKeyboard().text(TEXTS.navigation.back_to_main, "back_to_main"),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
   // استقبال ملف المساهمة (للمسارين: القصير + الكامل)
   bot.on(":document", async (ctx) => {
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     const doc = ctx.message.document;
     const contributionId = 9900 + Math.floor(Math.random() * 1000);
 
     // المسار القصير (من شاشة المادة - 4 خطوات)
     if (userState.awaiting_contribution_for_subject && userState.awaiting_contribution_step === "file") {
-      const subjectId = userState.awaiting_contribution_for_subject;
-      const subject = getSubjectByIdWithFallback(subjectId);
-      const contentType = userState.awaiting_contribution_type || "summary";
-      const title = userState.awaiting_contribution_title || doc.file_name || "بدون عنوان";
-      const typeLabel = {
+    const subjectId = userState.awaiting_contribution_for_subject;
+    const subject = getSubjectByIdWithFallback(subjectId);
+    const contentType = userState.awaiting_contribution_type || "summary";
+    const title = userState.awaiting_contribution_title || doc.file_name || "بدون عنوان";
+    const typeLabel = {
         book_theory: "📘 المقرر النظري",
         book_practical: "📗 المقرر العملي",
         exam: "📑 نماذج اختبارات",
@@ -1055,8 +1063,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
         submitted_at: "الآن",
       });
 
-      // حفظ المساهمة في Supabase
-      if (supabase) {
+    // حفظ المساهمة في Supabase
         try {
           // أولاً: التأكد من وجود الطالب في admin_users (مطلوب FK)
           await supabase.insert("admin_users", {
@@ -1080,15 +1087,14 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
         } catch (e) {
           console.error("Supabase contribution save error:", e);
         }
-      }
 
-      // إعادة ضبط حالة المساهمة
+    // إعادة ضبط حالة المساهمة
       userState.awaiting_contribution_for_subject = undefined;
       userState.awaiting_contribution_type = undefined;
       userState.awaiting_contribution_step = undefined;
       userState.awaiting_contribution_title = undefined;
 
-      await ctx.reply(
+    await ctx.reply(
         TEXTS.contribution.received(
           contributionId,
           doc.file_name || "ملف",
@@ -1104,16 +1110,16 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
           parse_mode: "Markdown",
         }
       );
-      return;
+    return;
     }
 
     // المسار الكامل (من القائمة الرئيسية - 9 خطوات)
     if (userState.contribution_main_step === "file" && userState.contribution_main_context?.subject_id) {
-      const ctx_data = userState.contribution_main_context;
-      const subject = getSubjectByIdWithFallback(ctx_data.subject_id);
-      const contentType = ctx_data.content_type || "summary";
-      const title = userState.contribution_main_title || doc.file_name || "بدون عنوان";
-      const typeLabel = {
+    const ctx_data = userState.contribution_main_context;
+    const subject = getSubjectByIdWithFallback(ctx_data.subject_id);
+    const contentType = ctx_data.content_type || "summary";
+    const title = userState.contribution_main_title || doc.file_name || "بدون عنوان";
+    const typeLabel = {
         book_theory: "📘 المقرر النظري",
         book_practical: "📗 المقرر العملي",
         exam: "📑 نماذج اختبارات",
@@ -1130,8 +1136,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
         submitted_at: "الآن",
       });
 
-      // حفظ المساهمة في Supabase (المسار الكامل)
-      if (supabase) {
+    // حفظ المساهمة في Supabase (المسار الكامل)
         try {
           await supabase.insert("admin_users", {
             telegram_id: ctx.from.id,
@@ -1153,14 +1158,13 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
         } catch (e) {
           console.error("Supabase contribution save error:", e);
         }
-      }
 
-      // إعادة ضبط الحالة
+    // إعادة ضبط الحالة
       userState.contribution_main_context = undefined;
       userState.contribution_main_step = undefined;
       userState.contribution_main_title = undefined;
 
-      await ctx.reply(
+    await ctx.reply(
         TEXTS.contribution.received(
           contributionId,
           doc.file_name || "ملف",
@@ -1174,7 +1178,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
           parse_mode: "Markdown",
         }
       );
-      return;
+    return;
     }
 
     // لو وصل ملف بدون طلب
@@ -1187,7 +1191,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
   // S10: البحث
   bot.callbackQuery("menu_search", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.awaiting_search = true;
     await ctx.editMessageText(TEXTS.search.intro, {
       reply_markup: searchKeyboard(),
@@ -1196,15 +1200,15 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
   });
 
   bot.on(":text", async (ctx) => {
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
 
     // استقبال عنوان المساهمة (المسار القصير - من شاشة المادة)
     if (userState.awaiting_contribution_step === "title" && userState.awaiting_contribution_for_subject) {
       userState.awaiting_contribution_title = ctx.message.text;
       userState.awaiting_contribution_step = "file";
-      const subject = getSubjectByIdWithFallback(userState.awaiting_contribution_for_subject);
-      const contentType = userState.awaiting_contribution_type || "summary";
-      const typeLabel = {
+    const subject = getSubjectByIdWithFallback(userState.awaiting_contribution_for_subject);
+    const contentType = userState.awaiting_contribution_type || "summary";
+    const typeLabel = {
         book_theory: "📘 المقرر النظري",
         book_practical: "📗 المقرر العملي",
         exam: "📑 نماذج اختبارات",
@@ -1212,37 +1216,36 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
         video: "🎥 مرئيات",
         reference: "📚 مراجع",
       }[contentType] || contentType;
-      await ctx.reply(
+    await ctx.reply(
         TEXTS.contribution.prompt_file(subject?.name || "", typeLabel, ctx.message.text),
         {
           reply_markup: new InlineKeyboard().text("❌ إلغاء", `cancel_contribute_${userState.awaiting_contribution_for_subject}`),
           parse_mode: "Markdown",
         }
       );
-      return;
+    return;
     }
 
     // استقبال عنوان المساهمة (المسار الكامل - من القائمة الرئيسية)
     if (userState.contribution_main_step === "title") {
       userState.contribution_main_title = ctx.message.text;
       userState.contribution_main_step = "file";
-      await ctx.reply(
+    await ctx.reply(
         TEXTS.contribution_main.prompt_file(ctx.message.text),
         {
           reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_contribute_main"),
           parse_mode: "Markdown",
         }
       );
-      return;
+    return;
     }
 
     if (userState.awaiting_search) {
       userState.awaiting_search = false;
-      const query = ctx.message.text;
+    const query = ctx.message.text;
 
-      // البحث في Supabase
-      let results: any[] = [];
-      if (supabase) {
+    // البحث في Supabase
+    let results: any[] = [];
         try {
           results = await supabase.select("content", {
             columns: "id,title,file_name,subject_id,content_type_id,file_size_mb,is_starred,download_count",
@@ -1253,9 +1256,8 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
         } catch (e) {
           console.error("Supabase search error:", e);
         }
-      }
 
-      if (results.length === 0) {
+    if (results.length === 0) {
         await ctx.reply(TEXTS.search.no_results, {
           reply_markup: new InlineKeyboard()
             .text("🔍 بحث جديد", "menu_search")
@@ -1264,19 +1266,19 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
           parse_mode: "Markdown",
         });
         return;
-      }
+    }
 
-      const mappedResults = results.map((r: any) => ({
+    const mappedResults = results.map((r: any) => ({
         id: r.id.toString(),
         file_name: r.title || r.file_name || "ملف",
         subject_name: getSubjectByIdWithFallback(r.subject_id)?.name || "غير معروف",
       }));
-      await ctx.reply(TEXTS.search.results_header(results.length), {
+    await ctx.reply(TEXTS.search.results_header(results.length), {
         reply_markup: searchResultsKeyboard(mappedResults, 0),
         parse_mode: "Markdown",
       });
     } else {
-      await ctx.reply(
+    await ctx.reply(
         "👋 اكتب /start للعودة للقائمة الرئيسية، أو استخدم الأزرار للتنقل.",
         { reply_markup: mainMenuKeyboard() }
       );
@@ -1319,7 +1321,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
           .row()
           .text(TEXTS.navigation.back_to_main, "back_to_main"),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
@@ -1343,7 +1345,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
           .row()
           .text(TEXTS.navigation.back_to_main, "back_to_main"),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
@@ -1355,7 +1357,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const kb = new InlineKeyboard();
     specialties.forEach((s, i) => {
       kb.text(s.short_name, `leader_spec_${s.id}`);
-      if (i % 2 === 1) kb.row();
+    if (i % 2 === 1) kb.row();
     });
     kb.row();
     kb.text("🔙 الكليات", "leader_majors");
@@ -1381,26 +1383,24 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     let scopeLabel = "🌍 لوحة الشرف العالمية";
 
     // قراءة من Supabase
-    if (supabase) {
-      try {
+    try {
         entries = await getTopContributorsFromDB(supabase, 10);
-      } catch (e) {
+    } catch (e) {
         console.error("Supabase leaderboard error:", e);
-      }
     }
     // Fallback للبيانات المحلية
     if (entries.length === 0) {
-      entries = []; // لا fallback — Supabase فقط
+    entries = []; // لا fallback — Supabase فقط
     }
 
     if (scope === "college" && id) {
-      const college = getCollegeById(id);
-      // فلترة حسب الكلية
-      entries = entries.filter((e: any) => e.current_college_id === id || e.college_id === id);
+    const college = getCollegeById(id);
+    // فلترة حسب الكلية
+    entries = entries.filter((e: any) => e.current_college_id === id || e.college_id === id);
       scopeLabel = `🏛 لوحة شرف - ${college?.name}`;
     } else if (scope === "specialty" && id) {
-      const spec = getSpecialtyById(id);
-      entries = entries.filter((e: any) => e.current_specialty_id === id || e.specialty_id === id);
+    const spec = getSpecialtyById(id);
+    entries = entries.filter((e: any) => e.current_specialty_id === id || e.specialty_id === id);
       scopeLabel = `📚 لوحة شرف - ${spec?.name}`;
     }
 
@@ -1424,7 +1424,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
   // S12: حسابي
   bot.callbackQuery("menu_profile", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
 
     // قراءة بيانات الطالب من Supabase
     let dbStudent: any = null;
@@ -1433,8 +1433,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     let totalDownloads = 0;
     let acceptedContribs = 0;
 
-    if (supabase) {
-      try {
+    try {
         dbStudent = await getStudent(supabase, ctx.from.id);
         unreadCount = await getUnreadNotificationsCount(supabase, ctx.from.id);
         const contribs = await getStudentContributions(supabase, ctx.from.id);
@@ -1443,9 +1442,8 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
           totalDownloads = dbStudent.total_downloads || 0;
           acceptedContribs = dbStudent.accepted_contributions || 0;
         }
-      } catch (e) {
+    } catch (e) {
         console.error("Supabase profile error:", e);
-      }
     }
 
     const collegeId = dbStudent?.current_college_id || userState.current_college_id;
@@ -1478,12 +1476,10 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
 
     // قراءة من Supabase
     let dbContribs: any[] = [];
-    if (supabase) {
-      try {
+    try {
         dbContribs = await getStudentContributions(supabase, ctx.from.id);
-      } catch (e) {
+    } catch (e) {
         console.error("Supabase contributions error:", e);
-      }
     }
 
     if (dbContribs.length === 0) {
@@ -1511,29 +1507,25 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
 
     // قراءة من Supabase
     let dbDownloads: any[] = [];
-    if (supabase) {
-      try {
+    try {
         dbDownloads = await getRecentDownloads(supabase, ctx.from.id, 5);
-      } catch (e) {
+    } catch (e) {
         console.error("Supabase downloads error:", e);
-      }
     }
 
     if (dbDownloads.length === 0) {
       msg += TEXTS.profile.no_downloads;
     } else {
-      for (let i = 0; i < dbDownloads.length; i++) {
+    for (let i = 0; i < dbDownloads.length; i++) {
         const d = dbDownloads[i];
         // قراءة عنوان المحتوى
         let contentTitle = "ملف";
-        if (supabase) {
           try {
             const content = await getContentById(supabase, d.content_id);
             if (content) contentTitle = content.title || content.file_name || "ملف";
           } catch {}
-        }
         msg += `${i + 1}. 📄 ${contentTitle}\n   📅 ${new Date(d.downloaded_at).toLocaleDateString("ar")}\n\n`;
-      }
+    }
     }
     await ctx.editMessageText(msg, {
       reply_markup: new InlineKeyboard().text(TEXTS.navigation.back_to_main, "back_to_profile"),
@@ -1546,7 +1538,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     await ctx.answerCallbackQuery();
     // محاكاة: نستخدم MOCK_STUDENT_NOTIFICATIONS (في الإنتاج ستُستعلم من DB)
     let notifications: any[] = [];
-    if (supabase) { try { notifications = await getStudentNotifications(supabase, ctx.from.id); } catch(e){} }
+    try { notifications = await getStudentNotifications(supabase, ctx.from.id); } catch(e) { console.error('getStudentNotifications error:', e); }
     let msg = "🔔 *الإشعارات*\n\n";
     if (notifications.length === 0) {
       msg += "📭 لا توجد إشعارات حالياً.";
@@ -1567,13 +1559,13 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
 
   bot.callbackQuery("mark_notifications_read", async (ctx) => {
     await ctx.answerCallbackQuery({ text: "✅ تم التحديث" });
-    if (supabase) { try { await markNotificationsRead(supabase, ctx.from.id); } catch(e){} }
+    try { await markNotificationsRead(supabase, ctx.from.id); } catch(e) { console.error('markNotificationsRead error:', e); }
     await ctx.editMessageText(
       "✅ *تم تعليم كل الإشعارات كمقروءة.*",
       {
         reply_markup: new InlineKeyboard().text(TEXTS.navigation.back_to_main, "back_to_profile"),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
@@ -1584,19 +1576,19 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
       {
         reply_markup: collegesKeyboard(0),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
   bot.callbackQuery("back_to_profile", async (ctx) => {
     await ctx.answerCallbackQuery();
     // محاكاة العودة للحساب
-    const userState = getUserState(ctx.from.id, ctx.from.first_name);
+    const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     const college = userState.current_college_id ? getCollegeById(userState.current_college_id)?.name : undefined;
     const specialty = userState.current_specialty_id ? getSpecialtyById(userState.current_specialty_id)?.name : undefined;
     const pending = userState.my_contributions.filter((c) => c.status === "pending").length;
     let unreadCount = 0;
-    if (supabase) { try { unreadCount = await getUnreadNotificationsCount(supabase, ctx.from.id); } catch(e){} }
+    try { unreadCount = await getUnreadNotificationsCount(supabase, ctx.from.id); } catch(e) { console.error('getUnreadNotificationsCount error:', e); }
     const msg =
       TEXTS.profile.title(userState.first_name || "طالب") +
       TEXTS.profile.stats({
@@ -1721,14 +1713,12 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
   bot.callbackQuery("menu_committee", async (ctx) => {
     await ctx.answerCallbackQuery();
     let channelUrl = "https://t.me/+ust_central_committee";
-    if (supabase) {
-      try {
+    try {
         const chs = await getCommitteeChannelsFromDB(supabase, { scope_type: "central" });
         if (chs.length > 0 && chs[0].channel_url) {
           channelUrl = chs[0].channel_url;
         }
-      } catch (e) { console.error("Supabase channels error:", e); }
-    }
+    } catch (e) { console.error("Supabase channels error:", e); }
     await ctx.editMessageText(
       "📢 *قناة اللجنة العلمية المركزية*\n\n" +
         "للحصول على آخر التحديثات والإعلانات المركزية:\n\n" +
@@ -1739,7 +1729,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
           .row()
           .text(TEXTS.navigation.back_to_main, "back_to_main"),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
@@ -1749,15 +1739,13 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const college = getCollegeById(collegeId);
     await ctx.answerCallbackQuery();
     let channel: any = null;
-    if (supabase) {
-      try {
+    try {
         const chs = await getCommitteeChannelsFromDB(supabase, { scope_type: "college", college_id: collegeId });
         channel = chs[0];
-      } catch (e) { console.error("Supabase channels error:", e); }
-    }
+    } catch (e) { console.error("Supabase channels error:", e); }
     if (!channel) {
-      await ctx.reply("⚠️ لا توجد قناة لجنة مسجّلة لهذه الكلية بعد.");
-      return;
+    await ctx.reply("⚠️ لا توجد قناة لجنة مسجّلة لهذه الكلية بعد.");
+    return;
     }
     await ctx.reply(
       `📢 *قناة اللجنة العلمية - ${college?.name}*\n\n` +
@@ -1769,7 +1757,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
           .row()
           .text("🔙 التخصصات", `back_to_college_majors_${collegeId}`),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
@@ -1792,19 +1780,17 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     await ctx.answerCallbackQuery();
     // البحث عن أي قناة مستوى لهذا التخصص
     let channel: any = null;
-    if (supabase) {
-      try {
+    try {
         const chs = await getCommitteeChannelsFromDB(supabase, { scope_type: "specialty_level", specialty_id: specialtyId });
         channel = chs[0];
-      } catch (e) { console.error("Supabase channels error:", e); }
-    }
+    } catch (e) { console.error("Supabase channels error:", e); }
     if (!channel) {
-      await ctx.reply(
+    await ctx.reply(
         `⚠️ لا توجد قناة لجنة مسجّلة لتخصص *${specialty?.name}* بعد.\n\n` +
           "_في الإنتاج: سيتم توفير قناة لكل مستوى لكل تخصص._",
         { parse_mode: "Markdown" }
       );
-      return;
+    return;
     }
     await ctx.reply(
       `📢 *قناة اللجنة العلمية - ${specialty?.name}*\n\n` +
@@ -1816,7 +1802,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
           .row()
           .text(TEXTS.navigation.back_to_levels, `back_to_levels_${specialtyId}`),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
@@ -1831,7 +1817,7 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
       {
         reply_markup: new InlineKeyboard().url("📱 راسلنا", "https://t.me/ust_support").row().text(TEXTS.navigation.back_to_main, "back_to_main"),
         parse_mode: "Markdown",
-      }
+    }
     );
   });
 
@@ -1854,20 +1840,20 @@ export function createStudentBot(token: string, supabase?: SupabaseClient): Bot 
     const errMsg = (e?.message || "").toLowerCase();
     const isIgnorable = ignorableMessages.some((m) => errMsg.includes(m.toLowerCase()));
     if (isIgnorable) {
-      // تجاهل هادئ - لن يُعيد Telegram المحاولة
-      return;
+    // تجاهل هادئ - لن يُعيد Telegram المحاولة
+    return;
     }
 
     // للأخطاء الأخرى، حاول إرسال رسالة خطأ للمستخدم
     try {
-      if (ctx?.chat?.id) {
+    if (ctx?.chat?.id) {
         await ctx.api.sendMessage(
           ctx.chat.id,
           "⚠️ حدث خطأ أثناء معالجة طلبك. حاول مرة أخرى بكتابة /start"
         );
-      }
+    }
     } catch {
-      // تجاهل
+    // تجاهل
     }
   });
 
@@ -1884,6 +1870,9 @@ export interface Env {
   WORKERS_SUBDOMAIN: string;
   SUPABASE_URL: string;
   SUPABASE_SERVICE_KEY: string;
+  // KV bindings (مضافة في wrangler.student.toml)
+  SESSIONS: KVNamespace;
+  CACHE: KVNamespace;
 }
 
 let botInstance: Bot | null = null;
@@ -1892,32 +1881,48 @@ let supabaseClient: SupabaseClient | null = null;
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
-      if (!supabaseClient && env.SUPABASE_URL && env.SUPABASE_SERVICE_KEY) {
+    // تهيئة Supabase (إلزامي في الإنتاج — لا fallback)
+    if (!supabaseClient) {
+        if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_KEY) {
+          return new Response(
+            JSON.stringify({
+              status: "error",
+              error: "SUPABASE_URL or SUPABASE_SERVICE_KEY not set",
+              hint: "Run: wrangler secret put SUPABASE_URL --config wrangler.student.toml",
+            }),
+            { status: 500, headers: { "Content-Type": "application/json" } }
+          );
+        }
         supabaseClient = new SupabaseClient({
           SUPABASE_URL: env.SUPABASE_URL,
           SUPABASE_SERVICE_KEY: env.SUPABASE_SERVICE_KEY,
         });
-      }
-      if (!botInstance) {
-        botInstance = createStudentBot(env.BOT_TOKEN, supabaseClient || undefined);
-      }
+    }
 
-      const url = new URL(request.url);
+    // تهيئة البوت مرة واحدة (يحتفظ بالـ KV bindings)
+    if (!botInstance) {
+        botInstance = createStudentBot(env.BOT_TOKEN, supabaseClient!, env.SESSIONS, env.CACHE);
+    }
 
-      if (url.pathname === "/health") {
+    const url = new URL(request.url);
+
+    if (url.pathname === "/health") {
         return new Response(
           JSON.stringify({
             status: "ok",
             bot: env.BOT_USERNAME,
             environment: env.ENVIRONMENT,
             version: "3.0",
+            supabase: "connected",
+            kv_sessions: env.SESSIONS ? "bound" : "missing",
+            kv_cache: env.CACHE ? "bound" : "missing",
             timestamp: new Date().toISOString(),
           }),
           { headers: { "Content-Type": "application/json" } }
         );
-      }
+    }
 
-      if (url.pathname === "/webhook") {
+    if (url.pathname === "/webhook") {
         // معالجة الـ webhook بشكل آمن - إرجاع 200 دائماً لمنع إعادة المحاولة
         try {
           const callback = webhookCallback(botInstance, "cloudflare-mod");
@@ -1926,15 +1931,15 @@ export default {
           console.error("Webhook handler error (returning 200 to stop retries):", err?.message || err);
           return new Response("", { status: 200 });
         }
-      }
+    }
 
-      return new Response(
-        "🎓 UST Student Bot v2.0 - Mockup\n\nWebhook: /webhook\nHealth: /health\nBot: @" + env.BOT_USERNAME,
+    return new Response(
+        "🎓 UST Student Bot v3.0 (Production)\n\nWebhook: /webhook\nHealth: /health\nBot: @" + env.BOT_USERNAME,
         { headers: { "Content-Type": "text/plain; charset=utf-8" } }
       );
     } catch (error) {
-      console.error("Worker fetch error:", error);
-      return new Response("Internal Server Error", { status: 500 });
+    console.error("Worker fetch error:", error);
+    return new Response("Internal Server Error", { status: 500 });
     }
   },
 };

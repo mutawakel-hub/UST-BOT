@@ -12,5 +12,33 @@ BOT_USERNAME = "usttesterbot"
 ENVIRONMENT = "production"
 WORKERS_SUBDOMAIN = "atow73768"
 
+# ============================================
+# KV Namespaces (للجلسات والـ cache)
+# ============================================
+# ملاحظة: يجب إنشاء الـ namespaces أولاً عبر:
+#   npx wrangler kv namespace create SESSIONS --config wrangler.student.toml
+#   npx wrangler kv namespace create CACHE --config wrangler.student.toml
+# ثم استبدل placeholder IDs أدناه بالـ IDs المُستعادة من Cloudflare
+# ============================================
+
+# KV لحالة الجلسات (مستخدم واحد لكل isolate — يحل مشكلة Map بين isolates)
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "STUDENT_SESSIONS_KV_ID_PLACEHOLDER"
+
+# KV للـ cache (الكليات، التخصصات، المواد، الصلاحيات)
+[[kv_namespaces]]
+binding = "CACHE"
+id = "STUDENT_CACHE_KV_ID_PLACEHOLDER"
+
+# ============================================
+# Secrets (تُحدد عبر wrangler secret put)
+# ============================================
 # Secret: BOT_TOKEN
 # لتعيينه: echo "TOKEN" | npx wrangler secret put BOT_TOKEN --config wrangler.student.toml
+#
+# Secret: SUPABASE_URL
+# لتعيينه: echo "https://xxx.supabase.co" | npx wrangler secret put SUPABASE_URL --config wrangler.student.toml
+#
+# Secret: SUPABASE_SERVICE_KEY
+# لتعيينه: echo "eyJhbGc..." | npx wrangler secret put SUPABASE_SERVICE_KEY --config wrangler.student.toml
