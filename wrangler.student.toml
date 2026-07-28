@@ -9,7 +9,7 @@ workers_dev = true
 # Public non-secret vars
 [vars]
 BOT_USERNAME = "usttesterbot"
-ENVIRONMENT = "mockup"
+ENVIRONMENT = "production"
 WORKERS_SUBDOMAIN = "atow73768"
 
 # Secret: BOT_TOKEN

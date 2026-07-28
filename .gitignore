@@ -76,10 +76,10 @@ coverage/
 .temp/
 tmp/
 
-# Lock files (يُعاد توليدها بعد npm install)
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
+# Lock files (يجب رفعها لضمان تثبيت نفس الإصدارات في CI/CD)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
 
 # ============================================
 # مجلدات النظام (لا تُرفع)
