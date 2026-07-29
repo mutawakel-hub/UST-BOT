@@ -2489,6 +2489,137 @@ export default {
         );
       }
 
+      // ============================================
+      // 🔍 DEBUG ENDPOINT — يختبر RBAC بالكامل
+      // ============================================
+      // استخدم: curl https://ust-admin-bot.atow73768.workers.dev/debug/rbac/8796334849
+      // يختبر: Supabase connection, View, direct queries, RLS
+      // ============================================
+      if (url.pathname.startsWith("/debug/rbac/")) {
+        const telegramIdStr = url.pathname.split("/")[3];
+        const telegramId = parseInt(telegramIdStr);
+
+        if (!telegramId) {
+          return new Response(JSON.stringify({ error: "Invalid telegram_id" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        const debug: any = {
+          telegram_id: telegramId,
+          timestamp: new Date().toISOString(),
+          supabase_url: env.SUPABASE_URL ? env.SUPABASE_URL.substring(0, 30) + "..." : "MISSING",
+          supabase_key_present: env.SUPABASE_SERVICE_KEY ? "yes" : "MISSING",
+          supabase_key_prefix: env.SUPABASE_SERVICE_KEY ? env.SUPABASE_SERVICE_KEY.substring(0, 20) + "..." : "MISSING",
+          tests: {},
+        };
+
+        // اختبار 1: Supabase connection — هل يمكن قراءة admin_users؟
+        try {
+          const resp = await fetch(
+            `${env.SUPABASE_URL}/rest/v1/admin_users?telegram_id=eq.${telegramId}&select=telegram_id,first_name,username`,
+            {
+              headers: {
+                apikey: env.SUPABASE_SERVICE_KEY,
+                Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+              },
+            }
+          );
+          debug.tests.admin_users = {
+            http_status: resp.status,
+            ok: resp.ok,
+            body: await resp.text(),
+          };
+        } catch (e: any) {
+          debug.tests.admin_users = { error: e.message };
+        }
+
+        // اختبار 2: position_holders
+        try {
+          const resp = await fetch(
+            `${env.SUPABASE_URL}/rest/v1/position_holders?user_telegram_id=eq.${telegramId}&select=position_id,is_active,assigned_at`,
+            {
+              headers: {
+                apikey: env.SUPABASE_SERVICE_KEY,
+                Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+              },
+            }
+          );
+          debug.tests.position_holders = {
+            http_status: resp.status,
+            ok: resp.ok,
+            body: await resp.text(),
+          };
+        } catch (e: any) {
+          debug.tests.position_holders = { error: e.message };
+        }
+
+        // اختبار 3: View user_permissions
+        try {
+          const resp = await fetch(
+            `${env.SUPABASE_URL}/rest/v1/user_permissions?user_telegram_id=eq.${telegramId}&select=*`,
+            {
+              headers: {
+                apikey: env.SUPABASE_SERVICE_KEY,
+                Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+              },
+            }
+          );
+          debug.tests.user_permissions_view = {
+            http_status: resp.status,
+            ok: resp.ok,
+            body: (await resp.text()).substring(0, 500),
+          };
+        } catch (e: any) {
+          debug.tests.user_permissions_view = { error: e.message };
+        }
+
+        // اختبار 4: positions table (للتحقق أنها موجودة)
+        try {
+          const resp = await fetch(
+            `${env.SUPABASE_URL}/rest/v1/positions?select=id,level,title&limit=5`,
+            {
+              headers: {
+                apikey: env.SUPABASE_SERVICE_KEY,
+                Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+              },
+            }
+          );
+          debug.tests.positions_table = {
+            http_status: resp.status,
+            ok: resp.ok,
+            body: (await resp.text()).substring(0, 500),
+          };
+        } catch (e: any) {
+          debug.tests.positions_table = { error: e.message };
+        }
+
+        // اختبار 5: position_level_permissions
+        try {
+          const resp = await fetch(
+            `${env.SUPABASE_URL}/rest/v1/position_level_permissions?select=position_level,permission_id&limit=5`,
+            {
+              headers: {
+                apikey: env.SUPABASE_SERVICE_KEY,
+                Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+              },
+            }
+          );
+          debug.tests.position_level_permissions = {
+            http_status: resp.status,
+            ok: resp.ok,
+            body: (await resp.text()).substring(0, 500),
+          };
+        } catch (e: any) {
+          debug.tests.position_level_permissions = { error: e.message };
+        }
+
+        return new Response(JSON.stringify(debug, null, 2), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
       if (url.pathname === "/webhook") {
         try {
           const callback = webhookCallback(botInstance, "cloudflare-mod");
