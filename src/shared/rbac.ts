@@ -88,22 +88,21 @@ export function initRbac(supabase: SupabaseClient, cacheKv: KVNamespace): void {
 export async function getUserPermissions(telegramId: number): Promise<UserPermissions> {
   console.log(`🔍 [RBAC] getUserPermissions(${telegramId}) called`);
 
-  // 1. حاول قراءة من cache أولاً
+  // 0. امسح cache أولاً (DIAGNOSTIC MODE — يمكن تعطيله لاحقاً)
+  // هذا يضمن أننا نقرأ من DB بدلاً من cache قديم
   const cacheKey = `perms:${telegramId}`;
-  const cached = await cacheStore.get(cacheKey);
-  if (cached) {
-    console.log(`✅ [RBAC] Cache HIT for user ${telegramId}`);
-    console.log(`   Cache content:`, JSON.stringify(cached).substring(0, 200));
-    const result = deserializePermissions(cached);
-    console.log(`   Deserialized: positions=${result.positions.length}, permissions=${result.permissions.size}, is_central=${result.is_central}`);
-    return result;
-  }
-  console.log(`❌ [RBAC] Cache MISS for user ${telegramId}`);
-
-  // 2. اقرأ من Supabase عبر View `user_permissions`
-  let rows: any[] = [];
   try {
-    console.log(`📡 [RBAC] Querying user_permissions view for ${telegramId}...`);
+    await cacheStore.delete(cacheKey);
+    console.log(`🧹 [RBAC] Cleared cache for user ${telegramId} (diagnostic mode)`);
+  } catch (e) {
+    console.warn(`⚠️ [RBAC] Failed to clear cache:`, e);
+  }
+
+  // 1. محاولة أولى: استخدم View `user_permissions` (الأسرع لو يعمل)
+  let rows: any[] = [];
+  let viewSuccess = false;
+  try {
+    console.log(`📡 [RBAC] Attempt 1: Querying user_permissions view for ${telegramId}...`);
     const result = await supabaseClient.select<{
       position_id: string;
       position_level: PositionLevel;
@@ -118,25 +117,31 @@ export async function getUserPermissions(telegramId: number): Promise<UserPermis
       filter: `user_telegram_id=eq.${telegramId}`,
     });
     rows = Array.isArray(result) ? result : [];
-    console.log(`📊 [RBAC] Query returned ${rows.length} rows`);
+    viewSuccess = true;
+    console.log(`📊 [RBAC] View query returned ${rows.length} rows`);
     if (rows.length > 0) {
       console.log(`   First row:`, JSON.stringify(rows[0]));
     }
   } catch (e: any) {
-    // تشخيص مفصل للأخطاء
     const errMsg = String(e?.message || e);
-    console.error(`❌ [RBAC] Supabase error for user ${telegramId}:`, errMsg);
-    if (errMsg.includes("404") || errMsg.includes("Does not exist") || errMsg.includes("schema cache")) {
-      console.error("   → View 'user_permissions' not found in database!");
-      console.error("   → Apply db/schema.sql to Supabase via SQL Editor");
-    } else if (errMsg.includes("permission denied")) {
-      console.error("   → Permission denied on 'user_permissions' view");
-      console.error("   → Check RLS policies or use service_role key");
+    console.warn(`⚠️ [RBAC] View query failed: ${errMsg.substring(0, 200)}`);
+    console.warn(`   → Will try fallback method (direct queries)`);
+    // لا نرجع هنا — نحاول fallback
+  }
+
+  // 2. محاولة ثانية (fallback): استعلامات مباشرة عبر 3 tables
+  // تستخدم لو View غير متاح في PostgREST schema cache
+  if (!viewSuccess || rows.length === 0) {
+    console.log(`🔄 [RBAC] Attempt 2: Falling back to direct queries...`);
+    rows = await fetchPermissionsDirectly(telegramId);
+    console.log(`📊 [RBAC] Direct query returned ${rows.length} rows`);
+    if (rows.length > 0) {
+      console.log(`   First row:`, JSON.stringify(rows[0]));
     }
-    return emptyPermissions();
   }
 
   if (rows.length === 0) {
+    console.error(`❌ [RBAC] Both methods returned 0 rows for user ${telegramId}`);
     // تحقق إضافي: هل المستخدم موجود في admin_users أصلاً؟
     try {
       const adminUser = await supabaseClient.select("admin_users", {
@@ -145,22 +150,17 @@ export async function getUserPermissions(telegramId: number): Promise<UserPermis
         limit: 1,
       });
       if (!Array.isArray(adminUser) || adminUser.length === 0) {
-        console.warn(`⚠️  User ${telegramId} not found in admin_users table`);
-        console.warn("   → Run: INSERT INTO admin_users (telegram_id, first_name) VALUES (...)");
+        console.error(`❌ User ${telegramId} not found in admin_users table`);
       } else {
-        // المستخدم موجود لكن ليس له منصب
+        console.log(`✅ User ${telegramId} found in admin_users`);
         const holder = await supabaseClient.select("position_holders", {
-          columns: "position_id",
-          filter: `user_telegram_id=eq.${telegramId}&is_active=eq.true`,
-          limit: 1,
+          columns: "position_id,is_active",
+          filter: `user_telegram_id=eq.${telegramId}`,
         });
-        if (!Array.isArray(holder) || holder.length === 0) {
-          console.warn(`⚠️  User ${telegramId} has no active position in position_holders`);
-          console.warn("   → Run: INSERT INTO position_holders (position_id, user_telegram_id, assigned_by, is_active) VALUES ('central_chair', ..., ..., true)");
-        }
+        console.log(`   position_holders:`, JSON.stringify(holder));
       }
     } catch (e) {
-      // تجاهل أخطاء التشخيص
+      console.error(`Diagnostic query also failed:`, e);
     }
     return emptyPermissions();
   }
@@ -189,7 +189,6 @@ export async function getUserPermissions(telegramId: number): Promise<UserPermis
 
     if (row.position_level === "central") {
       is_central = true;
-      // المركزي يدير كل الكليات — سنُحمّلها لاحقاً عند الحاجة
     } else if (row.position_level === "college" && row.college_id) {
       colleges.add(row.college_id);
     } else if (row.position_level === "level" && row.college_id) {
@@ -203,14 +202,18 @@ export async function getUserPermissions(telegramId: number): Promise<UserPermis
     }
   }
 
-  // 4. لو مركزي، حمّل كل الكليات (تُخزّن في DB)
+  // 4. لو مركزي، حمّل كل الكليات
   if (is_central) {
-    const collegesList = await supabaseClient.select<{ id: number }>("colleges", {
-      columns: "id",
-      filter: "is_active=eq.true",
-    });
-    if (Array.isArray(collegesList)) {
-      collegesList.forEach((c) => colleges.add(c.id));
+    try {
+      const collegesList = await supabaseClient.select<{ id: number }>("colleges", {
+        columns: "id",
+        filter: "is_active=eq.true",
+      });
+      if (Array.isArray(collegesList)) {
+        collegesList.forEach((c) => colleges.add(c.id));
+      }
+    } catch (e) {
+      console.warn(`⚠️ Failed to load colleges for central admin:`, e);
     }
   }
 
@@ -221,10 +224,108 @@ export async function getUserPermissions(telegramId: number): Promise<UserPermis
     is_central,
   };
 
-  // 5. خزّن في cache (مسلسل بدون Set)
+  // 5. خزّن في cache
   await cacheStore.set(cacheKey, serializePermissions(result));
+  console.log(`✅ [RBAC] Built permissions: ${permissions.size} perms, ${positionsMap.size} positions, is_central=${is_central}`);
 
   return result;
+}
+
+// ============================================
+// Fallback: استعلام مباشر عبر 3 tables
+// ============================================
+// يستخدم لو View `user_permissions` غير متاح في PostgREST schema cache
+// ينفذ 3 استعلامات منفصلة ويجمعها client-side
+// ============================================
+async function fetchPermissionsDirectly(telegramId: number): Promise<any[]> {
+  // 1. اقرأ position_holders للمستخدم (المناصب النشطة فقط)
+  let holders: any[] = [];
+  try {
+    const result = await supabaseClient.select("position_holders", {
+      columns: "position_id",
+      filter: `user_telegram_id=eq.${telegramId}&is_active=eq.true`,
+    });
+    holders = Array.isArray(result) ? result : [];
+    console.log(`   [Direct] position_holders: ${holders.length} rows`);
+  } catch (e) {
+    console.error(`   [Direct] position_holders query failed:`, e);
+    return [];
+  }
+
+  if (holders.length === 0) {
+    console.warn(`   [Direct] No active positions for user ${telegramId}`);
+    return [];
+  }
+
+  // 2. اقرأ تفاصيل المناصب
+  const positionIds = holders.map((h) => h.position_id);
+  let positions: any[] = [];
+  try {
+    // PostgREST in.() filter: position_id=in.("id1","id2","id3")
+    const inFilter = `id=in.(${positionIds.map((id) => `"${id}"`).join(",")})`;
+    const result = await supabaseClient.select("positions", {
+      columns: "id,level,title,college_id,specialty_id,level_num,is_central",
+      filter: inFilter,
+    });
+    positions = Array.isArray(result) ? result : [];
+    console.log(`   [Direct] positions: ${positions.length} rows`);
+  } catch (e) {
+    console.error(`   [Direct] positions query failed:`, e);
+    return [];
+  }
+
+  // 3. اقرأ position_level_permissions لكل مستوى
+  const levels = [...new Set(positions.map((p) => p.level))];
+  let levelPerms: any[] = [];
+  try {
+    const inFilter = `position_level=in.(${levels.map((l) => `"${l}"`).join(",")})`;
+    const result = await supabaseClient.select("position_level_permissions", {
+      columns: "position_level,permission_id",
+      filter: inFilter,
+    });
+    levelPerms = Array.isArray(result) ? result : [];
+    console.log(`   [Direct] position_level_permissions: ${levelPerms.length} rows`);
+  } catch (e) {
+    console.error(`   [Direct] position_level_permissions query failed:`, e);
+    return [];
+  }
+
+  // 4. اقرأ permission names (اختياري - للـ logging فقط)
+  const permIds = [...new Set(levelPerms.map((lp) => lp.permission_id))];
+  let permNames: Map<string, string> = new Map();
+  try {
+    const inFilter = `id=in.(${permIds.map((id) => `"${id}"`).join(",")})`;
+    const result = await supabaseClient.select("permissions", {
+      columns: "id,name",
+      filter: inFilter,
+    });
+    if (Array.isArray(result)) {
+      result.forEach((p: any) => permNames.set(p.id, p.name));
+    }
+  } catch (e) {
+    // تجاهل - الـ names اختيارية
+  }
+
+  // 5. اجمع كل شيء في نفس شكل الـ View
+  const rows: any[] = [];
+  for (const pos of positions) {
+    for (const lp of levelPerms) {
+      if (lp.position_level === pos.level) {
+        rows.push({
+          position_id: pos.id,
+          position_level: pos.level,
+          position_title: pos.title,
+          college_id: pos.college_id,
+          specialty_id: pos.specialty_id,
+          level_num: pos.level_num,
+          permission_id: lp.permission_id,
+          permission_name: permNames.get(lp.permission_id) || lp.permission_id,
+        });
+      }
+    }
+  }
+
+  return rows;
 }
 
 // ============================================
