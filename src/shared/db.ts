@@ -30,6 +30,7 @@ export class SupabaseClient {
   //     استخدم الدوال المساعدة eq/neq/inList أدناه—they تُرمّز تلقائياً
   //   - single: true → يضبط Accept: application/vnd.pgrst.object+json
   //     ويرجع كائناً واحداً (أو null لو لا نتائج بدل 406)
+  //   - columns: لا تُرمّز (PostgREST يقبل الفواصل كما هي)
   // ============================================
   async select<T = any>(
     table: string,
@@ -41,11 +42,13 @@ export class SupabaseClient {
       single?: boolean;
     } = {}
   ): Promise<T | T[]> {
+    // PostgREST يقبل columns بفواصل عادية بدون encoding
+    // encodeURIComponent يحوّل ',' إلى '%2C' مما يكسر بعض الاستعلامات
     const columns = options.columns || "*";
-    let path = `/rest/v1/${table}?select=${encodeURIComponent(columns)}`;
+    let path = `/rest/v1/${table}?select=${columns}`;
 
     if (options.filter) path += `&${options.filter}`;
-    if (options.order) path += `&order=${encodeURIComponent(options.order)}`;
+    if (options.order) path += `&order=${options.order}`;
     if (options.limit) path += `&limit=${options.limit}`;
     if (options.single) path += `&limit=1`;
 
@@ -57,15 +60,22 @@ export class SupabaseClient {
       headers["Prefer"] = "count=exact";
     }
 
-    const resp = await fetch(`${this.url}${path}`, { headers });
+    // LOG: اطبع الـ URL الكامل للتشخيص
+    const fullUrl = `${this.url}${path}`;
+    console.log(`📤 [DB] SELECT ${table}: ${fullUrl.substring(0, 200)}`);
+
+    const resp = await fetch(fullUrl, { headers });
+
+    console.log(`📊 [DB] Response status: ${resp.status}`);
 
     // في single mode، 406 يعني "لا نتائج" — نُرجع null بدل رمي خطأ
     if (!resp.ok) {
+      const errText = await resp.text();
+      console.error(`❌ [DB] SELECT error ${resp.status}: ${errText.substring(0, 300)}`);
       if (options.single && (resp.status === 406 || resp.status === 400)) {
         return null as T;
       }
-      const err = await resp.text();
-      throw new Error(`Supabase SELECT error: ${err}`);
+      throw new Error(`Supabase SELECT error: ${errText}`);
     }
 
     // single mode: قد تُرجع body فارغ أو كائن واحد
@@ -80,6 +90,7 @@ export class SupabaseClient {
     }
 
     const data = await resp.json();
+    console.log(`✅ [DB] SELECT ${table} returned ${Array.isArray(data) ? data.length : 1} rows`);
     return data as T[];
   }
 
