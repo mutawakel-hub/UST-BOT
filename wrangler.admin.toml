@@ -11,6 +11,7 @@ workers_dev = true
 BOT_USERNAME = "usttesteradminbot"
 ENVIRONMENT = "production"
 WORKERS_SUBDOMAIN = "atow73768"
+STUDENT_BOT_URL = "https://ust-student-bot.atow73768.workers.dev"
 
 # ============================================
 # KV Namespaces (للجلسات والـ cache)

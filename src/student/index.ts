@@ -299,6 +299,45 @@ export default {
         });
       }
 
+      // ====== Broadcast Push endpoint (يستقبل من بوت الإدارة) ======
+      // يستقبل طلب POST لإرسال رسالة تعميم لطالب واحد عبر بوت الطالب
+      // Body: { secret, telegram_id, text, parse_mode? }
+      if (url.pathname === "/broadcast-push" && request.method === "POST") {
+        try {
+          const body = await request.json() as any;
+          // تحقق من الـ secret المشترك (CALLBACK_SECRET)
+          if (body.secret !== env.CALLBACK_SECRET) {
+            return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
+              status: 401,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (!body.telegram_id || !body.text) {
+            return new Response(JSON.stringify({ ok: false, error: "missing telegram_id or text" }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          // أرسل الرسالة عبر بوت الطالب
+          await botInstance!.api.sendMessage(body.telegram_id, body.text, {
+            parse_mode: body.parse_mode || "Markdown",
+            // تعطيل الإشعار (notification) لو الطلب صريح
+            disable_notification: body.disable_notification || false,
+          });
+          return new Response(JSON.stringify({ ok: true, delivered: true }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (e: any) {
+          // لو الطالب لم يبدأ البوت أو حظره → 404 متوقع
+          const errMsg = String(e?.message || "");
+          const isIgnorable = errMsg.includes("bot was blocked") || errMsg.includes("chat not found");
+          return new Response(
+            JSON.stringify({ ok: false, error: isIgnorable ? "blocked_or_not_started" : errMsg.substring(0, 100) }),
+            { status: isIgnorable ? 404 : 500, headers: { "Content-Type": "application/json" } }
+          );
+        }
+      }
+
       // ====== Webhook endpoint ======
       if (url.pathname === "/webhook") {
         try {

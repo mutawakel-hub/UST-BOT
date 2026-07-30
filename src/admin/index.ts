@@ -57,7 +57,8 @@ export function createAdminBot(
   supabase: SupabaseClient,
   sessionsKv: KVNamespace,
   cacheKv: KVNamespace,
-  callbackSecret: string
+  callbackSecret: string,
+  studentBotUrl?: string
 ): Bot {
   // تهيئة الـ stores
   initSessionStore(sessionsKv);
@@ -66,6 +67,9 @@ export function createAdminBot(
     initCallbackSigning(callbackSecret);
   }
   (globalThis as any).__supabase = supabase;
+  // خزّن studentBotUrl + callbackSecret للاستخدام في broadcast push
+  if (studentBotUrl) (globalThis as any).__studentBotUrl = studentBotUrl;
+  if (callbackSecret) (globalThis as any).__callbackSecret = callbackSecret;
 
   const bot = new Bot(token);
 
@@ -131,6 +135,7 @@ export interface Env {
   BOT_USERNAME: string;
   ENVIRONMENT: string;
   WORKERS_SUBDOMAIN: string;
+  STUDENT_BOT_URL: string;
   SUPABASE_URL: string;
   SUPABASE_SERVICE_KEY: string;
   SESSIONS: KVNamespace;
@@ -151,7 +156,7 @@ export default {
         });
       }
       if (!botInstance) {
-        botInstance = createAdminBot(env.BOT_TOKEN, supabaseClient!, env.SESSIONS, env.CACHE, env.CALLBACK_SECRET || "");
+        botInstance = createAdminBot(env.BOT_TOKEN, supabaseClient!, env.SESSIONS, env.CACHE, env.CALLBACK_SECRET || "", env.STUDENT_BOT_URL || "");
       }
       const url = new URL(request.url);
 
@@ -255,7 +260,7 @@ export default {
         });
       }
       if (!botInstance) {
-        botInstance = createAdminBot(env.BOT_TOKEN, supabaseClient!, env.SESSIONS, env.CACHE, env.CALLBACK_SECRET || "");
+        botInstance = createAdminBot(env.BOT_TOKEN, supabaseClient!, env.SESSIONS, env.CACHE, env.CALLBACK_SECRET || "", env.STUDENT_BOT_URL || "");
       }
 
       // شغّل فحص التنبيه المتدرّج في الخلفية

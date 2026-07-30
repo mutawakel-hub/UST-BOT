@@ -361,29 +361,55 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
       console.error("Failed to insert notifications:", e);
     }
 
-    // 3. حاول الإرسال المباشر عبر Telegram (best effort)
-    // ملاحظة: قد يفشل لو الطالب لم يبدأ بوت الإدارة — هذا متوقع
-    // الإشعار في DB سيظهر للطالب في المرة القادمة التي يفتح فيها بوت الطالب
+    // 3. الإرسال المباشر عبر بوت الطالب (push notification فوري)
+    // نستدعي endpoint /broadcast-push في بوت الطالب عبر HTTP
+    // هذا يضمن وصول الرسالة كرسالة Telegram عادية + إشعار
+    const studentBotUrl = (globalThis as any).__studentBotUrl as string | undefined;
+    const callbackSecret = (globalThis as any).__callbackSecret as string | undefined;
+
     let pushDelivered = 0;
-    const pushPromises = recipientIds.map(async (studentId) => {
-      try {
-        await bot.api.sendMessage(
-          studentId,
-          `${notificationTitle}\n\n${text}`,
-          { parse_mode: "Markdown" }
-        );
-        pushDelivered++;
-      } catch (e: any) {
-        // متوقع: طالب لم يبدأ بوت الإدارة → تجاهل
-        // الإشعار سيصل عبر بوت الطالب عندما يفتحه
-      }
-    });
-    // لا ننتظر كل الإرسالات المباشرة (قد تأخذ وقتاً طويلاً)
-    // نعطيها 10 ثوانٍ كحد أقصى
-    await Promise.race([
-      Promise.allSettled(pushPromises),
-      new Promise((resolve) => setTimeout(resolve, 10000)),
-    ]);
+    let pushBlocked = 0;
+
+    if (studentBotUrl && callbackSecret) {
+      // رسالة منسقة جميلة للطالب
+      const studentMessage =
+        `📢 *تعميم جديد*\n\n` +
+        `📍 ${ctxData.scope_label}\n` +
+        `👤 من: ${ctx.from.first_name || "إدارة"}\n` +
+        `📅 ${new Date().toLocaleString("ar")}\n\n` +
+        `━━━━━━━━━━━━━━━\n\n` +
+        `${text}\n\n` +
+        `━━━━━━━━━━━━━━━`;
+
+      const pushPromises = recipientIds.map(async (studentId) => {
+        try {
+          const resp = await fetch(`${studentBotUrl}/broadcast-push`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              secret: callbackSecret,
+              telegram_id: studentId,
+              text: studentMessage,
+              parse_mode: "Markdown",
+            }),
+          });
+          if (resp.ok) {
+            pushDelivered++;
+          } else if (resp.status === 404) {
+            pushBlocked++;
+          }
+        } catch (e) {
+          // تجاهل — الإشعار في DB يضمن الوصول
+        }
+      });
+      // مهلة 12 ثانية (أطول قليلاً من سابقتها لأن الـ fetch يأخذ وقتاً)
+      await Promise.race([
+        Promise.allSettled(pushPromises),
+        new Promise((resolve) => setTimeout(resolve, 12000)),
+      ]);
+    } else {
+      console.warn("⚠️ [broadcast] STUDENT_BOT_URL or CALLBACK_SECRET not set — skipping direct push");
+    }
 
     // 4. سجّل التعميم في DB
     const positionId = await getAdminPrimaryPositionId(supabase, ctx.from.id);
@@ -404,13 +430,16 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     }
 
     // 5. اعرض رسالة النجاح
+    const pushSuccessRate = deliveredCount > 0 ? Math.round((pushDelivered / deliveredCount) * 100) : 0;
     await ctx.editMessageText(
       `✅ *تم إرسال التعميم بنجاح!*\n\n` +
       `📍 النطاق: ${ctxData.scope_label}\n` +
       `👥 المستلمون: ${deliveredCount} طالب\n` +
-      `📨 إشعارات مباشرة: ${pushDelivered} (${Math.round((pushDelivered / deliveredCount) * 100)}%)\n` +
+      `📨 وصل كرسالة مباشرة: ${pushDelivered} (${pushSuccessRate}%)\n` +
+      (pushBlocked > 0 ? `🚫 محظور/لم يبدأ: ${pushBlocked}\n` : "") +
+      `🔔 إشعار في البوت: ${deliveredCount} (100%)\n` +
       `⏱ وقت الإرسال: ${new Date().toLocaleString("ar")}\n\n` +
-      `_الطلاب سيرون الإشعار في بوت الطالب عند فتحه._`,
+      `_الطلاب سيرون الرسالة فوراً كإشعار Telegram + في بوت الطالب._`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
