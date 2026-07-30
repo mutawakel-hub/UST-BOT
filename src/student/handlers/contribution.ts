@@ -99,6 +99,7 @@ async function saveContribution(
 ): Promise<number | null> {
   try {
     // أولاً: التأكد من وجود الطالب في admin_users (مطلوب FK)
+    console.log(`📝 [Ihsan] Saving contribution: user=${data.userTelegramId}, subject=${data.subjectId}, type=${data.contentType}`);
     await ensureStudentInAdminUsers(
       supabase,
       data.userTelegramId,
@@ -119,9 +120,15 @@ async function saveContribution(
       status: "pending",
     });
     const inserted = result as any;
-    return inserted?.id ?? null;
-  } catch (e) {
-    console.error("Supabase contribution save error:", e);
+    const newId = inserted?.id ?? null;
+    if (newId) {
+      console.log(`✅ [Ihsan] Contribution saved with ID: ${newId}`);
+    } else {
+      console.error(`❌ [Ihsan] Insert returned no ID. Result:`, JSON.stringify(inserted).substring(0, 200));
+    }
+    return newId;
+  } catch (e: any) {
+    console.error("❌ [Ihsan] Supabase contribution save error:", e?.message || e);
     return null;
   }
 }
@@ -235,7 +242,33 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
       description,
     });
 
-    const displayId = newId || Math.floor(100000 + Math.random() * 900000);
+    // لو فشل الإدراج — أعرض رسالة خطأ
+    if (!newId) {
+      // إعادة ضبط حالة الإحسان
+      userState.awaiting_contribution_for_subject = undefined;
+      userState.awaiting_contribution_type = undefined;
+      userState.awaiting_contribution_step = undefined;
+      userState.awaiting_contribution_title = undefined;
+      userState.awaiting_contribution_description = undefined;
+      userState.awaiting_contribution_file_id = undefined;
+      userState.awaiting_contribution_file_name = undefined;
+      userState.awaiting_contribution_file_size = undefined;
+      await saveUserState(userState);
+
+      await ctx.editMessageText(
+        "⚠️ *تعذّر حفظ الإحسان*\n\nحدث خطأ أثناء حفظ الإحسان في قاعدة البيانات.\n\nيرجى المحاولة مرة أخرى لاحقاً.",
+        {
+          reply_markup: new InlineKeyboard()
+            .text(TEXTS.navigation.back_to_subject_menu, `back_to_subject_menu_${subjectId}`)
+            .row()
+            .text(TEXTS.navigation.back_to_main, "back_to_main"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    const displayId = newId;
 
     // تحديث ذاكرة جلسة الطالب (للعرض في حسابي)
     userState.my_contributions.unshift({
@@ -488,7 +521,28 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
       description,
     });
 
-    const displayId = newId || Math.floor(100000 + Math.random() * 900000);
+    // لو فشل الإدراج — أعرض رسالة خطأ
+    if (!newId) {
+      userState.contribution_main_context = undefined;
+      userState.contribution_main_step = undefined;
+      userState.contribution_main_title = undefined;
+      userState.contribution_main_description = undefined;
+      userState.contribution_main_file_id = undefined;
+      userState.contribution_main_file_name = undefined;
+      userState.contribution_main_file_size = undefined;
+      await saveUserState(userState);
+
+      await ctx.editMessageText(
+        "⚠️ *تعذّر حفظ الإحسان*\n\nحدث خطأ أثناء حفظ الإحسان في قاعدة البيانات.\n\nيرجى المحاولة مرة أخرى لاحقاً.",
+        {
+          reply_markup: new InlineKeyboard().text(TEXTS.navigation.back_to_main, "back_to_main"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    const displayId = newId;
 
     // تحديث ذاكرة الجلسة
     userState.my_contributions.unshift({
