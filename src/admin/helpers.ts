@@ -7,7 +7,7 @@
 //   - customTexts (in-memory Map مؤقت)
 // ============================================
 
-import { InlineKeyboard } from "grammy";
+import { InlineKeyboard, Bot } from "grammy";
 import { TEXTS, ADMIN_TEXTS } from "../shared/texts";
 import { SupabaseClient, getBroadcastRecipients as dbGetBroadcastRecipients } from "../shared/db";
 import { UserPermissions, UserPosition } from "../shared/rbac";
@@ -46,8 +46,10 @@ export function buildDynamicDashboard(perms: UserPermissions, pendingCount: numb
   }
   kb.row();
 
-  // صف 4: المناصب + اللجان (للمركزي فقط)
-  if (p.has("manage_admins")) {
+  // صف 4: المناصب + اللجان (للمركزي ومسؤول الكلية)
+  // manage_admins → المركزي فقط
+  // manage_level_reps → مسؤول الكلية (يدخل لشاشة محدودة)
+  if (p.has("manage_admins") || p.has("manage_level_reps")) {
     kb.text("👥 إدارة المناصب", "manage_admins");
   }
   if (p.has("manage_committee_channels")) {
@@ -207,4 +209,176 @@ export function getRoleLabel(perms: UserPermissions): string {
     return `${levelLabel} ${pos.title}`;
   }
   return "مسؤول";
+}
+
+// ============================================
+// ensureLevelRepPosition — إنشاء منصب مندوب مستوى ديناميكياً
+// ============================================
+// مناصب مندوبي المستويات لا تُنشأ مسبقاً (قد تصل إلى 34×6 = 200+ منصب).
+// بدلاً من ذلك، ننشئ المنصب عند أول تعيين لمندوب مستوى معيّن.
+//
+// معرّف المنصب: `level_rep_{specId}_{levelNum}`
+// مثال: level_rep_16_2 = مندوب المستوى 2 في تخصص IT (id=16)
+//
+// الخطوات:
+//   1. تحقق من وجود المنصب بـ SELECT
+//   2. لو غير موجود: اقرأ specialty للحصول على college_id و levels_count
+//      ثم أدرج المنصب في جدول positions
+//   3. أرجع الـ position_id
+// ============================================
+export async function ensureLevelRepPosition(
+  supabase: SupabaseClient,
+  collegeId: number,
+  specialtyId: number,
+  levelNum: number
+): Promise<string> {
+  const positionId = `level_rep_${specialtyId}_${levelNum}`;
+
+  // 1. تحقق من وجود المنصب
+  try {
+    const existing = await supabase.select<{ id: string }>("positions", {
+      columns: "id",
+      filter: `id=eq.${positionId}`,
+      single: true,
+    });
+    if (existing) {
+      return positionId;
+    }
+  } catch (e) {
+    console.warn(`⚠️ [ensureLevelRepPosition] Check failed for ${positionId}:`, e);
+    // استمر — حاول INSERT على أي حال
+  }
+
+  // 2. اقرأ بيانات التخصص للاسم والوصف
+  let specName = `تخصص ${specialtyId}`;
+  try {
+    const specResult = await supabase.select<{ short_name: string }>("specialties", {
+      columns: "short_name",
+      filter: `id=eq.${specialtyId}`,
+      single: true,
+    });
+    const spec = Array.isArray(specResult) ? specResult[0] : specResult;
+    if (spec?.short_name) specName = spec.short_name;
+  } catch (e) {
+    console.warn(`⚠️ [ensureLevelRepPosition] Failed to read specialty ${specialtyId}:`, e);
+  }
+
+  // 3. أدرج المنصب الجديد
+  try {
+    await supabase.insert("positions", {
+      id: positionId,
+      level: "level",
+      title: `📊 مندوب ${specName} - مستوى ${levelNum}`,
+      description: `مندوب المستوى ${levelNum} في تخصص ${specName}`,
+      college_id: collegeId,
+      specialty_id: specialtyId,
+      level_num: levelNum,
+      is_central: false,
+    });
+  } catch (e: any) {
+    // قد يكون المنصب قد أُنشئ بـ race condition — تحقق من جديد
+    const errMsg = String(e?.message || e);
+    if (errMsg.includes("duplicate") || errMsg.includes("23505")) {
+      //race: أُنشئ بواسطة طلب آخر — هذا جيد
+      return positionId;
+    }
+    console.error(`❌ [ensureLevelRepPosition] Failed to create ${positionId}:`, e);
+    throw e;
+  }
+
+  console.log(`✅ [ensureLevelRepPosition] Created new position: ${positionId}`);
+  return positionId;
+}
+
+// ============================================
+// writePositionAuditLog — كتابة سجل تدقيق لتغييرات المناصب
+// ============================================
+// يُستدعى بعد كل عملية تعيين (assign) أو إزالة (revoke) لمنصب.
+// يكتب في جدول position_audit_logs:
+//   - position_id: المنصب المتأثر
+//   - action: 'assign' أو 'revoke'
+//   - old_holder_id: الشاغل القديم (لو كان موجوداً)
+//   - new_holder_id: الشاغل الجديد (لو was assigned)
+//   - performed_by: من نفّذ العملية (telegram_id للمسؤول الحالي)
+// ============================================
+export async function writePositionAuditLog(
+  supabase: SupabaseClient,
+  data: {
+    position_id: string;
+    action: "assign" | "revoke";
+    old_holder_id?: number | null;
+    new_holder_id?: number | null;
+    performed_by: number;
+  }
+): Promise<void> {
+  try {
+    await supabase.insert("position_audit_logs", {
+      position_id: data.position_id,
+      action: data.action,
+      old_holder_id: data.old_holder_id ?? null,
+      new_holder_id: data.new_holder_id ?? null,
+      performed_by: data.performed_by,
+    });
+  } catch (e) {
+    // لا نفشل العملية بسبب فشل التدقيق — نسجّل فقط
+    console.error("❌ [writePositionAuditLog] Failed to write audit log:", e);
+  }
+}
+
+// ============================================
+// notifyNewAdmin — إشعار المسؤول الجديد بتعيينه
+// ============================================
+// يرسل رسالة Telegram للمستخدم المعيّن حديثاً تخبره بمنصبه الجديد
+// وترشده للدخول لبوت الإدارة.
+// ملاحظة: نتجاهل الأخطاء (قد يكون المستخدم حظر البوت)
+// ============================================
+export async function notifyNewAdmin(
+  bot: Bot,
+  telegramId: number,
+  positionTitle: string,
+  assignedByName: string
+): Promise<void> {
+  try {
+    await bot.api.sendMessage(
+      telegramId,
+      ADMIN_TEXTS.positions.notification_assigned(positionTitle, assignedByName),
+      { parse_mode: "Markdown" }
+    );
+  } catch (e: any) {
+    // المستخدم قد يكون حظر البوت أو لم يبدأه بعد — لا نفشل العملية
+    const msg = String(e?.message || e);
+    if (msg.includes("bot was blocked") || msg.includes("chat not found")) {
+      console.warn(`⚠️ [notifyNewAdmin] Could not notify ${telegramId} (blocked or not started)`);
+    } else {
+      console.error(`❌ [notifyNewAdmin] Failed to notify ${telegramId}:`, e);
+    }
+  }
+}
+
+// ============================================
+// notifyRevokedAdmin — إشعار المسؤول المُزال من منصبه
+// ============================================
+// يرسل رسالة Telegram للمستخدم المُزال إعلاماً بفقدانه الصلاحيات.
+// ملاحظة: نتجاهل الأخطاء (نفس أسباب notifyNewAdmin)
+// ============================================
+export async function notifyRevokedAdmin(
+  bot: Bot,
+  telegramId: number,
+  positionTitle: string,
+  revokedByName: string
+): Promise<void> {
+  try {
+    await bot.api.sendMessage(
+      telegramId,
+      ADMIN_TEXTS.positions.notification_revoked(positionTitle, revokedByName),
+      { parse_mode: "Markdown" }
+    );
+  } catch (e: any) {
+    const msg = String(e?.message || e);
+    if (msg.includes("bot was blocked") || msg.includes("chat not found")) {
+      console.warn(`⚠️ [notifyRevokedAdmin] Could not notify ${telegramId} (blocked or not started)`);
+    } else {
+      console.error(`❌ [notifyRevokedAdmin] Failed to notify ${telegramId}:`, e);
+    }
+  }
 }

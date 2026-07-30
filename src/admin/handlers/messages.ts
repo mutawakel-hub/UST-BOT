@@ -17,6 +17,7 @@ import {
   getAdminUser,
   getHonors,
   getPositionById,
+  getPositionHolder,
   getChannelById,
 } from "../helpers";
 import {
@@ -103,60 +104,134 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
       return;
     }
 
-    // استقبال تعيين شاغل منصب
+    // =====================================================
+    // تعيين شاغل منصب — تدفق الـ 5 خطوات
+    // =====================================================
+    // الخطوات: telegram_id → verify → custom_name → confirm (button)
+    // - telegram_id: استقبال معرّف تلجرام من المستخدم
+    // - verify: التحقق من وجود المستخدم في admin_users (انتقال داخلي)
+    // - custom_name: استقبال الاسم المخصص
+    // - confirm: (يعالَج بـ confirm_assign_ callback في positions.ts)
     if (session.awaiting_position_assign) {
       const assign = session.awaiting_position_assign;
-      if (assign.step === "name") {
-        assign.name = ctx.message.text;
-        assign.step = "telegram_id";
-        await ctx.reply(
-          ADMIN_TEXTS.positions.assign_prompt_id(assign.name),
-          {
-            reply_markup: new InlineKeyboard().text("❌ إلغاء", `position_detail_${assign.position_id}`),
+
+      // ---- الخطوة 1: استقبال معرّف تلجرام ----
+      if (assign.step === "telegram_id") {
+        const tid = parseInt(ctx.message.text.trim());
+        if (isNaN(tid) || tid <= 0) {
+          await ctx.reply(ADMIN_TEXTS.positions.assign_step1_invalid, {
+            reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_assign"),
             parse_mode: "Markdown",
+          });
+          return;
+        }
+
+        // منع التعيين الذاتي
+        if (tid === ctx.from.id) {
+          await ctx.reply(ADMIN_TEXTS.positions.assign_self_error, {
+            reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_assign"),
+            parse_mode: "Markdown",
+          });
+          return;
+        }
+
+        // اعرض رسالة "جارٍ التحقق..." وانتقل لخطوة verify
+        await ctx.reply(ADMIN_TEXTS.positions.assign_step2_checking);
+        assign.telegram_id = tid;
+        assign.step = "verify";
+
+        // التحقق من وجود المستخدم في admin_users
+        const adminUser = await getAdminUser(supabase, tid);
+        if (!adminUser) {
+          // غير موجود — ألغِ العملية
+          await ctx.reply(ADMIN_TEXTS.positions.assign_step2_not_found(tid), {
+            reply_markup: new InlineKeyboard()
+              .text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins")
+              .row()
+              .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+            parse_mode: "Markdown",
+          });
+          session.awaiting_position_assign = undefined;
+          await saveSession(session);
+          return;
+        }
+
+        // موجود — انتقل لخطوة custom_name
+        assign.step = "custom_name";
+        await saveSession(session);
+        await ctx.reply(ADMIN_TEXTS.positions.assign_step3_prompt(tid), {
+          reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_assign"),
+          parse_mode: "Markdown",
+        });
+        return;
+      }
+
+      // ---- الخطوة 3: استقبال الاسم المخصص ----
+      if (assign.step === "custom_name") {
+        const customName = ctx.message.text.trim();
+        if (!customName || customName.length > 100) {
+          await ctx.reply("⚠️ الاسم غير صالح (1-100 حرف). أعد المحاولة:", {
+            reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_assign"),
+            parse_mode: "Markdown",
+          });
+          return;
+        }
+
+        assign.custom_name = customName;
+        assign.step = "confirm";
+        await saveSession(session);
+
+        // اقرأ عنوان المنصب (لو لم يكن مخزّناً)
+        let positionTitle = assign.position_title || "المنصب";
+        if (!assign.position_title) {
+          const position = await getPositionById(supabase, assign.position_id);
+          if (position?.title) {
+            positionTitle = position.title;
+            assign.position_title = positionTitle;
+            await saveSession(session);
           }
+        }
+
+        // اقرأ الشاغل الحالي (لو موجود) لعرضه في التأكيد
+        let currentHolderName: string | undefined;
+        const currentHolder = await getPositionHolder(supabase, assign.position_id);
+        if (currentHolder) {
+          const holderUser = await getAdminUser(supabase, currentHolder.user_telegram_id);
+          if (holderUser?.first_name) currentHolderName = holderUser.first_name;
+        }
+
+        const msg = ADMIN_TEXTS.positions.assign_step4_confirm(
+          assign.telegram_id!,
+          customName,
+          positionTitle,
+          currentHolderName
+        );
+
+        await ctx.reply(msg, {
+          reply_markup: new InlineKeyboard()
+            .text(
+              ADMIN_TEXTS.positions.btn_confirm_assign,
+              `confirm_assign_${assign.position_id}`
+            )
+            .text(ADMIN_TEXTS.positions.btn_cancel_assign, "cancel_assign"),
+          parse_mode: "Markdown",
+        });
+        return;
+      }
+
+      // ---- الخطوة 4: التأكيد ----
+      // (يعالَج عبر callback confirm_assign_{positionId} في positions.ts)
+      if (assign.step === "confirm") {
+        await ctx.reply(
+          "⏳ يرجى استخدام أزرار التأكيد أو الإلغاء بالأسفل.",
+          { parse_mode: "Markdown" }
         );
         return;
       }
-      if (assign.step === "telegram_id") {
-        const tid = parseInt(ctx.message.text);
-        if (isNaN(tid)) {
-          await ctx.reply("⚠️ المعرّف يجب أن يكون رقماً. أعد المحاولة:");
-          return;
-        }
-        // تعطيل أي شاغل سابق نشط لهذا المنصب
-        try {
-          await supabase.update("position_holders",
-            { is_active: false },
-            `position_id=eq.${assign.position_id}&is_active=eq.true`
-          );
-        } catch (e) {
-          console.error("Failed to deactivate previous holder:", e);
-        }
-        // إدراج شاغل جديد
-        try {
-          await supabase.insert("position_holders", {
-            position_id: assign.position_id,
-            user_telegram_id: tid,
-            assigned_by: ctx.from.id,
-            is_active: true,
-          });
-        } catch (e) {
-          console.error("Failed to assign new holder:", e);
-          await ctx.reply("⚠️ فشل تعيين المنصب. حاول مرة أخرى.");
-          return;
-        }
-        // قراءة بيانات المنصب
-        const position = await getPositionById(supabase, assign.position_id);
-        const successMsg = ADMIN_TEXTS.positions.assign_success(assign.name || "المستخدم", position?.title || "المنصب");
-        session.awaiting_position_assign = undefined;
-        await ctx.reply(successMsg, {
-          reply_markup: new InlineKeyboard()
-            .text("📋 قائمة المناصب", "list_positions")
-            .row()
-            .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
-          parse_mode: "Markdown",
-        });
+
+      // ---- الخطوة 2: verify (داخلية) ----
+      // لو وصلنا هنا بـ step=verify فالمستخدم أرسل نصاً أثناء التحقق — تجاهل
+      if (assign.step === "verify") {
         return;
       }
     }

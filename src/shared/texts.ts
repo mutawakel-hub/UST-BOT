@@ -338,7 +338,7 @@ export const ADMIN_TEXTS = {
     btn_files_mgmt: "📁 إدارة الملفات",
     btn_subjects_mgmt: "📖 إدارة المواد",
     btn_broadcast: "📢 تعميم",
-    btn_manage_admins: "👥 إدارة المناصب",
+    btn_manage_admins: "👥 إدارة المسؤولين",
     btn_statistics: "📊 إحصائيات",
     btn_customize: "⚙️ تخصيص النصوص",
     btn_leaderboard: "🏆 لوحة الشرف",
@@ -660,48 +660,91 @@ export const ADMIN_TEXTS = {
     edit_success: "✅ تم تحديث العنوان.",
   },
 
-  // ====== شاشة A8: Positions Management (جديدة كلياً) ======
+  // ====== شاشة A8: Positions Management (إدارة المسؤولين — هرمي) ======
   positions: {
-    title: "👥 *إدارة المناصب*\n\nاختر القسم:",
-    btn_list_positions: "📋 قائمة المناصب",
-    btn_assign_position: "➕ تعيين شاغل منصب",
+    // ===== القائمة الرئيسية =====
+    title_central: "👥 *إدارة المسؤولين*\n\nاختر القسم:",
+    title_college: "👥 *إدارة المسؤولين*\n\nاختر القسم:",
+    btn_college_admins: "🏛️ إدارة مسؤولي الكليات",
+    btn_level_reps: "🎓 إدارة مندوبي المستويات",
+    btn_org_chart: "🗂️ الهيكل الإداري",
+    btn_audit_log: "📜 سجل التعيينات",
     btn_my_positions: "👤 مناصبي الحالية",
-    empty: "⚠️ لا توجد مناصب ضمن نطاقك.",
-    list_title: (count: number) => `📋 *قائمة المناصب (${count})*\n\n`,
-    position_entry: (p: {
-      title: string;
-      scope: string;
-      holder_name?: string;
-      is_vacant: boolean;
-    }) => {
-      let line = `• ${p.title}\n`;
-      line += `  📍 ${p.scope}\n`;
-      if (p.is_vacant) {
-        line += `  ⚠️ *شاغر* (غير مشغول)\n\n`;
-      } else {
-        line += `  👤 *شاغل المنصب:* ${p.holder_name}\n\n`;
-      }
-      return line;
-    },
-    position_actions: (positionId: string, isVacant: boolean) =>
-      isVacant
-        ? `اختر الإجراء للمنصب:`
-        : `اختر الإجراء للمنصب:`,
-    btn_assign: "➕ تعيين شاغل",
-    btn_revoke: "❌ إزالة الشاغل",
-    btn_view_audit: "📜 سجل التغييرات",
-    assign_prompt_name: "👤 أرسل اسم الشخص الذي سيشغل المنصب:",
-    assign_prompt_id: (name: string) =>
-      `🆔 أرسل معرّف تلجرام لـ *${name}*:\n\n💡 للحصول على المعرّف: توجّه إلى @userinfobot`,
-    assign_success: (name: string, positionTitle: string) =>
-      `✅ *تم التعيين بنجاح!*\n\n👤 *الاسم:* ${name}\n💼 *المنصب:* ${positionTitle}\n\nسيظهر لوحة الإدارة تلقائياً عند دخوله البوت.`,
-    revoke_confirm: (name: string, positionTitle: string) =>
-      `⚠️ *تأكيد الإزالة*\n\nسيتم إزالة:\n👤 ${name}\nمن منصب:\n💼 ${positionTitle}\n\nسيخسر جميع صلاحيات هذا المنصب فوراً.`,
+
+    // ===== إدارة مسؤولي الكليات =====
+    college_admins_title: "🏛️ *إدارة مسؤولي الكليات*\n\nاختر الكلية:",
+    college_admin_detail: (collegeName: string, holderName: string | null, holderId: number | null) =>
+      `🏛️ *${collegeName}*\n\n` +
+      (holderName
+        ? `👤 *المسؤول الحالي:* ${holderName}\n🆔 *المعرّف:* \`${holderId}\``
+        : `⚠️ *المنصب شاغر*`),
+    btn_assign_college: "➕ تعيين مسؤول",
+    btn_replace_college: "🔄 استبدال المسؤول",
+    btn_revoke_college: "❌ إزالة المسؤول",
+
+    // ===== إدارة مندوبي المستويات =====
+    level_reps_title: "🎓 *إدارة مندوبي المستويات*\n\nاختر الكلية أولاً:",
+    level_reps_select_specialty: (collegeName: string) =>
+      `🎓 *مندوبي مستويات ${collegeName}*\n\nاختر التخصص:`,
+    level_reps_select_level: (specialtyName: string) =>
+      `📊 *مندوبي ${specialtyName}*\n\nاختر المستوى:`,
+    level_rep_detail: (specialtyName: string, level: number, holderName: string | null, holderId: number | null) =>
+      `📊 *${specialtyName} — المستوى ${level}*\n\n` +
+      (holderName
+        ? `👤 *المندوب الحالي:* ${holderName}\n🆔 *المعرّف:* \`${holderId}\``
+        : `⚠️ *المنصب شاغر*`),
+    btn_assign_rep: "➕ تعيين مندوب",
+    btn_replace_rep: "🔄 استبدال المندوب",
+    btn_revoke_rep: "❌ إزالة المندوب",
+
+    // ===== آلية التعيين (5 خطوات) =====
+    assign_step1_prompt: "👤 *الخطوة 1/4: معرّف تلجرام*\n\nأرسل معرّف تلجرام (Telegram ID) للمستخدم المراد تعيينه.\n\n💡 *للحصول على المعرّف:* توجّه إلى @userinfobot",
+    assign_step1_invalid: "⚠️ *معرّف غير صالح*\n\nيجب أن يكون المعرّف رقماً. أعد المحاولة:",
+    assign_step2_checking: "🔍 جارٍ التحقق من المستخدم...",
+    assign_step2_not_found: (telegramId: number) =>
+      `⚠️ *المستخدم غير موجود*\n\nالمستخدم بمعرّف \`${telegramId}\` غير مسجّل في النظام.\n\nطلب منه الدخول لبوت الطالب أولاً (@usttesterbot) ثم أعد المحاولة.`,
+    assign_step3_prompt: (telegramId: number) =>
+      `✅ *الخطوة 3/4: الاسم المخصص*\n\nتم العثور على المستخدم: \`${telegramId}\`\n\nأرسل الاسم الذي سيظهر داخل النظام:`,
+    assign_step4_confirm: (telegramId: number, customName: string, positionTitle: string, currentHolder?: string) =>
+      `✅ *الخطوة 4/4: التأكيد*\n\n` +
+      `👤 *الاسم المخصص:* ${customName}\n` +
+      `🆔 *معرّف تلجرام:* \`${telegramId}\`\n` +
+      `💼 *المنصب:* ${positionTitle}\n` +
+      (currentHolder ? `\n⚠️ *سيتم استبدال:* ${currentHolder}\n` : "") +
+      `\nهل تؤكد التعيين؟`,
+    btn_confirm_assign: "✅ تأكيد التعيين",
+    btn_cancel_assign: "❌ إلغاء",
+    assign_success: (customName: string, positionTitle: string) =>
+      `✅ *تم التعيين بنجاح!*\n\n👤 *الاسم:* ${customName}\n💼 *المنصب:* ${positionTitle}\n\n🔔 تم إرسال إشعار للمستخدم الجديد.`,
+    assign_self_error: "⚠️ لا يمكنك تعيين نفسك في منصب آخر.",
+
+    // ===== إشعار المسؤول الجديد =====
+    notification_assigned: (positionTitle: string, assignedBy: string) =>
+      `🎉 *مبروك! تم تعيينك*\n\n` +
+      `💼 *المنصب:* ${positionTitle}\n` +
+      `👤 *عُيّنت بواسطة:* ${assignedBy}\n\n` +
+      `يمكنك الآن الدخول لبوت الإدارة: @usttesteradminbot`,
+    notification_revoked: (positionTitle: string, revokedBy: string) =>
+      `⚠️ *تم إزالتك من منصب*\n\n` +
+      `💼 *المنصب:* ${positionTitle}\n` +
+      `👤 *أزالک:* ${revokedBy}\n\n` +
+      `لو تعتقد أن هذا خطأ، تواصل مع الإدارة.`,
+
+    // ===== الإزالة =====
+    revoke_confirm: (holderName: string, positionTitle: string) =>
+      `⚠️ *تأكيد الإزالة*\n\nسيتم إزالة:\n👤 ${holderName}\nمن منصب:\n💼 ${positionTitle}\n\nسيخسر جميع صلاحيات هذا المنصب فوراً.`,
     btn_confirm_revoke: "✅ نعم، أزِل",
     btn_cancel_revoke: "❌ إلغاء",
-    revoke_success: "✅ تم إزالة الشاغل من المنصب.\n\nفقد جميع الصلاحيات المرتبطة.",
+    revoke_success: "✅ تم إزالة المسؤول.\n\nفقد جميع الصلاحيات المرتبطة.\n🔔 تم إرسال إشعار للمستخدم.",
+
+    // ===== مناصبي =====
     my_positions_empty: "⚠️ لا تشغل أي منصب حالياً.",
     my_positions_title: (count: number) => `👤 *مناصبي الحالية (${count})*\n\n`,
+
+    // ===== رسائل عامة =====
+    empty: "⚠️ لا توجد مناصب ضمن نطاقك.",
+    no_permission: "❌ *ليست لديك صلاحية إدارة المسؤولين.*\n\nهذه الميزة متاحة فقط للمسؤول المركزي.",
+    no_permission_college: "❌ *ليست لديك صلاحية إدارة مندوبي المستويات.*",
   },
 
   // ====== شاشة A12: Committee Channels (جديدة) ======

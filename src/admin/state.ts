@@ -25,8 +25,16 @@ export interface AdminSession {
   upload_context?: any;
   awaiting_content_edit?: number; // content_id
   awaiting_content_delete?: number; // content_id
-  awaiting_position_assign?: { step: "name" | "telegram_id"; position_id: string; name?: string };
-  awaiting_position_revoke?: { position_id: string };
+  awaiting_position_assign?: {
+    step: "telegram_id" | "verify" | "custom_name" | "confirm";
+    position_id: string;
+    position_title?: string;
+    telegram_id?: number;
+    custom_name?: string;
+    current_holder_name?: string;
+    is_replacement?: boolean;
+  };
+  awaiting_position_revoke?: { position_id: string; holder_name?: string; position_title?: string };
   awaiting_channel_edit?: number; // channel_id
   // تكريم
   awaiting_honor_reject?: number; // honor_id

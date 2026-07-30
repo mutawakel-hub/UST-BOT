@@ -405,7 +405,7 @@ export async function hasPermissionLocal(
 // الحصول على المناصب التي يمكن للمستخدم إدارتها
 // ============================================
 // المركزي: كل المناصب ما عدا central_chair (لا يمكنه تعديل نفسه)
-// مسؤول كلية: مناصب "level" في كليته فقط
+// مسؤول كلية: مناصب "level" في كليته فقط (تُقرأ عبر specialty_id)
 // مسؤول مستوى: لا يدير أي مناصب
 export async function getManageablePositions(telegramId: number): Promise<UserPosition[]> {
   const userPerms = await getUserPermissions(telegramId);
@@ -436,12 +436,62 @@ export async function getManageablePositions(telegramId: number): Promise<UserPo
   }
 
   if (userPerms.permissions.has("manage_level_reps")) {
-    // مسؤول كلية — مناصب "level" في كليته فقط
-    const collegeIds = Array.from(userPerms.effective_scope.colleges);
-    if (collegeIds.length === 0) return [];
+    // مسؤول كلية — اقرأ التخصصات في كلياته أولاً، ثم اختر مناصب "level"
+    // المرتبطة بهذه التخصصات عبر specialty_id
+    return await fetchLevelPositionsForColleges(
+      Array.from(userPerms.effective_scope.colleges)
+    );
+  }
 
-    // PostgREST: level=eq.level&college_id=in.(1,2,3)
-    const filter = `level=eq.level&college_id=in.(${collegeIds.join(",")})`;
+  return [];
+}
+
+// ============================================
+// الحصول على مناصب مسؤولي الكليات (college_admin_*)
+// ============================================
+// يستخدم في شاشة "إدارة مسؤولي الكليات" للمركزي فقط.
+// المركزي: كل مناصب college_admin_* السبعة
+// مسؤول كلية: لا يُرجع شيئاً (لا يملك صلاحية manage_admins)
+export async function getCollegeAdminPositions(telegramId: number): Promise<UserPosition[]> {
+  const userPerms = await getUserPermissions(telegramId);
+
+  // فقط المركزي يمكنه إدارة مسؤولي الكليات
+  if (!userPerms.permissions.has("manage_admins")) return [];
+
+  const result = await supabaseClient.select<{
+    id: string;
+    level: PositionLevel;
+    title: string;
+    college_id: number | null;
+    specialty_id: number | null;
+    level_num: number | null;
+  }>("positions", {
+    columns: "id,level,title,college_id,specialty_id,level_num",
+    filter: "level=eq.college",
+    order: "college_id.asc",
+  });
+  if (!Array.isArray(result)) return [];
+  return result.map((p) => ({
+    position_id: p.id,
+    level: p.level,
+    title: p.title,
+    college_id: p.college_id || undefined,
+    specialty_id: p.specialty_id || undefined,
+    level_num: p.level_num || undefined,
+  }));
+}
+
+// ============================================
+// الحصول على مناصب مندوبي المستويات (level_rep_*)
+// ============================================
+// يستخدم في شاشة "إدارة مندوبي المستويات" للمركزي ومسؤول الكلية.
+// المركزي: كل مناصب level_rep_* عبر كل الكليات
+// مسؤول كلية: مناصب level_rep_* في كلياته فقط (عبر specialty_id)
+export async function getLevelRepPositions(telegramId: number): Promise<UserPosition[]> {
+  const userPerms = await getUserPermissions(telegramId);
+
+  if (userPerms.is_central) {
+    // كل مناصب المستوى عبر كل الكليات
     const result = await supabaseClient.select<{
       id: string;
       level: PositionLevel;
@@ -451,8 +501,8 @@ export async function getManageablePositions(telegramId: number): Promise<UserPo
       level_num: number | null;
     }>("positions", {
       columns: "id,level,title,college_id,specialty_id,level_num",
-      filter,
-      order: "title.asc",
+      filter: "level=eq.level",
+      order: "college_id.asc,specialty_id.asc,level_num.asc",
     });
     if (!Array.isArray(result)) return [];
     return result.map((p) => ({
@@ -465,7 +515,64 @@ export async function getManageablePositions(telegramId: number): Promise<UserPo
     }));
   }
 
+  if (userPerms.permissions.has("manage_level_reps")) {
+    return await fetchLevelPositionsForColleges(
+      Array.from(userPerms.effective_scope.colleges)
+    );
+  }
+
   return [];
+}
+
+// ============================================
+// مساعد داخلي: جلب مناصب level عبر specialty_id لكليات محددة
+// ============================================
+// 1. اقرأ specialties في الكليات المحددة
+// 2. فلتر positions بـ specialty_id=in.(...)
+async function fetchLevelPositionsForColleges(collegeIds: number[]): Promise<UserPosition[]> {
+  if (collegeIds.length === 0) return [];
+
+  // 1. اقرأ specialty_ids للكليات المحددة
+  let specialtyIds: number[] = [];
+  try {
+    const specFilter = `college_id=in.(${collegeIds.join(",")})`;
+    const specs = await supabaseClient.select<{ id: number }>("specialties", {
+      columns: "id",
+      filter: specFilter,
+    });
+    if (Array.isArray(specs)) {
+      specialtyIds = specs.map((s) => s.id);
+    }
+  } catch (e) {
+    console.warn(`⚠️ [RBAC] Failed to load specialties for colleges ${collegeIds}:`, e);
+    return [];
+  }
+
+  if (specialtyIds.length === 0) return [];
+
+  // 2. فلتر positions بـ specialty_id=in.(...)
+  const filter = `level=eq.level&specialty_id=in.(${specialtyIds.join(",")})`;
+  const result = await supabaseClient.select<{
+    id: string;
+    level: PositionLevel;
+    title: string;
+    college_id: number | null;
+    specialty_id: number | null;
+    level_num: number | null;
+  }>("positions", {
+    columns: "id,level,title,college_id,specialty_id,level_num",
+    filter,
+    order: "specialty_id.asc,level_num.asc",
+  });
+  if (!Array.isArray(result)) return [];
+  return result.map((p) => ({
+    position_id: p.id,
+    level: p.level,
+    title: p.title,
+    college_id: p.college_id || undefined,
+    specialty_id: p.specialty_id || undefined,
+    level_num: p.level_num || undefined,
+  }));
 }
 
 // ============================================
