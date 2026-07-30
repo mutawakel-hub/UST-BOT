@@ -20,7 +20,7 @@ import {
   getSubjectByIdWithFallback,
   getSubjectsBySpecialtyLevelSemester,
 } from "../../shared/data/subjects";
-import { TEXTS } from "../../shared/texts";
+import { TEXTS, formatContentCard } from "../../shared/texts";
 import { SupabaseClient } from "../../shared/db";
 import {
   collegesKeyboard,
@@ -116,10 +116,13 @@ async function saveContribution(
   supabase: SupabaseClient,
   data: {
     userTelegramId: number;
+    userFirstName?: string;
     subjectId: number;
     contentType: string;
     fileName: string;
     fileSizeMb: number;
+    fileSizeBytes?: number;
+    fileMime?: string;
     telegramFileId: string;
     title: string;
     description?: string;
@@ -129,17 +132,23 @@ async function saveContribution(
     console.log(`📝 [Ihsan] Saving: user=${data.userTelegramId}, subject=${data.subjectId}, type=${data.contentType}`);
     await ensureStudentInAdminUsers(supabase, data.userTelegramId, undefined, undefined);
 
-    // 0. تحقق من وجود المادة في DB
+    // 0. تحقق من وجود المادة في DB + جلب specialty_id و college_id
     let subjectInDb = false;
+    let subjectSpecialtyId: number | null = null;
+    let subjectLevel: number | null = null;
+    let subjectSemester: number | null = null;
     try {
       const subjCheck = await supabase.select("subjects", {
-        columns: "id,specialty_id",
+        columns: "id,specialty_id,level,semester",
         filter: `id=eq.${data.subjectId}`,
         limit: 1,
       });
       if (Array.isArray(subjCheck) && subjCheck.length > 0) {
         subjectInDb = true;
-        console.log(`✅ [Ihsan] Subject ${data.subjectId} found in DB`);
+        subjectSpecialtyId = subjCheck[0].specialty_id;
+        subjectLevel = subjCheck[0].level;
+        subjectSemester = subjCheck[0].semester;
+        console.log(`✅ [Ihsan] Subject ${data.subjectId} found in DB (spec=${subjectSpecialtyId}, level=${subjectLevel})`);
       } else {
         console.warn(`⚠️ [Ihsan] Subject ${data.subjectId} NOT in DB — will try insert anyway`);
       }
@@ -147,33 +156,31 @@ async function saveContribution(
       console.warn(`⚠️ [Ihsan] Subject check failed:`, e);
     }
 
-    // 1. ابحث عن قناة التخزين للمادة
+    // 1. ابحث عن قناة التخزين للمادة + بيانات الكلية/التخصص
     let storageChannelId: string | null = null;
+    let collegeName: string | null = null;
+    let specialtyName: string | null = null;
+    let collegeId: number | null = null;
     try {
       // جرّب من DB أولاً
-      if (subjectInDb) {
-        const subjectResult = await supabase.select("subjects", {
-          columns: "specialty_id",
-          filter: `id=eq.${data.subjectId}`,
+      if (subjectInDb && subjectSpecialtyId) {
+        const specResult = await supabase.select("specialties", {
+          columns: "college_id,name",
+          filter: `id=eq.${subjectSpecialtyId}`,
           single: true,
         });
-        const subject = Array.isArray(subjectResult) ? subjectResult[0] : subjectResult;
-        if (subject?.specialty_id) {
-          const specResult = await supabase.select("specialties", {
-            columns: "college_id",
-            filter: `id=eq.${subject.specialty_id}`,
+        const spec = Array.isArray(specResult) ? specResult[0] : specResult;
+        if (spec?.college_id) {
+          collegeId = spec.college_id;
+          specialtyName = spec.name;
+          const collegeResult = await supabase.select("colleges", {
+            columns: "storage_channel_id,name",
+            filter: `id=eq.${spec.college_id}`,
             single: true,
           });
-          const spec = Array.isArray(specResult) ? specResult[0] : specResult;
-          if (spec?.college_id) {
-            const collegeResult = await supabase.select("colleges", {
-              columns: "storage_channel_id",
-              filter: `id=eq.${spec.college_id}`,
-              single: true,
-            });
-            const college = Array.isArray(collegeResult) ? collegeResult[0] : collegeResult;
-            storageChannelId = college?.storage_channel_id || null;
-          }
+          const college = Array.isArray(collegeResult) ? collegeResult[0] : collegeResult;
+          storageChannelId = college?.storage_channel_id || null;
+          collegeName = college?.name || null;
         }
       }
 
@@ -181,16 +188,19 @@ async function saveContribution(
       if (!storageChannelId) {
         const subject = getSubjectByIdWithFallback(data.subjectId);
         if (subject) {
-          const college = getCollegeById(subject.specialty_id); // specialty_id قد لا يكون college_id!
-          // في الواقع نحتاج specialty → college
-          // لكن getCollegeById يأخذ college_id وليس specialty_id
-          // فلنستخدم COLLEGES للبحث
+          // جرّب إيجاد الكلية من البيانات الثابتة
           for (const c of COLLEGES) {
-            // تحقق من storage_channel_id فقط — سنستخدم أول كلية لها قناة
             if (c.storage_channel_id) {
               storageChannelId = c.storage_channel_id;
+              collegeName = c.name;
+              collegeId = c.id;
               break;
             }
+          }
+          // جرّب إيجاد التخصص من البيانات الثابتة
+          const spec = getSpecialtyById(subject.specialty_id);
+          if (spec) {
+            specialtyName = spec.name;
           }
         }
       }
@@ -198,22 +208,41 @@ async function saveContribution(
       console.warn("⚠️ [Ihsan] Failed to find storage channel:", e);
     }
 
-    // 2. ارفع الملف لقناة التخزين فوراً
+    // 2. ارفع الملف لقناة التخزين فوراً مع caption منسق
     let storageFileId: string | null = null;
+    let storageMessageId: number | null = null;
 
     if (storageChannelId) {
       try {
+        // بناء caption بصيغة بطاقة المحتوى (سياق channel_archive)
+        const channelCaption = formatContentCard({
+          title: data.title,
+          contentType: data.contentType,
+          subjectName: getSubjectByIdWithFallback(data.subjectId)?.name || "غير معروف",
+          collegeName: collegeName || undefined,
+          specialtyName: specialtyName || undefined,
+          level: subjectLevel,
+          semester: subjectSemester,
+          fileSizeBytes: data.fileSizeBytes || null,
+          fileSizeMb: data.fileSizeMb || null,
+          contributorName: data.userFirstName || "طالب",
+          uploadedAt: new Date().toISOString(),
+          description: data.description,
+          ihsanId: null, // سيُضاف بعد الإدراج
+        }, "channel_archive");
+
         const uploaded = await uploadFileToStorageChannel(
           bot,
           storageChannelId,
           { fileId: data.telegramFileId, fileName: data.fileName },
           {
-            caption: `🌟 إحسان علمي\n📝 ${data.title}\n📂 ${data.fileName}`,
+            caption: channelCaption,
             parseMode: "Markdown",
           }
         );
         storageFileId = uploaded.file_id;
-        console.log(`📤 [Ihsan] File uploaded to storage channel: file_id=${storageFileId?.substring(0, 30)}...`);
+        storageMessageId = uploaded.message_id;
+        console.log(`📤 [Ihsan] File uploaded to storage channel: file_id=${storageFileId?.substring(0, 30)}... message_id=${storageMessageId}`);
       } catch (e: any) {
         console.warn("⚠️ [Ihsan] Upload to storage channel failed:", e?.message?.substring(0, 100));
       }
@@ -222,9 +251,9 @@ async function saveContribution(
     // 3. احفظ الإحسان في DB
     const fileIdToStore = storageFileId || data.telegramFileId;
 
-    // محاولة 1: إدراج كامل
+    // محاولة 1: إدراج كامل (بما فيها message_id و file_size_bytes و mime)
     try {
-      const result = await supabase.insert("contributions", {
+      const insertData: any = {
         user_telegram_id: data.userTelegramId,
         subject_id: data.subjectId,
         content_type_id: data.contentType,
@@ -234,7 +263,12 @@ async function saveContribution(
         title: data.title,
         description: data.description || null,
         status: "pending",
-      });
+      };
+      // أضف message_id لو نجح الرفع (لتفعيل forwardMessage لاحقاً)
+      if (storageMessageId !== null) {
+        insertData.telegram_message_id = storageMessageId;
+      }
+      const result = await supabase.insert("contributions", insertData);
       const inserted = result as any;
       if (inserted?.id) {
         console.log(`✅ [Ihsan] Saved with ID: ${inserted.id}`);
@@ -249,10 +283,10 @@ async function saveContribution(
       }
     }
 
-    // محاولة 2: بدون title
+    // محاولة 2: بدون title (مع الحفاظ على message_id)
     const displayFileName = data.title && data.title !== "—" ? data.title : data.fileName;
     try {
-      const result = await supabase.insert("contributions", {
+      const insertData: any = {
         user_telegram_id: data.userTelegramId,
         subject_id: data.subjectId,
         content_type_id: data.contentType,
@@ -261,7 +295,11 @@ async function saveContribution(
         telegram_file_id: fileIdToStore,
         description: data.description || null,
         status: "pending",
-      });
+      };
+      if (storageMessageId !== null) {
+        insertData.telegram_message_id = storageMessageId;
+      }
+      const result = await supabase.insert("contributions", insertData);
       const inserted = result as any;
       if (inserted?.id) {
         console.log(`✅ [Ihsan] Saved (no title) with ID: ${inserted.id}`);
@@ -348,6 +386,8 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     userState.awaiting_contribution_file_id = undefined;
     userState.awaiting_contribution_file_name = undefined;
     userState.awaiting_contribution_file_size = undefined;
+    userState.awaiting_contribution_file_size_bytes = undefined;
+    userState.awaiting_contribution_file_mime = undefined;
     await saveUserState(userState);
     await ctx.editMessageText(TEXTS.contribution.cancel, {
       reply_markup: new InlineKeyboard().text(
@@ -378,10 +418,13 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     // حفظ في Supabase
     const newId = await saveContribution(bot, supabase, {
       userTelegramId: ctx.from.id,
+      userFirstName: ctx.from.first_name,
       subjectId,
       contentType,
       fileName,
       fileSizeMb,
+      fileSizeBytes: userState.awaiting_contribution_file_size_bytes,
+      fileMime: userState.awaiting_contribution_file_mime,
       telegramFileId: fileId,
       title,
       description,
@@ -398,6 +441,8 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
       userState.awaiting_contribution_file_id = undefined;
       userState.awaiting_contribution_file_name = undefined;
       userState.awaiting_contribution_file_size = undefined;
+      userState.awaiting_contribution_file_size_bytes = undefined;
+      userState.awaiting_contribution_file_mime = undefined;
       await saveUserState(userState);
 
       await ctx.editMessageText(
@@ -434,6 +479,8 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     userState.awaiting_contribution_file_id = undefined;
     userState.awaiting_contribution_file_name = undefined;
     userState.awaiting_contribution_file_size = undefined;
+    userState.awaiting_contribution_file_size_bytes = undefined;
+    userState.awaiting_contribution_file_mime = undefined;
     await saveUserState(userState);
 
     await ctx.editMessageText(
@@ -621,6 +668,8 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     userState.contribution_main_file_id = undefined;
     userState.contribution_main_file_name = undefined;
     userState.contribution_main_file_size = undefined;
+    userState.contribution_main_file_size_bytes = undefined;
+    userState.contribution_main_file_mime = undefined;
     await saveUserState(userState);
     await ctx.editMessageText(
       TEXTS.contribution_main.cancel,
@@ -657,10 +706,13 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     // حفظ في Supabase
     const newId = await saveContribution(bot, supabase, {
       userTelegramId: ctx.from.id,
+      userFirstName: ctx.from.first_name,
       subjectId,
       contentType,
       fileName,
       fileSizeMb,
+      fileSizeBytes: userState.contribution_main_file_size_bytes,
+      fileMime: userState.contribution_main_file_mime,
       telegramFileId: fileId,
       title,
       description,
@@ -675,6 +727,8 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
       userState.contribution_main_file_id = undefined;
       userState.contribution_main_file_name = undefined;
       userState.contribution_main_file_size = undefined;
+      userState.contribution_main_file_size_bytes = undefined;
+      userState.contribution_main_file_mime = undefined;
       await saveUserState(userState);
 
       await ctx.editMessageText(
@@ -707,6 +761,8 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     userState.contribution_main_file_id = undefined;
     userState.contribution_main_file_name = undefined;
     userState.contribution_main_file_size = undefined;
+    userState.contribution_main_file_size_bytes = undefined;
+    userState.contribution_main_file_mime = undefined;
     await saveUserState(userState);
 
     await ctx.editMessageText(

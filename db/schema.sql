@@ -98,6 +98,8 @@ CREATE TABLE content (
   title TEXT NOT NULL,                            -- عنوان يعرضه الطالب
   file_name TEXT,                                 -- اسم الملف الأصلي
   file_size_mb DECIMAL(10, 2),
+  file_size_bytes BIGINT,                         -- الحجم الدقيق بالبايت
+  mime_type TEXT,                                 -- نوع MIME للملف
   -- ربط القناة (الفصل بين الإدارة والتخزين)
   telegram_message_id BIGINT,                     -- معرف المنشور في قناة الكلية
   telegram_file_id TEXT,                          -- معرف الملف
@@ -199,6 +201,7 @@ CREATE TABLE contributions (
   file_name TEXT NOT NULL,
   file_size_mb DECIMAL(10, 2),
   telegram_file_id TEXT,
+  telegram_message_id BIGINT,  -- message_id من قناة التخزين (لـ forwardMessage السريع)
   title TEXT,
   description TEXT,
   status TEXT NOT NULL DEFAULT 'pending'

@@ -16,7 +16,7 @@ import {
 import {
   getSubjectByIdWithFallback,
 } from "../../shared/data/subjects";
-import { TEXTS } from "../../shared/texts";
+import { TEXTS, formatContentCard } from "../../shared/texts";
 import {
   SupabaseClient,
   getContentForSubject,
@@ -31,13 +31,14 @@ import {
 } from "../../shared/keyboards";
 import { getUserState } from "../state";
 
-// تصنيفات الملفات (7 أنواع)
+// تصنيفات الملفات (8 أنواع — أضفنا audio)
 const TYPE_LABELS: Record<string, string> = {
   book_theory: "📘 المقرر (نظري)",
   book_practical: "📗 المقرر (عملي)",
   summary: "📄 ملخصات",
   exam: "📝 نماذج اختبارات",
-  video: "🎥 مرئيات وصوتيات",
+  video: "🎥 مرئيات",
+  audio: "🎧 صوتيات",
   reference: "📖 مراجع",
   schedule: "📅 جداول دراسية واختبارات",
 };
@@ -61,9 +62,22 @@ export async function showFilesList(
   await ctx.answerCallbackQuery();
 
   // قراءة المحتوى من Supabase فقط
+  // ملاحظة: نوع "video" يعرض المرئيات والصوتيات معاً (كلا النوعين)
   let files: any[] = [];
   try {
     files = await getContentForSubject(supabase, subjectId, category);
+    // لو الفئة "video" — أضف ملفات "audio" أيضاً (لأن زر العرض موحّد)
+    if (category === "video") {
+      const audioFiles = await getContentForSubject(supabase, subjectId, "audio");
+      files = [...files, ...audioFiles];
+      // إعادة الترتيب: المميّز أولاً ثم الأكثر تحميلاً
+      files.sort((a, b) => {
+        if ((b.is_starred ? 1 : 0) !== (a.is_starred ? 1 : 0)) {
+          return (b.is_starred ? 1 : 0) - (a.is_starred ? 1 : 0);
+        }
+        return (b.download_count || 0) - (a.download_count || 0);
+      });
+    }
   } catch (e) {
     console.error("Supabase content read error:", e);
   }
@@ -145,38 +159,43 @@ export function registerFileHandlers(bot: Bot, supabase: SupabaseClient): void {
 
     // قراءة من Supabase فقط (fileId هو رقم المحتوى في DB)
     if (/^\d+$/.test(fileId)) {
-    const contentId = parseInt(fileId);
-        try {
-          fileData = await getContentById(supabase, contentId);
-        } catch (e) {
-          console.error("Supabase content read error:", e);
-        }
-    if (fileData) {
+      const contentId = parseInt(fileId);
+      try {
+        fileData = await getContentById(supabase, contentId);
+      } catch (e) {
+        console.error("Supabase content read error:", e);
+      }
+      if (fileData) {
         subjectId = fileData.subject_id;
         category = fileData.content_type_id;
-    }
+      }
     }
 
     if (!fileData) {
-    await ctx.reply("⚠️ الملف غير موجود.");
-    return;
+      await ctx.reply("⚠️ الملف غير موجود.");
+      return;
     }
 
     const subject = getSubjectByIdWithFallback(subjectId);
+    const spec = subject ? getSpecialtyById(subject.specialty_id) : null;
+    const college = spec ? getCollegeById(spec.college_id) : null;
     const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.last_file_id = fileId;
 
-    const msg =
-      TEXTS.file_preview.title +
-      TEXTS.file_preview.details({
-        file_name: fileData.title || fileData.file_name || "ملف",
-        file_size_mb: parseFloat(fileData.file_size_mb) || 0,
-        type_label: TYPE_LABELS[category] || category,
-        subject_name: subject?.name || "غير معروف",
-        uploaded_at: fileData.added_at || fileData.uploaded_at || "غير معروف",
-        download_count: fileData.download_count || 0,
-        is_starred: fileData.is_starred || false,
-      });
+    // استخدام بطاقة المحتوى الموحدة (سياق student_preview)
+    const msg = formatContentCard({
+      title: fileData.title || fileData.file_name || "ملف",
+      contentType: category,
+      subjectName: subject?.name || "غير معروف",
+      collegeName: college?.name,
+      specialtyName: spec?.name,
+      level: subject?.level,
+      semester: subject?.semester,
+      fileSizeMb: parseFloat(fileData.file_size_mb) || null,
+      uploadedAt: fileData.added_at,
+      downloadCount: fileData.download_count || 0,
+      isStarred: fileData.is_starred || false,
+    }, "student_preview");
 
     await ctx.editMessageText(msg, {
       reply_markup: filePreviewKeyboard(fileId, subjectId),
@@ -281,33 +300,38 @@ export function registerFileHandlers(bot: Bot, supabase: SupabaseClient): void {
     // قراءة من Supabase
     let fileData: any = null;
     if (/^\d+$/.test(fileId) && supabase) {
-    try {
+      try {
         fileData = await getContentById(supabase, parseInt(fileId));
-    } catch (e) {
+      } catch (e) {
         console.error("Supabase content read error:", e);
-    }
+      }
     }
 
     if (!fileData) {
-    await ctx.reply("⚠️ الملف غير موجود.");
-    return;
+      await ctx.reply("⚠️ الملف غير موجود.");
+      return;
     }
 
     const subject = getSubjectByIdWithFallback(fileData.subject_id);
+    const spec = subject ? getSpecialtyById(subject.specialty_id) : null;
+    const college = spec ? getCollegeById(spec.college_id) : null;
     const userState = await getUserState(ctx.from.id, ctx.from.first_name);
     userState.last_file_id = fileId;
 
-    const msg =
-      TEXTS.file_preview.title +
-      TEXTS.file_preview.details({
-        file_name: fileData.title || fileData.file_name || "ملف",
-        file_size_mb: parseFloat(fileData.file_size_mb) || 0,
-        type_label: TYPE_LABELS[fileData.content_type_id] || fileData.content_type_id,
-        subject_name: subject?.name || "غير معروف",
-        uploaded_at: fileData.added_at || "غير معروف",
-        download_count: fileData.download_count || 0,
-        is_starred: fileData.is_starred || false,
-      });
+    // استخدام بطاقة المحتوى الموحدة (سياق student_preview)
+    const msg = formatContentCard({
+      title: fileData.title || fileData.file_name || "ملف",
+      contentType: fileData.content_type_id,
+      subjectName: subject?.name || "غير معروف",
+      collegeName: college?.name,
+      specialtyName: spec?.name,
+      level: subject?.level,
+      semester: subject?.semester,
+      fileSizeMb: parseFloat(fileData.file_size_mb) || null,
+      uploadedAt: fileData.added_at,
+      downloadCount: fileData.download_count || 0,
+      isStarred: fileData.is_starred || false,
+    }, "student_preview");
 
     await ctx.reply(msg, {
       reply_markup: filePreviewKeyboard(fileId, fileData.subject_id),

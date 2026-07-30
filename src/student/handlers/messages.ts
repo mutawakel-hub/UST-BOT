@@ -24,6 +24,10 @@ import { getUserState, saveUserState } from "../state";
 import {
   CONTENT_TYPES,
 } from "../../shared/data/admins";
+import {
+  validateUploadedFile,
+  CONTENT_TYPE_RULES,
+} from "../../shared/storage";
 
 // ============================================
 // Helper: الحصول على تسمية نوع المحتوى
@@ -111,15 +115,37 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
       userState.awaiting_contribution_step === "file"
     ) {
       const subjectId = userState.awaiting_contribution_for_subject;
+      const contentType = userState.awaiting_contribution_type || "summary";
+
+      // فحص نوع الملف قبل القبول
+      const validation = validateUploadedFile(contentType, {
+        file_name: doc.file_name,
+        mime_type: (doc as any).mime_type,
+      });
+
+      if (!validation.valid) {
+        // مرفوض — اعرض رسالة توجيه، ابقَ في نفس الخطوة
+        await ctx.reply(validation.reason || "❌ نوع الملف غير مقبول.", {
+          parse_mode: "Markdown",
+          reply_markup: new InlineKeyboard()
+            .text("❌ إلغاء", `cancel_contribute_${subjectId}`)
+            .row()
+            .text("🔙 اختيار نوع آخر", `contribute_${subjectId}`),
+        });
+        return;
+      }
+
       const fileSizeMb =
         doc.file_size && doc.file_size > 0
           ? Number((doc.file_size / 1024 / 1024).toFixed(2))
           : 0;
 
-      // حفظ بيانات الملف في الجلسة
+      // حفظ بيانات الملف في الجلسة (بما فيها الحجم بالبايت للتخزين الدقيق)
       userState.awaiting_contribution_file_id = doc.file_id || "";
       userState.awaiting_contribution_file_name = doc.file_name || "ملف بدون اسم";
       userState.awaiting_contribution_file_size = fileSizeMb;
+      userState.awaiting_contribution_file_size_bytes = doc.file_size || 0;
+      userState.awaiting_contribution_file_mime = (doc as any).mime_type || "";
       // الانتقال لخطوة العنوان
       userState.awaiting_contribution_step = "title";
       await saveUserState(userState);
@@ -136,6 +162,26 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
       userState.contribution_main_step === "file" &&
       userState.contribution_main_context?.subject_id
     ) {
+      const contentType = userState.contribution_main_context?.content_type || "summary";
+
+      // فحص نوع الملف قبل القبول
+      const validation = validateUploadedFile(contentType, {
+        file_name: doc.file_name,
+        mime_type: (doc as any).mime_type,
+      });
+
+      if (!validation.valid) {
+        // مرفوض — اعرض رسالة توجيه، ابقَ في نفس الخطوة
+        await ctx.reply(validation.reason || "❌ نوع الملف غير مقبول.", {
+          parse_mode: "Markdown",
+          reply_markup: new InlineKeyboard()
+            .text("❌ إلغاء", "cancel_contribute_main")
+            .row()
+            .text("🔙 اختيار نوع آخر", "contribute_main_start"),
+        });
+        return;
+      }
+
       const fileSizeMb =
         doc.file_size && doc.file_size > 0
           ? Number((doc.file_size / 1024 / 1024).toFixed(2))
@@ -145,6 +191,8 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
       userState.contribution_main_file_id = doc.file_id || "";
       userState.contribution_main_file_name = doc.file_name || "ملف بدون اسم";
       userState.contribution_main_file_size = fileSizeMb;
+      userState.contribution_main_file_size_bytes = doc.file_size || 0;
+      userState.contribution_main_file_mime = (doc as any).mime_type || "";
       // الانتقال لخطوة العنوان
       userState.contribution_main_step = "title";
       await saveUserState(userState);

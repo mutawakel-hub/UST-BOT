@@ -334,7 +334,7 @@ export async function getContentForSubject(
   contentType: string
 ): Promise<any[]> {
   const result = await client.select("content", {
-    columns: "id,title,file_name,file_size_mb,telegram_message_id,telegram_file_id,is_starred,download_count,added_at",
+    columns: "id,title,file_name,file_size_mb,telegram_message_id,telegram_file_id,is_starred,download_count,added_at,added_by_telegram_id,academic_year",
     filter: `subject_id=eq.${subjectId}&content_type_id=eq.${contentType}&is_active=eq.true`,
     order: "is_starred.desc,download_count.desc",
   });
@@ -347,6 +347,7 @@ export async function getContentById(
   contentId: number
 ): Promise<any | null> {
   const result = await client.select("content", {
+    columns: "id,title,file_name,file_size_mb,telegram_message_id,telegram_file_id,content_type_id,subject_id,is_starred,download_count,added_at,added_by_telegram_id,academic_year,is_active",
     filter: `id=eq.${contentId}`,
     single: true,
   });

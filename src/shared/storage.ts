@@ -237,13 +237,156 @@ export function bytesToMb(bytes: number): number {
 }
 
 // ============================================
-// فحص نوع الملف (Magic Bytes)
+// قواعد فحص الملفات حسب نوع المحتوى
 // ============================================
-// للتحقق أن الملف المرفوع هو فعلاً PDF وليس ملفاً آخر مع امتداد .pdf
-// نحتاج الـ file_id ثم bot.api.getFile لقراءة أول بايتات
+// الأنواع الـ 7 كما هي:
+//   book_theory, book_practical, summary, exam, video, audio, reference, schedule
 //
-// ملاحظة: هذه الدالة مكلفة (HTTP request لكل ملف)
-// استخدمها فقط للملفات المشبوهة
+// القواعد:
+//   - video:  يقبل فقط mp4, mov, mkv, webm (المرئيات)
+//   - audio:  يقبل فقط mp3, m4a, ogg, wav (الصوتيات)
+//   - باقي الأنواع (نظري/عملي/ملخص/اختبار/مرجع/جدول): تقبل كل الامتدادات
+//   - book_practical يقبل أيضاً الفيديو (شرح عملي - فلاتر، تجارب، tutorial)
+//
+// حدود الحجم:
+//   - نعتمد على حد تلغرام نفسه (2 GB للملفات)
+//   - البوت يستخدم file_id فقط، لا يمر عبر Cloudflare Workers
+//   - لذا لا حاجة لـ Local Bot API Server
+// ============================================
+
+export interface ContentTypeRule {
+  allowedExtensions: string[]; // [] = يقبل كل شيء
+  allowVideo: boolean;         // هل يقبل فيديو (mp4/mov/mkv/webm)?
+  allowAudio: boolean;         // هل يقبل صوت (mp3/m4a/ogg/wav)?
+  label: string;
+  emoji: string;
+}
+
+export const CONTENT_TYPE_RULES: Record<string, ContentTypeRule> = {
+  book_theory:    { allowedExtensions: [], allowVideo: false, allowAudio: false, label: "كتاب نظري",  emoji: "📘" },
+  book_practical: { allowedExtensions: [], allowVideo: true,  allowAudio: false, label: "كتاب عملي",  emoji: "📗" },
+  summary:        { allowedExtensions: [], allowVideo: false, allowAudio: false, label: "ملخص",        emoji: "📄" },
+  exam:           { allowedExtensions: [], allowVideo: false, allowAudio: false, label: "اختبار",      emoji: "📝" },
+  reference:      { allowedExtensions: [], allowVideo: false, allowAudio: false, label: "مرجع",        emoji: "📖" },
+  schedule:       { allowedExtensions: [], allowVideo: false, allowAudio: false, label: "جدول",        emoji: "📅" },
+  video:          {
+    allowedExtensions: ["mp4", "mov", "mkv", "webm"],
+    allowVideo: true,
+    allowAudio: false,
+    label: "مرئيات",
+    emoji: "🎥",
+  },
+  audio:          {
+    allowedExtensions: ["mp3", "m4a", "ogg", "wav"],
+    allowVideo: false,
+    allowAudio: true,
+    label: "صوتيات",
+    emoji: "🎧",
+  },
+};
+
+// الامتدادات المعروفة للفيديو والصوت (للتحقق من النوع عند allowVideo/allowAudio)
+export const VIDEO_EXTENSIONS = ["mp4", "mov", "mkv", "webm", "avi", "flv"];
+export const AUDIO_EXTENSIONS = ["mp3", "m4a", "ogg", "wav", "aac", "flac"];
+
+// استخراج الامتداد من اسم الملف
+export function getFileExtension(fileName?: string): string | null {
+  if (!fileName) return null;
+  const parts = fileName.split(".");
+  if (parts.length < 2) return null;
+  return parts.pop()!.toLowerCase();
+}
+
+// ============================================
+// فحص الملف المرفوع
+// ============================================
+// يتحقق من:
+//   1. امتداد الملف مسموح به لنوع المحتوى المختار
+//   2. نوع الملف (فيديو/صوت/وثيقة) متوافق مع القواعد
+//
+// يعيد:
+//   { valid: true } لو الملف مقبول
+//   { valid: false, reason: "..." } لو مرفوض مع سبب
+//
+// ملاحظة: لا يفحص الحجم لأن تلغرام نفسه يحد بحجمه (2 GB)
+// ============================================
+export function validateUploadedFile(
+  contentType: string,
+  file: { file_name?: string; mime_type?: string }
+): { valid: boolean; reason?: string; receivedExt?: string | null } {
+  const rule = CONTENT_TYPE_RULES[contentType];
+  if (!rule) {
+    // نوع غير معروف — اسمح بكل شيء (آمن افتراضياً)
+    return { valid: true };
+  }
+
+  const ext = getFileExtension(file.file_name);
+
+  // لو لا توجد قيود (allowedExtensions = [] و allowVideo=false و allowAudio=false)
+  // → يقبل كل شيء
+  if (
+    rule.allowedExtensions.length === 0 &&
+    !rule.allowVideo &&
+    !rule.allowAudio
+  ) {
+    return { valid: true, receivedExt: ext };
+  }
+
+  // لو لا يوجد امتداد للملف
+  if (!ext) {
+    return {
+      valid: false,
+      reason: `⚠️ *نوع الملف غير محدد*\n\nالملف المُرسل لا يحتوي على امتداد واضح.\n\n💡 تأكد من أن اسم الملف ينتهي بامتداد صحيح (مثل .pdf, .mp4, .mp3).`,
+      receivedExt: null,
+    };
+  }
+
+  // التحقق من القائمة المسموح بها صراحةً
+  if (rule.allowedExtensions.length > 0) {
+    if (rule.allowedExtensions.includes(ext)) {
+      return { valid: true, receivedExt: ext };
+    }
+    // لو غير مسموح، تحقق من allowVideo / allowAudio كحالة خاصة
+    const isVideo = VIDEO_EXTENSIONS.includes(ext);
+    const isAudio = AUDIO_EXTENSIONS.includes(ext);
+
+    if (rule.allowVideo && isVideo) {
+      return { valid: true, receivedExt: ext };
+    }
+    if (rule.allowAudio && isAudio) {
+      return { valid: true, receivedExt: ext };
+    }
+
+    // مرفوض — اعرض رسالة توجيه واضحة
+    const expectedList = rule.allowedExtensions.join(" / ").toUpperCase();
+    return {
+      valid: false,
+      reason:
+        `❌ *نوع الملف غير مقبول*\n\n` +
+        `📎 *الملف المُرسل:* \`${file.file_name}\`\n` +
+        `📦 *الامتداد:* .${ext}\n\n` +
+        `📂 *المطلوب لقسم "${rule.label}":*\n` +
+        `✅ ${expectedList}\n\n` +
+        `💡 *كيف تتدارك:*\n` +
+        `1. ارجع لاختيار نوع المحتوى الصحيح\n` +
+        `2. أرسل ملفاً بالامتداد المطلوب`,
+      receivedExt: ext,
+    };
+  }
+
+  // لو allowedExtensions = [] لكن allowVideo/allowAudio = true (مثل book_practical)
+  if (rule.allowVideo || rule.allowAudio) {
+    // كل شيء مقبول بما فيه الفيديو والصوت
+    return { valid: true, receivedExt: ext };
+  }
+
+  return { valid: true, receivedExt: ext };
+}
+
+// ============================================
+// فحص نوع الملف (Magic Bytes) - قديمة، محفوظة للتوافق
+// ============================================
+// ملاحظة: لم تعد مستخدمة — استخدم validateUploadedFile() بدلاً منها
 // ============================================
 export async function verifyFileType(
   bot: Bot,
@@ -252,7 +395,6 @@ export async function verifyFileType(
 ): Promise<boolean> {
   try {
     const file = await bot.api.getFile(fileId);
-    // file.mime_type غير متاح دائماً، نعتمد على الـ extension
     if (file.file_path) {
       const ext = file.file_path.split(".").pop()?.toLowerCase();
       if (expectedMimeType === "application/pdf" && ext !== "pdf") {

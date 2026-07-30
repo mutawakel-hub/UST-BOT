@@ -912,3 +912,157 @@ export const ADMIN_TEXTS = {
       `✅ *تم منح التكريم!*\n\n👤 ${studentName}\n🏆 ${title}\n🔔 تم إشعار الطالب.`,
   },
 } as const;
+
+// ============================================
+// 📋 تنسيق بطاقة المحتوى الموحدة (3 سياقات)
+// ============================================
+// contexts:
+//   - "channel_archive"  : caption الملف في قناة التخزين عند الرفع
+//   - "student_preview"  : معاينة الطالب في وضع التصفح
+//   - "admin_review"     : معاينة المسؤول قبل الاعتماد
+//
+// الحقول المعروضة:
+//   - عنوان + نوع (سطر علوي)
+//   - السياق الأكاديمي (كلية/تخصص/مستوى/مادة)
+//   - معلومات الملف (حجم/مُحسِن/تاريخ)
+//   - الوصف
+//   - رقم الإحسان (للقناة والإدارة فقط)
+//
+// ملاحظة: المُحسِن لا يظهر للطالب (خصوصية)
+// ============================================
+
+export type ContentCardContext = "channel_archive" | "student_preview" | "admin_review";
+
+// تسميات الأنواع (للاستخدام في البطاقة)
+export const CONTENT_TYPE_LABELS_AR: Record<string, { label: string; emoji: string }> = {
+  book_theory:    { label: "كتاب نظري",        emoji: "📘" },
+  book_practical: { label: "كتاب عملي",        emoji: "📗" },
+  summary:        { label: "ملخصات",           emoji: "📄" },
+  exam:           { label: "نماذج اختبارات",   emoji: "📝" },
+  video:          { label: "مرئيات",           emoji: "🎥" },
+  audio:          { label: "صوتيات",           emoji: "🎧" },
+  reference:      { label: "مراجع",            emoji: "📖" },
+  schedule:       { label: "جداول دراسية",     emoji: "📅" },
+};
+
+export interface ContentCardData {
+  title: string;
+  contentType: string;          // book_theory | book_practical | summary | exam | video | audio | reference | schedule
+  subjectName: string;
+  collegeName?: string;
+  specialtyName?: string;
+  level?: number | null;
+  semester?: number | null;
+  fileSizeBytes?: number | null;
+  fileSizeMb?: number | null;
+  contributorName?: string;     // المُحسِن
+  uploadedAt?: string;          // ISO date
+  description?: string;
+  ihsanId?: number | null;      // رقم الإحسان
+  isStarred?: boolean;
+  downloadCount?: number;
+  statusLabel?: string;         // للإدارة: قيد المراجعة / معتمد / مرفوض
+}
+
+const SEPARATOR = "━━━━━━━━━━━━━━━";
+
+export function formatContentCard(
+  data: ContentCardData,
+  context: ContentCardContext
+): string {
+  const typeInfo = CONTENT_TYPE_LABELS_AR[data.contentType] || { label: data.contentType, emoji: "📄" };
+  const lines: string[] = [];
+
+  // السطر العلوي: [نوع] — عنوان
+  lines.push(`${typeInfo.emoji} [${typeInfo.label}] — ${data.title}`);
+  lines.push("");
+
+  // ===== السياق الأكاديمي =====
+  lines.push(SEPARATOR);
+  if (data.collegeName) {
+    lines.push(`🏛 الكلية:     ${data.collegeName}`);
+  }
+  if (data.specialtyName) {
+    lines.push(`🎓 التخصص:    ${data.specialtyName}`);
+  }
+  if (data.level !== undefined && data.level !== null) {
+    lines.push(`📊 المستوى:   ${data.level}`);
+  }
+  if (data.subjectName) {
+    lines.push(`📖 المادة:    ${data.subjectName}`);
+  }
+  lines.push(SEPARATOR);
+  lines.push("");
+
+  // ===== معلومات الملف =====
+  let sizeLabel = "غير محدد";
+  if (data.fileSizeBytes && data.fileSizeBytes > 0) {
+    sizeLabel = formatBytesArabic(data.fileSizeBytes);
+  } else if (data.fileSizeMb && data.fileSizeMb > 0) {
+    sizeLabel = `${data.fileSizeMb.toFixed(2)} MB`;
+  }
+  lines.push(`📦 الحجم:     ${sizeLabel}`);
+
+  // المُحسِن يظهر فقط في القناة والإدارة (ليس للطالب)
+  if (data.contributorName && context !== "student_preview") {
+    lines.push(`👤 المُحسِن:   ${data.contributorName}`);
+  }
+
+  if (data.uploadedAt) {
+    const dateLabel = formatDateArabic(data.uploadedAt);
+    lines.push(`📅 التاريخ:   ${dateLabel}`);
+  }
+
+  if (context === "admin_review" && data.statusLabel) {
+    lines.push(`🚦 الحالة:    ${data.statusLabel}`);
+  }
+
+  if (context === "student_preview" && data.downloadCount !== undefined) {
+    lines.push(`⬇️ التحميلات: ${data.downloadCount}`);
+  }
+
+  if (data.isStarred) {
+    lines.push("⭐ محتوى مميّز");
+  }
+
+  lines.push("");
+
+  // ===== الوصف =====
+  if (data.description && data.description.trim() && data.description !== "-") {
+    lines.push("📝 الوصف:");
+    lines.push(data.description.trim());
+    lines.push("");
+  }
+
+  // ===== رقم الإحسان (للقناة والإدارة) =====
+  if (data.ihsanId && context !== "student_preview") {
+    lines.push(SEPARATOR);
+    lines.push(`🆔 إحسان #${data.ihsanId}`);
+  }
+
+  return lines.join("\n");
+}
+
+// تحويل البايتات لصيغة عربية مقروءة
+function formatBytesArabic(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const size = bytes / Math.pow(1024, i);
+  return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+// تنسيق التاريخ بالعربية
+function formatDateArabic(dateStr: string): string {
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString("ar-EG", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  } catch {
+    return dateStr;
+  }
+}

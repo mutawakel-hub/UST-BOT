@@ -206,7 +206,8 @@ export function subjectMenuKeyboard(
   const practicalCount = fileCounts?.book_practical ?? 0;
   const summariesCount = fileCounts?.summary ?? 0;
   const examsCount = fileCounts?.exam ?? 0;
-  const videoCount = fileCounts?.video ?? 0;
+  // المرئيات + الصوتيات معاً (لأن زر العرض موحّد)
+  const videoCount = (fileCounts?.video ?? 0) + (fileCounts?.audio ?? 0);
   const referenceCount = fileCounts?.reference ?? 0;
   const scheduleCount = fileCounts?.schedule ?? 0;
 

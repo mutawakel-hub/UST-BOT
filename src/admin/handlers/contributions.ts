@@ -9,12 +9,17 @@
 // ============================================
 
 import { Bot, InlineKeyboard } from "grammy";
-import { ADMIN_TEXTS } from "../../shared/texts";
+import { ADMIN_TEXTS, formatContentCard } from "../../shared/texts";
 import { SupabaseClient } from "../../shared/db";
 import { getUserPermissions } from "../../shared/rbac";
 import { getSubjectById } from "../../shared/data/subjects";
 import { getContentTypeLabel } from "../../shared/data/admins";
 import { getOrCreateSession } from "../state";
+import {
+  getSpecialtyById,
+  getCollegeById,
+} from "../../shared/data/colleges";
+import { deleteFileFromStorage } from "../../shared/storage";
 
 // ============================================
 // نقاط لكل نوع محتوى (min / max)
@@ -62,7 +67,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     let dbContributions: any[] = [];
     try {
       dbContributions = await supabase.select("contributions", {
-        columns: "id,file_name,subject_id,content_type_id,description,file_size_mb,created_at",
+        columns: "id,file_name,title,subject_id,content_type_id,description,file_size_mb,created_at,user_telegram_id,telegram_message_id,telegram_file_id",
         filter: "status=eq.pending",
         order: "created_at.desc",
         limit: 20,
@@ -80,7 +85,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
       description: c.description,
       file_size_mb: parseFloat(c.file_size_mb) || 0,
       user_name: "طالب",
-      user_telegram_id: 0,
+      user_telegram_id: c.user_telegram_id || 0,
       uploaded_at: "حديثاً",
       specialty_id: 0,
       college_id: 0,
@@ -142,7 +147,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     let contrib: any = null;
     try {
       const result = await supabase.select("contributions", {
-        columns: "id,file_name,title,subject_id,content_type_id,description,file_size_mb,created_at,user_telegram_id,telegram_file_id",
+        columns: "id,file_name,title,subject_id,content_type_id,description,file_size_mb,created_at,user_telegram_id,telegram_file_id,telegram_message_id,status",
         filter: `id=eq.${contribId}`,
         single: true,
       });
@@ -156,20 +161,56 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
       return;
     }
 
-    const subjectName = getSubjectById(contrib.subject_id)?.name || "غير معروف";
+    const subject = getSubjectById(contrib.subject_id);
+    const subjectName = subject?.name || "غير معروف";
     const contentType: string = contrib.content_type_id || "summary";
     const typeLabel = getContentTypeLabel(contentType);
     const points = getPointsForType(contentType);
     const title = contrib.title || contrib.file_name || "بدون عنوان";
 
-    let msg = `🌟 *مراجعة الإحسان #${contrib.id}*\n\n`;
-    msg += `📝 *العنوان:* ${title}\n`;
-    msg += `📂 *النوع:* ${typeLabel}\n`;
-    msg += `📚 *المادة:* ${subjectName}\n`;
-    msg += `📊 *الحجم:* ${(parseFloat(contrib.file_size_mb) || 0).toFixed(2)} MB\n`;
-    if (contrib.description) msg += `📌 *الوصف:* ${contrib.description}\n`;
-    msg += `📅 *التاريخ:* ${contrib.created_at || "حديثاً"}\n\n`;
-    msg += `💎 *النقاط المتاحة:* ${points.min}–${points.max} (المميّز: ${points.starred})\n`;
+    // جلب بيانات الكلية/التخصص لعرضها في البطاقة
+    const spec = subject ? getSpecialtyById(subject.specialty_id) : null;
+    const college = spec ? getCollegeById(spec.college_id) : null;
+
+    // جلب اسم المُحسِن من admin_users
+    let contributorName = "طالب";
+    if (contrib.user_telegram_id) {
+      try {
+        const userResult = await supabase.select("admin_users", {
+          columns: "display_name,first_name",
+          filter: `telegram_id=eq.${contrib.user_telegram_id}`,
+          single: true,
+        });
+        const user = Array.isArray(userResult) ? userResult[0] : userResult;
+        contributorName = user?.display_name || user?.first_name || "طالب";
+      } catch {
+        // تجاهل — استخدم "طالب"
+      }
+    }
+
+    // بناء بطاقة المحتوى (سياق admin_review)
+    const statusLabel = contrib.status === "pending" ? "🟡 قيد المراجعة" :
+                        contrib.status === "approved" ? "✅ معتمد" :
+                        contrib.status === "rejected" ? "❌ مرفوض" : contrib.status;
+
+    const cardMsg = formatContentCard({
+      title,
+      contentType,
+      subjectName,
+      collegeName: college?.name,
+      specialtyName: spec?.name,
+      level: subject?.level,
+      semester: subject?.semester,
+      fileSizeMb: parseFloat(contrib.file_size_mb) || null,
+      contributorName,
+      uploadedAt: contrib.created_at,
+      description: contrib.description,
+      ihsanId: contrib.id,
+      statusLabel,
+    }, "admin_review");
+
+    // إضافة سطر النقاط المتاحة في النهاية
+    const msg = `${cardMsg}\n\n💎 *النقاط المتاحة:* ${points.min}–${points.max} (المميّز: ${points.starred})`;
 
     const kb = new InlineKeyboard();
 
@@ -240,11 +281,11 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     const contribId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery({ text: isStarred ? "⭐ تم الاعتماد المميز" : "✅ تم الاعتماد" });
 
-    // 1. قراءة بيانات المساهمة (بما في ذلك title)
+    // 1. قراءة بيانات المساهمة (بما في ذلك title و telegram_message_id)
     let contribution: any = null;
     try {
       const result = await supabase.select("contributions", {
-        columns: "id,file_name,title,subject_id,content_type_id,description,file_size_mb,user_telegram_id,telegram_file_id",
+        columns: "id,file_name,title,subject_id,content_type_id,description,file_size_mb,user_telegram_id,telegram_file_id,telegram_message_id",
         filter: `id=eq.${contribId}`,
         single: true,
       });
@@ -295,6 +336,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     let contentInsertError: string | null = null;
 
     // 4. إنشاء سجل content — دائماً (حتى لو لم يكن file_id مثالياً)
+    //    ننسخ telegram_message_id من contributions لتفعيل forwardMessage لاحقاً
     const contentTitle = contribution.title || contribution.file_name || "إحسان علمي";
     try {
       await supabase.insert("content", {
@@ -303,7 +345,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
         title: contentTitle,
         file_name: contribution.file_name || contentTitle,
         file_size_mb: contribution.file_size_mb || 0,
-        telegram_message_id: null,
+        telegram_message_id: contribution.telegram_message_id || null,
         telegram_file_id: uploadedFileId,
         added_by_position_id: "central_chair",
         added_by_telegram_id: ctx.from.id,
@@ -311,7 +353,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
         is_active: true,
         academic_year: new Date().getFullYear().toString(),
       });
-      console.log(`✅ [Ihsan] Content record created for contribution ${contribId}`);
+      console.log(`✅ [Ihsan] Content record created for contribution ${contribId} (message_id=${contribution.telegram_message_id || "null"})`);
     } catch (e: any) {
       const errMsg = String(e?.message || e);
       console.error(`❌ [Ihsan] Content insert FAILED for ${contribId}:`, errMsg.substring(0, 300));
@@ -405,8 +447,9 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     await ctx.answerCallbackQuery({ text: "❌ تم الرفض" });
 
     try {
+      // جلب بيانات المساهمة: user_telegram_id + telegram_message_id + subject_id
       const contribData = await supabase.select("contributions", {
-        columns: "user_telegram_id",
+        columns: "user_telegram_id,telegram_message_id,subject_id",
         filter: `id=eq.${contribId}`,
         single: true,
       }) as any;
@@ -417,6 +460,49 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
         reviewed_by_telegram_id: ctx.from.id,
         reviewed_at: new Date().toISOString(),
       }, `id=eq.${contribId}`);
+
+      // حذف الملف من قناة التخزين (تنظيف — الملفات المرفوضة يجب ألا تبقى يتيمة)
+      if (contribData?.telegram_message_id && contribData?.subject_id) {
+        try {
+          // جلب storage_channel_id من subject → specialty → college
+          const subjectResult = await supabase.select("subjects", {
+            columns: "specialty_id",
+            filter: `id=eq.${contribData.subject_id}`,
+            single: true,
+          }) as any;
+          const subject = Array.isArray(subjectResult) ? subjectResult[0] : subjectResult;
+
+          if (subject?.specialty_id) {
+            const specResult = await supabase.select("specialties", {
+              columns: "college_id",
+              filter: `id=eq.${subject.specialty_id}`,
+              single: true,
+            }) as any;
+            const spec = Array.isArray(specResult) ? specResult[0] : specResult;
+
+            if (spec?.college_id) {
+              const collegeResult = await supabase.select("colleges", {
+                columns: "storage_channel_id",
+                filter: `id=eq.${spec.college_id}`,
+                single: true,
+              }) as any;
+              const college = Array.isArray(collegeResult) ? collegeResult[0] : collegeResult;
+
+              if (college?.storage_channel_id) {
+                await deleteFileFromStorage(
+                  bot,
+                  college.storage_channel_id,
+                  contribData.telegram_message_id
+                );
+                console.log(`🗑 [Ihsan] Deleted file from storage channel for rejected contribution #${contribId}`);
+              }
+            }
+          }
+        } catch (e) {
+          // تجاهل أخطاء الحذف — قد تكون الرسالة محذوفة مسبقاً
+          console.warn(`⚠️ [Ihsan] Failed to delete file from storage for #${contribId}:`, e);
+        }
+      }
 
       if (contribData?.user_telegram_id) {
         await supabase.rpc("notify_contribution_rejected", {
@@ -430,7 +516,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     }
 
     await ctx.editMessageText(
-      `✅ *تم رفض الإحسان #${contribId}*\n\nالسبب: ${reasons[reasonKey]}\n\n🔔 تم إشعار الطالب بالرفض.`,
+      `✅ *تم رفض الإحسان #${contribId}*\n\nالسبب: ${reasons[reasonKey]}\n\n🔔 تم إشعار الطالب بالرفض.\n🗑 تم حذف الملف من قناة التخزين.`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
         parse_mode: "Markdown",

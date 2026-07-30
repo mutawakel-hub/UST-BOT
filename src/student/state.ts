@@ -42,6 +42,8 @@ export interface UserState {
   awaiting_contribution_file_id?: string;
   awaiting_contribution_file_name?: string;
   awaiting_contribution_file_size?: number;
+  awaiting_contribution_file_size_bytes?: number;
+  awaiting_contribution_file_mime?: string;
   // المسار الكامل للإحسان (من القائمة الرئيسية - 5 خطوات)
   contribution_main_context?: {
     college_id?: number;
@@ -63,6 +65,8 @@ export interface UserState {
   contribution_main_file_id?: string;
   contribution_main_file_name?: string;
   contribution_main_file_size?: number;
+  contribution_main_file_size_bytes?: number;
+  contribution_main_file_mime?: string;
   // التسجيل الإلزامي
   registration_step?: "college" | "specialty" | "level";
   registration_context?: { college_id?: number; specialty_id?: number };
