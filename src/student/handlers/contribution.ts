@@ -30,8 +30,12 @@ import {
   CONTENT_TYPES,
 } from "../../shared/data/admins";
 import {
+  COLLEGES,
+  getCollegeById,
+  getSpecialtyById,
   getSpecialtiesByCollege,
 } from "../../shared/data/colleges";
+import { uploadFileToStorageChannel } from "../../shared/storage";
 
 // ============================================
 // Helper: بناء keyboard لأنواع المحتوى (7 أنواع)
@@ -108,6 +112,7 @@ async function ensureStudentInAdminUsers(
 // Helper: حفظ الإحسان في Supabase
 // ============================================
 async function saveContribution(
+  bot: Bot,
   supabase: SupabaseClient,
   data: {
     userTelegramId: number;
@@ -124,7 +129,63 @@ async function saveContribution(
     console.log(`📝 [Ihsan] Saving: user=${data.userTelegramId}, subject=${data.subjectId}, type=${data.contentType}`);
     await ensureStudentInAdminUsers(supabase, data.userTelegramId, undefined, undefined);
 
-    // محاولة 1: إدراج بكل الأعمدة (يحتاج schema محدّث)
+    // 1. ابحث عن قناة التخزين للمادة
+    let storageChannelId: string | null = null;
+    try {
+      // اقرأ specialty_id من subjects
+      const subjectResult = await supabase.select("subjects", {
+        columns: "specialty_id",
+        filter: `id=eq.${data.subjectId}`,
+        single: true,
+      });
+      const subject = Array.isArray(subjectResult) ? subjectResult[0] : subjectResult;
+      if (subject?.specialty_id) {
+        const specResult = await supabase.select("specialties", {
+          columns: "college_id",
+          filter: `id=eq.${subject.specialty_id}`,
+          single: true,
+        });
+        const spec = Array.isArray(specResult) ? specResult[0] : specResult;
+        if (spec?.college_id) {
+          const collegeResult = await supabase.select("colleges", {
+            columns: "storage_channel_id",
+            filter: `id=eq.${spec.college_id}`,
+            single: true,
+          });
+          const college = Array.isArray(collegeResult) ? collegeResult[0] : collegeResult;
+          storageChannelId = college?.storage_channel_id || null;
+        }
+      }
+    } catch (e) {
+      console.warn("⚠️ [Ihsan] Failed to find storage channel:", e);
+    }
+
+    // 2. ارفع الملف لقناة التخزين فوراً (file_id خاص ببوت الطالب)
+    let storageMessageId: number | null = null;
+    let storageFileId: string | null = null;
+
+    if (storageChannelId) {
+      try {
+        const uploaded = await uploadFileToStorageChannel(
+          bot,
+          storageChannelId,
+          { fileId: data.telegramFileId, fileName: data.fileName },
+          {
+            caption: `🌟 إحسان علمي\n📝 ${data.title}\n📂 ${data.fileName}`,
+            parseMode: "Markdown",
+          }
+        );
+        storageMessageId = uploaded.message_id;
+        storageFileId = uploaded.file_id;
+        console.log(`📤 [Ihsan] File uploaded to storage channel: msg_id=${storageMessageId}`);
+      } catch (e) {
+        console.warn("⚠️ [Ihsan] Failed to upload to storage channel (will save without it):", e);
+      }
+    }
+
+    // 3. احفظ الإحسان في DB — استخدم storageFileId (صالح لكل البوتس)
+    const fileIdToStore = storageFileId || data.telegramFileId;
+
     try {
       const result = await supabase.insert("contributions", {
         user_telegram_id: data.userTelegramId,
@@ -132,7 +193,7 @@ async function saveContribution(
         content_type_id: data.contentType,
         file_name: data.fileName,
         file_size_mb: data.fileSizeMb,
-        telegram_file_id: data.telegramFileId,
+        telegram_file_id: fileIdToStore,
         title: data.title,
         description: data.description || null,
         status: "pending",
@@ -146,13 +207,8 @@ async function saveContribution(
       console.warn(`⚠️ [Ihsan] Full insert failed, trying without title:`, e1?.message?.substring(0, 150));
     }
 
-    // محاولة 2: إدراج بدون 'title' (backward compatible مع schema القديم)
-    // نضع العنوان في file_name والوصف في description
+    // محاولة 2: بدون title
     const displayFileName = data.title && data.title !== "—" ? data.title : data.fileName;
-    const fullDescription = data.description && data.description !== "-"
-      ? `${data.fileName} | ${data.description}`
-      : data.fileName;
-
     try {
       const result = await supabase.insert("contributions", {
         user_telegram_id: data.userTelegramId,
@@ -160,40 +216,19 @@ async function saveContribution(
         content_type_id: data.contentType,
         file_name: displayFileName,
         file_size_mb: data.fileSizeMb,
-        telegram_file_id: data.telegramFileId,
-        description: fullDescription,
+        telegram_file_id: fileIdToStore,
+        description: data.description || null,
         status: "pending",
       });
       const inserted = result as any;
       if (inserted?.id) {
-        console.log(`✅ [Ihsan] Saved (no title column) with ID: ${inserted.id}`);
+        console.log(`✅ [Ihsan] Saved (no title) with ID: ${inserted.id}`);
         return inserted.id;
       }
     } catch (e2: any) {
-      console.warn(`⚠️ [Ihsan] Insert without title also failed:`, e2?.message?.substring(0, 150));
+      console.error(`❌ [Ihsan] Insert failed:`, e2?.message?.substring(0, 200));
     }
 
-    // محاولة 3: إدراج بأقل البيانات (الـ schema القديم تماماً)
-    try {
-      const result = await supabase.insert("contributions", {
-        user_telegram_id: data.userTelegramId,
-        subject_id: data.subjectId,
-        content_type_id: data.contentType,
-        file_name: displayFileName,
-        file_size_mb: data.fileSizeMb,
-        telegram_file_id: data.telegramFileId,
-        status: "pending",
-      });
-      const inserted = result as any;
-      if (inserted?.id) {
-        console.log(`✅ [Ihsan] Saved (minimal) with ID: ${inserted.id}`);
-        return inserted.id;
-      }
-    } catch (e3: any) {
-      console.error(`❌ [Ihsan] All insert attempts failed:`, e3?.message?.substring(0, 200));
-    }
-
-    console.error("❌ [Ihsan] All insert attempts returned no ID");
     return null;
   } catch (e: any) {
     console.error("❌ [Ihsan] saveContribution error:", e?.message || e);
@@ -299,7 +334,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     const fileId = userState.awaiting_contribution_file_id || "";
 
     // حفظ في Supabase
-    const newId = await saveContribution(supabase, {
+    const newId = await saveContribution(bot, supabase, {
       userTelegramId: ctx.from.id,
       subjectId,
       contentType,
@@ -578,7 +613,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     const fileId = userState.contribution_main_file_id || "";
 
     // حفظ في Supabase
-    const newId = await saveContribution(supabase, {
+    const newId = await saveContribution(bot, supabase, {
       userTelegramId: ctx.from.id,
       subjectId,
       contentType,

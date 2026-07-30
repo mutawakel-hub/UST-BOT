@@ -243,29 +243,14 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
       console.error("Failed to fetch college/storage channel:", e);
     }
 
-    // 3. رفع الملف لقناة التخزين
-    let uploadedMessageId: number | null = null;
-    let uploadedFileId: string | null = null;
-    if (storageChannelId && contribution.telegram_file_id) {
-      try {
-        const uploaded = await uploadFileToStorageChannel(
-          bot,
-          storageChannelId,
-          { fileId: contribution.telegram_file_id, fileName: contribution.file_name },
-          {
-            caption: `📄 ${contribution.file_name}\n📚 مادة: ${contribution.subject_id}\n👤 رافع: ${contribution.user_telegram_id}`,
-            parseMode: "Markdown",
-          }
-        );
-        uploadedMessageId = uploaded.message_id;
-        uploadedFileId = uploaded.file_id;
-      } catch (e) {
-        console.error("Failed to upload file to storage channel:", e);
-      }
-    }
+    // 3. الملف رُفع بالفعل لقناة التخزين من بوت الطالب
+    // telegram_file_id المخزّن هو file_id من قناة التخزين (صالح لكل البوتس)
+    // لا نحتاج لإعادة الرفع — نستخدم القيم الموجودة مباشرة
+    const uploadedFileId = contribution.telegram_file_id || null;
+    const uploadedMessageId: number | null = null; // message_id منفصل غير متوفر حالياً
 
-    // 4. إنشاء سجل content
-    if (uploadedMessageId && uploadedFileId && collegeId !== null) {
+    // 4. إنشاء سجل content (استخدم file_id الموجود من القناة)
+    if (uploadedFileId && collegeId !== null) {
       try {
         await supabase.insert("content", {
           subject_id: contribution.subject_id,
@@ -277,7 +262,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
           title: contribution.file_name,
           file_name: contribution.file_name,
           file_size_mb: contribution.file_size_mb || 0,
-          telegram_message_id: uploadedMessageId,
+          telegram_message_id: uploadedFileId,
           telegram_file_id: uploadedFileId,
           added_by_position_id: "central_chair",
           added_by_telegram_id: ctx.from.id,
@@ -320,8 +305,8 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
       // عرض رسالة النجاح بالنقاط الفعلية والخروج
       await ctx.editMessageText(
         `${isStarred ? "⭐" : "✅"} *تم اعتماد الإحسان #${contribId}*\n\n` +
-        (uploadedMessageId
-          ? `📤 تم رفع الملف لقناة التخزين (message_id: ${uploadedMessageId})\n`
+        (uploadedFileId
+          ? `📤 تم رفع الملف لقناة التخزين (message_id: null)\n`
           : `⚠️ تعذّر رفع الملف لقناة التخزين — تحقق من إعدادات القناة\n`) +
         `💎 تم منح الطالب ${points} نقطة.`,
         {
@@ -336,9 +321,9 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
 
     await ctx.editMessageText(
       `${isStarred ? "⭐" : "✅"} *تم اعتماد الإحسان #${contribId}*\n\n` +
-      (uploadedMessageId
-        ? `📤 تم رفع الملف لقناة التخزين (message_id: ${uploadedMessageId})\n`
-        : `⚠️ تعذّر رفع الملف لقناة التخزين — تحقق من إعدادات القناة\n`) +
+      (uploadedFileId
+        ? `📤 الملف متاح في قناة التخزين\n`
+        : `⚠️ لا يوجد file_id\n`) +
       `💎 تم منح الطالب نقاطًا.`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
