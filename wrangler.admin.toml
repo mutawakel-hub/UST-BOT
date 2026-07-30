@@ -46,3 +46,13 @@ id = "0d0fbffb56f04907b68bb68c51aac9de"
 # توليد secret: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 # لتعيينه: echo "GENERATED_SECRET" | npx wrangler secret put CALLBACK_SECRET --config wrangler.admin.toml
 # ⚠️ مهم: استخدم نفس الـ secret لكلا البوتين (student + admin)
+
+# ============================================
+# Cron Triggers (للتنبيه المتدرّج — فحص كل ساعة)
+# ============================================
+# يفحص الإحسانات المتأخرة كل ساعة:
+#   24 ساعة → تذكير مسؤول المستوى
+#   48 ساعة → تنبيه مسؤول الكلية
+#   72 ساعة → تنبيه المسؤول المركزي
+[triggers]
+crons = ["0 * * * *"]

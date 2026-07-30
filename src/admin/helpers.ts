@@ -66,9 +66,10 @@ export function buildDynamicDashboard(perms: UserPermissions, pendingCount: numb
   }
   kb.row();
 
-  // صف 6: لوحة الشرف (للمركزي فقط)
+  // صف 6: روّاد الإحسان + أداء المسؤولين (للمركزي فقط)
   if (perms.is_central) {
-    kb.text("🏆 روّاد الإحسان", "leaderboard_update").row();
+    kb.text("🏆 روّاد الإحسان", "leaderboard_update");
+    kb.text("📊 أداء المسؤولين", "admin_performance").row();
   }
 
   return kb;

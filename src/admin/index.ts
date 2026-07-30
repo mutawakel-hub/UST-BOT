@@ -41,6 +41,7 @@ import { registerPositionHandlers } from "./handlers/positions";
 import { registerChannelHandlers } from "./handlers/channels";
 import { registerHonorHandlers } from "./handlers/honors";
 import { registerMessageHandlers } from "./handlers/messages";
+import { runEscalationCheck, getAdminPerformanceReport, registerEscalationHandlers } from "./handlers/escalation";
 
 // ============================================
 // إنشاء البوت
@@ -74,6 +75,7 @@ export function createAdminBot(
   registerChannelHandlers(bot, supabase);
   registerHonorHandlers(bot, supabase);
   registerMessageHandlers(bot, supabase);
+  registerEscalationHandlers(bot, supabase);
 
   // معالجة الأخطاء الشاملة
   bot.catch(async (err) => {
@@ -225,6 +227,29 @@ export default {
     } catch (error) {
       console.error("Worker error:", error);
       return new Response("Internal Server Error", { status: 500 });
+    }
+  },
+
+  // ====== Scheduled handler (Cron Trigger — يُستدعى كل ساعة) ======
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    console.log("⏰ [Scheduled] Cron trigger fired at", new Date().toISOString());
+
+    try {
+      // تهيئة Supabase إن لم يكن مهيّأً
+      if (!supabaseClient && env.SUPABASE_URL && env.SUPABASE_SERVICE_KEY) {
+        supabaseClient = new SupabaseClient({
+          SUPABASE_URL: env.SUPABASE_URL,
+          SUPABASE_SERVICE_KEY: env.SUPABASE_SERVICE_KEY,
+        });
+      }
+      if (!botInstance) {
+        botInstance = createAdminBot(env.BOT_TOKEN, supabaseClient!, env.SESSIONS, env.CACHE, env.CALLBACK_SECRET || "");
+      }
+
+      // شغّل فحص التنبيه المتدرّج في الخلفية
+      ctx.waitUntil(runEscalationCheck(botInstance!, supabaseClient!));
+    } catch (error) {
+      console.error("❌ [Scheduled] Error:", error);
     }
   },
 };
