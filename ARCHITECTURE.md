@@ -303,3 +303,104 @@ await client.rpc("register_student", {
 3. التحقق من النتيجة
 
 > 📖 تفاصيل الإعداد في [DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md).
+
+---
+
+## 📢 نظام التعميمات (Broadcast System)
+
+### 🏗️ البنية المعمارية
+
+```
+┌─────────────┐         ┌──────────────┐         ┌─────────────┐
+│ بوت الإدارة  │ ──POST──► /broadcast-push ──►  │ بوت الطالب   │
+│ (admin bot) │         │   endpoint    │         │(student bot)│
+└─────────────┘         └──────────────┘         └─────────────┘
+       │                                                │
+       │ 2. INSERT notification في student_notifications│
+       │                                                │
+       └──────────► Supabase ◄──────────────────────────┘
+                          │
+                          ▼
+                   ┌──────────────┐
+                   │   الطالب      │
+                   │  (يستقبل:     │
+                   │  1. رسالة     │
+                   │     مباشرة    │
+                   │  2. إشعار     │
+                   │     في البوت) │
+                   └──────────────┘
+```
+
+### 📨 آلية الوصول المزدوجة
+
+عند إرسال تعميم، يصل للطالب بطريقتين متزامنتين:
+
+| الطريقة | متى يصل | الضمان |
+|---------|---------|--------|
+| 📨 **رسالة Telegram مباشرة** | فوراً (push notification) | لو الطالب بدأ بوت الطالب سابقاً |
+| 🔔 **إشعار في واجهة الإشعارات** | عند فتح بوت الطالب | 100% (مخزّن في DB) |
+
+### 🔒 الأمان: Header Token الداخلي
+
+بوت الإدارة يُرسل طلب HTTP POST لـ endpoint `/broadcast-push` في بوت الطالب. الأمان يعتمد على:
+
+| العنصر | الموقع | الوصف |
+|--------|--------|-------|
+| `BROADCAST_INTERNAL_TOKEN` | `wrangler.student.toml` + `wrangler.admin.toml` | قيمة ثابتة مشتركة (var، ليس secret) |
+| `x-internal-token` header | في كل طلب HTTP | بوت الإدارة يُرسله، بوت الطالب يتحقق منه |
+
+**لماذا var وليس secret؟**
+- الـ URL الخاص بـ `/broadcast-push` غير منشور علناً
+- الـ token يحمي من الاستخدام العرضي لو تسرّب URL
+- لتغييره: حدّث القيمة في كلا الملفين + أعد النشر
+
+**لتغيير الـ token:**
+1. افتح `wrangler.student.toml` و `wrangler.admin.toml`
+2. غيّر قيمة `BROADCAST_INTERNAL_TOKEN` لنفس القيمة الجديدة في كلا الملفين
+3. اضغط push → GitHub Actions سينشر البوتين تلقائياً
+
+### 📊 تدفق التعميم (Sequence)
+
+```
+1. المسؤول يضغط "📢 تعميم"
+   ↓
+2. يختار النطاق (all / college / specialty / level)
+   ↓
+3. getBroadcastRecipients() → قائمة telegram_ids
+   ↓
+4. يدخل نص التعميم → معاينة → تأكيد
+   ↓
+5. confirm_broadcast handler:
+   a. INSERT notification في student_notifications لكل طالب
+   b. POST /broadcast-push لكل طالب (مع x-internal-token header)
+   c. بوت الطالب يُرسل bot.api.sendMessage للطالب
+   d. INSERT سجل في broadcasts table
+   ↓
+6. عرض تقرير: العدد + المباشر + المحظور + الإشعارات
+```
+
+### 🛠️ Endpoint: /broadcast-push
+
+**الموقع:** بوت الطالب (`src/student/index.ts`)
+
+**Request:**
+```http
+POST /broadcast-push
+Content-Type: application/json
+x-internal-token: ust_internal_broadcast_2025_z7y4k9
+
+{
+  "telegram_id": 1330666633,
+  "text": "📢 تعميم جديد\n\n...",
+  "parse_mode": "Markdown"
+}
+```
+
+**Response:**
+| الحالة | HTTP Status | Body |
+|--------|-------------|------|
+| نجاح | 200 | `{"ok": true, "delivered": true}` |
+| token خاطئ | 401 | `{"ok": false, "error": "unauthorized"}` |
+| بيانات ناقصة | 400 | `{"ok": false, "error": "missing telegram_id or text"}` |
+| الطالب حظر البوت | 404 | `{"ok": false, "error": "blocked_or_not_started"}` |
+| خطأ داخلي | 500 | `{"ok": false, "error": "..."}` |

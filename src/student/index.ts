@@ -108,6 +108,7 @@ export interface Env {
   BOT_USERNAME: string;
   ENVIRONMENT: string;
   WORKERS_SUBDOMAIN: string;
+  BROADCAST_INTERNAL_TOKEN: string;
   SUPABASE_URL: string;
   SUPABASE_SERVICE_KEY: string;
   SESSIONS: KVNamespace;
@@ -301,17 +302,19 @@ export default {
 
       // ====== Broadcast Push endpoint (يستقبل من بوت الإدارة) ======
       // يستقبل طلب POST لإرسال رسالة تعميم لطالب واحد عبر بوت الطالب
-      // Body: { secret, telegram_id, text, parse_mode? }
+      // الأمان: header مخصص x-internal-token (قيمة ثابتة في wrangler.toml لكلا البوتين)
+      // Body: { telegram_id, text, parse_mode? }
       if (url.pathname === "/broadcast-push" && request.method === "POST") {
         try {
-          const body = await request.json() as any;
-          // تحقق من الـ secret المشترك (CALLBACK_SECRET)
-          if (body.secret !== env.CALLBACK_SECRET) {
+          // تحقق من الـ token الداخلي عبر header
+          const internalToken = request.headers.get("x-internal-token");
+          if (internalToken !== env.BROADCAST_INTERNAL_TOKEN) {
             return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
               status: 401,
               headers: { "Content-Type": "application/json" },
             });
           }
+          const body = await request.json() as any;
           if (!body.telegram_id || !body.text) {
             return new Response(JSON.stringify({ ok: false, error: "missing telegram_id or text" }), {
               status: 400,

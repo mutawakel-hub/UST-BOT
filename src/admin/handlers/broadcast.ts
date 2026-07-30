@@ -363,14 +363,17 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
 
     // 3. الإرسال المباشر عبر بوت الطالب (push notification فوري)
     // نستدعي endpoint /broadcast-push في بوت الطالب عبر HTTP
-    // هذا يضمن وصول الرسالة كرسالة Telegram عادية + إشعار
+    // الأمان: header x-internal-token (قيمة ثابتة في wrangler.toml لكلا البوتين)
     const studentBotUrl = (globalThis as any).__studentBotUrl as string | undefined;
-    const callbackSecret = (globalThis as any).__callbackSecret as string | undefined;
+    const broadcastInternalToken = (globalThis as any).__broadcastInternalToken as string | undefined;
+
+    console.log(`📡 [broadcast] studentBotUrl=${studentBotUrl ? "set" : "MISSING"}, internalToken=${broadcastInternalToken ? "set" : "MISSING"}, recipients=${recipientIds.length}`);
 
     let pushDelivered = 0;
     let pushBlocked = 0;
+    let pushFailed = 0;
 
-    if (studentBotUrl && callbackSecret) {
+    if (studentBotUrl && broadcastInternalToken) {
       // رسالة منسقة جميلة للطالب
       const studentMessage =
         `📢 *تعميم جديد*\n\n` +
@@ -385,9 +388,11 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
         try {
           const resp = await fetch(`${studentBotUrl}/broadcast-push`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "x-internal-token": broadcastInternalToken,
+            },
             body: JSON.stringify({
-              secret: callbackSecret,
               telegram_id: studentId,
               text: studentMessage,
               parse_mode: "Markdown",
@@ -395,11 +400,21 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
           });
           if (resp.ok) {
             pushDelivered++;
+            console.log(`✅ [broadcast] Push delivered to ${studentId}`);
           } else if (resp.status === 404) {
             pushBlocked++;
+            console.log(`🚫 [broadcast] Push blocked/not started for ${studentId}`);
+          } else if (resp.status === 401) {
+            pushFailed++;
+            console.error(`❌ [broadcast] Push 401 Unauthorized for ${studentId} — BROADCAST_INTERNAL_TOKEN mismatch between bots!`);
+          } else {
+            pushFailed++;
+            const errBody = await resp.text().catch(() => "");
+            console.error(`❌ [broadcast] Push failed (${resp.status}) for ${studentId}: ${errBody.substring(0, 100)}`);
           }
-        } catch (e) {
-          // تجاهل — الإشعار في DB يضمن الوصول
+        } catch (e: any) {
+          pushFailed++;
+          console.error(`❌ [broadcast] Push network error for ${studentId}:`, e?.message?.substring(0, 100));
         }
       });
       // مهلة 12 ثانية (أطول قليلاً من سابقتها لأن الـ fetch يأخذ وقتاً)
@@ -407,8 +422,9 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
         Promise.allSettled(pushPromises),
         new Promise((resolve) => setTimeout(resolve, 12000)),
       ]);
+      console.log(`📊 [broadcast] Push summary: delivered=${pushDelivered}, blocked=${pushBlocked}, failed=${pushFailed}`);
     } else {
-      console.warn("⚠️ [broadcast] STUDENT_BOT_URL or CALLBACK_SECRET not set — skipping direct push");
+      console.warn("⚠️ [broadcast] STUDENT_BOT_URL or BROADCAST_INTERNAL_TOKEN not set — skipping direct push");
     }
 
     // 4. سجّل التعميم في DB

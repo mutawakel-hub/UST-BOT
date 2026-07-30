@@ -12,6 +12,10 @@ BOT_USERNAME = "usttesteradminbot"
 ENVIRONMENT = "production"
 WORKERS_SUBDOMAIN = "atow73768"
 STUDENT_BOT_URL = "https://ust-student-bot.atow73768.workers.dev"
+# Token داخلي للتحقق من طلبات broadcast-push من بوت الإدارة
+# ليس secret حقيقي (يظهر في wrangler.toml) لكن الـ URL نفسه غير منشور
+# يجب أن تتطابق القيمة مع wrangler.student.toml
+BROADCAST_INTERNAL_TOKEN = "ust_internal_broadcast_2025_z7y4k9"
 
 # ============================================
 # KV Namespaces (للجلسات والـ cache)
