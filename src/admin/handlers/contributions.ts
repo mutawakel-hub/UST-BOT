@@ -193,11 +193,11 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     const contribId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery({ text: isStarred ? "⭐ تم الاعتماد المميز" : "✅ تم الاعتماد" });
 
-    // 1. قراءة بيانات المساهمة
+    // 1. قراءة بيانات المساهمة (بما في ذلك title)
     let contribution: any = null;
     try {
       const result = await supabase.select("contributions", {
-        columns: "id,file_name,subject_id,content_type_id,description,file_size_mb,user_telegram_id,telegram_file_id",
+        columns: "id,file_name,title,subject_id,content_type_id,description,file_size_mb,user_telegram_id,telegram_file_id",
         filter: `id=eq.${contribId}`,
         single: true,
       });
@@ -244,33 +244,31 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     }
 
     // 3. الملف رُفع بالفعل لقناة التخزين من بوت الطالب
-    // telegram_file_id المخزّن هو file_id من قناة التخزين (صالح لكل البوتس)
-    // لا نحتاج لإعادة الرفع — نستخدم القيم الموجودة مباشرة
-    const uploadedFileId = contribution.telegram_file_id || null;
-    const uploadedMessageId: number | null = null; // message_id منفصل غير متوفر حالياً
+    const uploadedFileId = contribution.telegram_file_id || contribution.file_name || "no_file_id";
+    let contentInsertError: string | null = null;
 
-    // 4. إنشاء سجل content (استخدم file_id الموجود من القناة)
-    // ملاحظة: جدول content لا يحتوي على specialty_id/college_id/level/semester
-    if (uploadedFileId) {
-      try {
-        await supabase.insert("content", {
-          subject_id: contribution.subject_id,
-          content_type_id: contribution.content_type_id,
-          title: contribution.title || contribution.file_name,
-          file_name: contribution.file_name,
-          file_size_mb: contribution.file_size_mb || 0,
-          telegram_message_id: null,
-          telegram_file_id: uploadedFileId,
-          added_by_position_id: "central_chair",
-          added_by_telegram_id: ctx.from.id,
-          is_starred: isStarred,
-          is_active: true,
-          academic_year: new Date().getFullYear().toString(),
-        });
-        console.log(`✅ [Ihsan] Content record created for contribution ${contribId}`);
-      } catch (e) {
-        console.error("Failed to create content record:", e);
-      }
+    // 4. إنشاء سجل content — دائماً (حتى لو لم يكن file_id مثالياً)
+    const contentTitle = contribution.title || contribution.file_name || "إحسان علمي";
+    try {
+      await supabase.insert("content", {
+        subject_id: contribution.subject_id,
+        content_type_id: contribution.content_type_id,
+        title: contentTitle,
+        file_name: contribution.file_name || contentTitle,
+        file_size_mb: contribution.file_size_mb || 0,
+        telegram_message_id: null,
+        telegram_file_id: uploadedFileId,
+        added_by_position_id: "central_chair",
+        added_by_telegram_id: ctx.from.id,
+        is_starred: isStarred,
+        is_active: true,
+        academic_year: new Date().getFullYear().toString(),
+      });
+      console.log(`✅ [Ihsan] Content record created for contribution ${contribId}`);
+    } catch (e: any) {
+      const errMsg = String(e?.message || e);
+      console.error(`❌ [Ihsan] Content insert FAILED for ${contribId}:`, errMsg.substring(0, 300));
+      contentInsertError = errMsg.substring(0, 150);
     }
 
     // 5. تحديث حالة المساهمة + منح النقاط
@@ -303,9 +301,9 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
       // عرض رسالة النجاح بالنقاط الفعلية والخروج
       await ctx.editMessageText(
         `${isStarred ? "⭐" : "✅"} *تم اعتماد الإحسان #${contribId}*\n\n` +
-        (uploadedFileId
-          ? `📤 تم رفع الملف لقناة التخزين (message_id: null)\n`
-          : `⚠️ تعذّر رفع الملف لقناة التخزين — تحقق من إعدادات القناة\n`) +
+        (contentInsertError
+          ? `⚠️ *خطأ في إنشاء سجل المحتوى:*\n${contentInsertError}\n\n`
+          : `📤 تم نشر المحتوى للطلاب\n`) +
         `💎 تم منح الطالب ${points} نقطة.`,
         {
           reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
@@ -319,9 +317,9 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
 
     await ctx.editMessageText(
       `${isStarred ? "⭐" : "✅"} *تم اعتماد الإحسان #${contribId}*\n\n` +
-      (uploadedFileId
-        ? `📤 الملف متاح في قناة التخزين\n`
-        : `⚠️ لا يوجد file_id\n`) +
+      (contentInsertError
+        ? `⚠️ *خطأ في إنشاء سجل المحتوى:*\n${contentInsertError}\n\n`
+        : `📤 تم نشر المحتوى للطلاب\n`) +
       `💎 تم منح الطالب نقاطًا.`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),

@@ -261,6 +261,44 @@ export default {
         });
       }
 
+      // ====== Debug: Check content table ======
+      if (url.pathname.startsWith("/debug/content/")) {
+        const subjectId = url.pathname.split("/")[3];
+        const debug: any = { subject_id: subjectId, tests: {} };
+
+        // 1. Check content table for this subject
+        try {
+          const resp = await fetch(
+            `${env.SUPABASE_URL}/rest/v1/content?subject_id=eq.${subjectId}&select=id,title,content_type_id,is_active,telegram_file_id&order=id.desc&limit=10`,
+            { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+          );
+          const body = await resp.text();
+          debug.tests.content = {
+            status: resp.status,
+            ok: resp.ok,
+            body: body.substring(0, 800),
+          };
+        } catch (e: any) { debug.tests.content = { error: e.message }; }
+
+        // 2. Check contributions for this subject
+        try {
+          const resp = await fetch(
+            `${env.SUPABASE_URL}/rest/v1/contributions?subject_id=eq.${subjectId}&select=id,title,status,content_type_id,telegram_file_id&order=id.desc&limit=10`,
+            { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+          );
+          const body = await resp.text();
+          debug.tests.contributions = {
+            status: resp.status,
+            ok: resp.ok,
+            body: body.substring(0, 800),
+          };
+        } catch (e: any) { debug.tests.contributions = { error: e.message }; }
+
+        return new Response(JSON.stringify(debug, null, 2), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
       // ====== Webhook endpoint ======
       if (url.pathname === "/webhook") {
         try {
