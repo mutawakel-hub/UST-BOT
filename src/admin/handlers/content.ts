@@ -147,50 +147,13 @@ export function registerContentHandlers(bot: Bot, supabase: SupabaseClient): voi
     });
   });
 
-  // ====== A5b: استعراض المحتوى ======
-  bot.callbackQuery("browse_content", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
-
-    let manageableContent: any[] = [];
-    try {
-      manageableContent = await getManageableContent(
-        ctx.from.id,
-        session.content_filter
-      );
-    } catch (e) {
-      console.error("browse_content: getManageableContent error:", e);
-      await ctx.editMessageText(
-        "⚠️ *تعذّر تحميل المحتوى*\n\nحدث خطأ أثناء جلب المحتوى. حاول مرة أخرى لاحقاً.",
-        {
-          reply_markup: new InlineKeyboard()
-            .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
-          parse_mode: "Markdown",
-        }
-      );
-      return;
-    }
-
-    if (manageableContent.length === 0) {
-      await ctx.editMessageText(ADMIN_TEXTS.content_mgmt.empty, {
-        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
-        parse_mode: "Markdown",
-      });
-      return;
-    }
-
-    let msg = ADMIN_TEXTS.browse_content.title(manageableContent.length);
-    const kb = new InlineKeyboard();
-    manageableContent.slice(0, 8).forEach((c) => {
-      const icon = c.is_starred ? "⭐" : getContentTypeEmoji(c.content_type_id);
-      kb.text(`${icon} ${c.title.substring(0, 30)} (${c.download_count}⬇️)`, `content_detail_${c.id}`).row();
-    });
-    if (manageableContent.length > 8) {
-      msg += `\n\n📋 عرض أول 8 من ${manageableContent.length} عنصر.\n💡 فلترة المحتوى قريباً في المرحلة 2.`;
-    }
-    kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
-    await ctx.editMessageText(msg, { reply_markup: kb, parse_mode: "Markdown" });
-  });
+  // ====== A5b: استعراض المحتوى — تم نقله لـ content_browse_hierarchy.ts (هرمي)
+  //   - مسؤول مركزي: يبدأ من الكليات
+  //   - مسؤول كلية: يبدأ من التخصصات
+  //   - مسؤول مستوى: يبدأ من المواد
+  //   - زر "عرض كل المحتوى" كخيار بديل (مسطّح)
+  // تم نقل المعالج لتفادي التعارض (grammy يُنفّذ أول middleware مطابق)
+  // ============================================
 
   // ====== A5c: تفاصيل المحتوى ======
   bot.callbackQuery(/content_detail_(\d+)/, async (ctx) => {

@@ -33,6 +33,7 @@ import { initSessionStore } from "./state";
 import { registerDashboardHandlers } from "./handlers/dashboard";
 import { registerContributionHandlers } from "./handlers/contributions";
 import { registerContentHandlers } from "./handlers/content";
+import { registerContentBrowseHierarchyHandlers } from "./handlers/content_browse_hierarchy";
 import { registerContentEditMoveCopyHandlers } from "./handlers/content_edit_move_copy";
 import { registerContentImportHandlers } from "./handlers/content_import";
 import { registerContentAuditLogHandlers } from "./handlers/content_audit_log";
@@ -72,6 +73,7 @@ export function createAdminBot(
   registerDashboardHandlers(bot, supabase);
   registerContributionHandlers(bot, supabase);
   registerContentHandlers(bot, supabase);
+  registerContentBrowseHierarchyHandlers(bot, supabase);
   registerContentEditMoveCopyHandlers(bot, supabase);
   registerContentImportHandlers(bot, supabase);
   registerContentAuditLogHandlers(bot, supabase);

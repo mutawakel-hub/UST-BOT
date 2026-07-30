@@ -642,17 +642,22 @@ export const ADMIN_TEXTS = {
     canceled: "✅ تم إلغاء عملية الرفع.",
   },
 
-  // ====== شاشة A5b: Browse Content ======
+  // ====== شاشة A5b: Browse Content (هرمي — المرحلة 5) ======
   browse_content: {
-    title: (count: number) => `📂 *المحتوى (${count})*\n\nاختر عنصراً للعرض:`,
-    filter_prompt: "🔍 اختر معيار الفلترة:",
-    btn_by_college: "🏛 بالكلية",
-    btn_by_specialty: "📚 بالتخصص",
-    btn_by_subject: "📖 بالمادة",
-    btn_by_type: "🏷 بالنوع",
-    btn_all: "📋 عرض الكل",
-    filter_active: (filterLabel: string) =>
-      `🔍 *الفلترة الحالية:* ${filterLabel}\n\nاختر عنصراً:`,
+    title: (count: number, scopeLabel: string) =>
+      `📂 *استعراض المحتوى*\n📍 ${scopeLabel}\n📊 ${count} عنصر\n\nاختر الكلية:`,
+    title_specialty: (collegeName: string, count: number) =>
+      `📂 *استعراض المحتوى*\n🏛 ${collegeName}\n📊 ${count} عنصر\n\nاختر التخصص:`,
+    title_level: (specName: string, count: number) =>
+      `📂 *استعراض المحتوى*\n📚 ${specName}\n📊 ${count} عنصر\n\nاختر المستوى:`,
+    title_subject: (specName: string, level: number, count: number) =>
+      `📂 *استعراض المحتوى*\n📊 ${specName} — المستوى ${level}\n📊 ${count} عنصر\n\nاختر المادة:`,
+    title_files: (subjectName: string, typeLabel: string, count: number) =>
+      `📂 *${subjectName}* — ${typeLabel}\n📊 ${count} ملف\n\nاختر ملفاً للمعاينة:`,
+    empty: "📭 لا يوجد محتوى ضمن نطاق صلاحياتك حالياً.\n💡 ابدأ بإضافة محتوى من زر ➕ إضافة محتوى.",
+    empty_at_level: (levelLabel: string) => `📭 لا يوجد محتوى في ${levelLabel}.`,
+    btn_flat: "📋 عرض كل المحتوى (مسطّح)",
+    btn_back_to_filters: "🔙 الفلاتر",
   },
 
   // ====== شاشة A5c: Content Detail ======
