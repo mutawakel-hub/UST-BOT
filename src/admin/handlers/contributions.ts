@@ -250,14 +250,11 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     const uploadedMessageId: number | null = null; // message_id منفصل غير متوفر حالياً
 
     // 4. إنشاء سجل content (استخدم file_id الموجود من القناة)
-    if (uploadedFileId && collegeId !== null) {
+    // ملاحظة: جدول content لا يحتوي على specialty_id/college_id/level/semester
+    if (uploadedFileId) {
       try {
         await supabase.insert("content", {
           subject_id: contribution.subject_id,
-          specialty_id: 0,
-          college_id: collegeId,
-          level: 1,
-          semester: 1,
           content_type_id: contribution.content_type_id,
           title: contribution.title || contribution.file_name,
           file_name: contribution.file_name,
@@ -270,6 +267,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
           is_active: true,
           academic_year: new Date().getFullYear().toString(),
         });
+        console.log(`✅ [Ihsan] Content record created for contribution ${contribId}`);
       } catch (e) {
         console.error("Failed to create content record:", e);
       }
