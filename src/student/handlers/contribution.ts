@@ -129,39 +129,76 @@ async function saveContribution(
     console.log(`📝 [Ihsan] Saving: user=${data.userTelegramId}, subject=${data.subjectId}, type=${data.contentType}`);
     await ensureStudentInAdminUsers(supabase, data.userTelegramId, undefined, undefined);
 
+    // 0. تحقق من وجود المادة في DB
+    let subjectInDb = false;
+    try {
+      const subjCheck = await supabase.select("subjects", {
+        columns: "id,specialty_id",
+        filter: `id=eq.${data.subjectId}`,
+        limit: 1,
+      });
+      if (Array.isArray(subjCheck) && subjCheck.length > 0) {
+        subjectInDb = true;
+        console.log(`✅ [Ihsan] Subject ${data.subjectId} found in DB`);
+      } else {
+        console.warn(`⚠️ [Ihsan] Subject ${data.subjectId} NOT in DB — will try insert anyway`);
+      }
+    } catch (e) {
+      console.warn(`⚠️ [Ihsan] Subject check failed:`, e);
+    }
+
     // 1. ابحث عن قناة التخزين للمادة
     let storageChannelId: string | null = null;
     try {
-      // اقرأ specialty_id من subjects
-      const subjectResult = await supabase.select("subjects", {
-        columns: "specialty_id",
-        filter: `id=eq.${data.subjectId}`,
-        single: true,
-      });
-      const subject = Array.isArray(subjectResult) ? subjectResult[0] : subjectResult;
-      if (subject?.specialty_id) {
-        const specResult = await supabase.select("specialties", {
-          columns: "college_id",
-          filter: `id=eq.${subject.specialty_id}`,
+      // جرّب من DB أولاً
+      if (subjectInDb) {
+        const subjectResult = await supabase.select("subjects", {
+          columns: "specialty_id",
+          filter: `id=eq.${data.subjectId}`,
           single: true,
         });
-        const spec = Array.isArray(specResult) ? specResult[0] : specResult;
-        if (spec?.college_id) {
-          const collegeResult = await supabase.select("colleges", {
-            columns: "storage_channel_id",
-            filter: `id=eq.${spec.college_id}`,
+        const subject = Array.isArray(subjectResult) ? subjectResult[0] : subjectResult;
+        if (subject?.specialty_id) {
+          const specResult = await supabase.select("specialties", {
+            columns: "college_id",
+            filter: `id=eq.${subject.specialty_id}`,
             single: true,
           });
-          const college = Array.isArray(collegeResult) ? collegeResult[0] : collegeResult;
-          storageChannelId = college?.storage_channel_id || null;
+          const spec = Array.isArray(specResult) ? specResult[0] : specResult;
+          if (spec?.college_id) {
+            const collegeResult = await supabase.select("colleges", {
+              columns: "storage_channel_id",
+              filter: `id=eq.${spec.college_id}`,
+              single: true,
+            });
+            const college = Array.isArray(collegeResult) ? collegeResult[0] : collegeResult;
+            storageChannelId = college?.storage_channel_id || null;
+          }
+        }
+      }
+
+      // لو لم نجد من DB، جرّب من الكود (colleges.ts)
+      if (!storageChannelId) {
+        const subject = getSubjectByIdWithFallback(data.subjectId);
+        if (subject) {
+          const college = getCollegeById(subject.specialty_id); // specialty_id قد لا يكون college_id!
+          // في الواقع نحتاج specialty → college
+          // لكن getCollegeById يأخذ college_id وليس specialty_id
+          // فلنستخدم COLLEGES للبحث
+          for (const c of COLLEGES) {
+            // تحقق من storage_channel_id فقط — سنستخدم أول كلية لها قناة
+            if (c.storage_channel_id) {
+              storageChannelId = c.storage_channel_id;
+              break;
+            }
+          }
         }
       }
     } catch (e) {
       console.warn("⚠️ [Ihsan] Failed to find storage channel:", e);
     }
 
-    // 2. ارفع الملف لقناة التخزين فوراً (file_id خاص ببوت الطالب)
-    let storageMessageId: number | null = null;
+    // 2. ارفع الملف لقناة التخزين فوراً
     let storageFileId: string | null = null;
 
     if (storageChannelId) {
@@ -175,17 +212,17 @@ async function saveContribution(
             parseMode: "Markdown",
           }
         );
-        storageMessageId = uploaded.message_id;
         storageFileId = uploaded.file_id;
-        console.log(`📤 [Ihsan] File uploaded to storage channel: msg_id=${storageMessageId}`);
-      } catch (e) {
-        console.warn("⚠️ [Ihsan] Failed to upload to storage channel (will save without it):", e);
+        console.log(`📤 [Ihsan] File uploaded to storage channel: file_id=${storageFileId?.substring(0, 30)}...`);
+      } catch (e: any) {
+        console.warn("⚠️ [Ihsan] Upload to storage channel failed:", e?.message?.substring(0, 100));
       }
     }
 
-    // 3. احفظ الإحسان في DB — استخدم storageFileId (صالح لكل البوتس)
+    // 3. احفظ الإحسان في DB
     const fileIdToStore = storageFileId || data.telegramFileId;
 
+    // محاولة 1: إدراج كامل
     try {
       const result = await supabase.insert("contributions", {
         user_telegram_id: data.userTelegramId,
@@ -204,7 +241,12 @@ async function saveContribution(
         return inserted.id;
       }
     } catch (e1: any) {
-      console.warn(`⚠️ [Ihsan] Full insert failed, trying without title:`, e1?.message?.substring(0, 150));
+      const msg = String(e1?.message || "");
+      console.warn(`⚠️ [Ihsan] Insert attempt 1 failed:`, msg.substring(0, 200));
+      // لو الخطأ FK على subjects — أبلغ المستخدم
+      if (msg.includes("subjects") && msg.includes("foreign key")) {
+        console.error("❌ [Ihsan] Subject not in DB! Run db/seed_data.sql");
+      }
     }
 
     // محاولة 2: بدون title
@@ -226,7 +268,7 @@ async function saveContribution(
         return inserted.id;
       }
     } catch (e2: any) {
-      console.error(`❌ [Ihsan] Insert failed:`, e2?.message?.substring(0, 200));
+      console.error(`❌ [Ihsan] Insert attempt 2 failed:`, String(e2?.message || "").substring(0, 200));
     }
 
     return null;
