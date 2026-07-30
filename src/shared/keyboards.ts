@@ -196,18 +196,19 @@ export function subjectsKeyboard(
 // ============================================
 export function subjectMenuKeyboard(
   subjectId: number,
-  hasPractical: boolean
+  hasPractical: boolean,
+  fileCounts?: Record<string, number>
 ): InlineKeyboard {
   const kb = new InlineKeyboard();
 
-  // عدّاد الملفات لكل تصنيف
-  const theoryCount = getFileCountForCategory(subjectId, "book_theory");
-  const practicalCount = getFileCountForCategory(subjectId, "book_practical");
-  const summariesCount = getFileCountForCategory(subjectId, "summary");
-  const examsCount = getFileCountForCategory(subjectId, "exam");
-  const videoCount = getFileCountForCategory(subjectId, "video");
-  const referenceCount = getFileCountForCategory(subjectId, "reference");
-  const scheduleCount = getFileCountForCategory(subjectId, "schedule");
+  // عدّاد الملفات — من Supabase (لو متوفر) أو 0
+  const theoryCount = fileCounts?.book_theory ?? 0;
+  const practicalCount = fileCounts?.book_practical ?? 0;
+  const summariesCount = fileCounts?.summary ?? 0;
+  const examsCount = fileCounts?.exam ?? 0;
+  const videoCount = fileCounts?.video ?? 0;
+  const referenceCount = fileCounts?.reference ?? 0;
+  const scheduleCount = fileCounts?.schedule ?? 0;
 
   // صف 1: نظري + عملي
   kb.text(`📘 المقرر (نظري) — ${theoryCount}`, `type_book_theory_${subjectId}`);

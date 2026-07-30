@@ -229,6 +229,24 @@ export function registerNavigationHandlers(bot: Bot, supabase: SupabaseClient): 
     const spec = getSpecialtyById(subject.specialty_id);
     const college = getCollegeById(spec?.college_id || 0);
 
+    // اقرأ عدّادات الملفات من Supabase
+    let fileCounts: Record<string, number> | undefined;
+    try {
+      const result = await supabase.select("content", {
+        columns: "content_type_id",
+        filter: `subject_id=eq.${subjectId}&is_active=eq.true`,
+      });
+      if (Array.isArray(result) && result.length > 0) {
+        fileCounts = {};
+        for (const row of result) {
+          const ct = row.content_type_id;
+          fileCounts[ct] = (fileCounts[ct] || 0) + 1;
+        }
+      }
+    } catch (e) {
+      // تجاهل — سنستخدم 0
+    }
+
     const bc = subject.specialty_id === 16
       ? breadcrumb(
           "🏛 الكليات",
@@ -241,7 +259,7 @@ export function registerNavigationHandlers(bot: Bot, supabase: SupabaseClient): 
       : `📖 *${subject.name}*`;
 
     await ctx.editMessageText(`${bc}\n\n${TEXTS.subject_menu.title(subject.name)}`, {
-      reply_markup: subjectMenuKeyboard(subjectId, subject.has_practical),
+      reply_markup: subjectMenuKeyboard(subjectId, subject.has_practical, fileCounts),
       parse_mode: "Markdown",
     });
   });
@@ -338,8 +356,25 @@ export function registerNavigationHandlers(bot: Bot, supabase: SupabaseClient): 
     const subject = getSubjectByIdWithFallback(subjectId);
     await ctx.answerCallbackQuery();
     if (!subject) return;
+
+    // اقرأ عدّادات الملفات من Supabase
+    let fileCounts: Record<string, number> | undefined;
+    try {
+      const result = await supabase.select("content", {
+        columns: "content_type_id",
+        filter: `subject_id=eq.${subjectId}&is_active=eq.true`,
+      });
+      if (Array.isArray(result) && result.length > 0) {
+        fileCounts = {};
+        for (const row of result) {
+          const ct = row.content_type_id;
+          fileCounts[ct] = (fileCounts[ct] || 0) + 1;
+        }
+      }
+    } catch {}
+
     await ctx.editMessageText(TEXTS.subject_menu.title(subject.name), {
-      reply_markup: subjectMenuKeyboard(subjectId, subject.has_practical),
+      reply_markup: subjectMenuKeyboard(subjectId, subject.has_practical, fileCounts),
       parse_mode: "Markdown",
     });
   });
