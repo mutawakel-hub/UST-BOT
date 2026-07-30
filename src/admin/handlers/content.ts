@@ -110,8 +110,9 @@ async function showContentDetail(bot: Bot, supabase: SupabaseClient, ctx: any, c
 // ============================================
 async function getScopeLabel(perms: any): Promise<string> {
   if (perms.is_central) return "🌍 كل الكليات";
-  if (perms.effective_scope?.colleges?.length > 0) {
-    const collegeIds = perms.effective_scope.colleges;
+  const collegesSet: Set<number> | undefined = perms.effective_scope?.colleges;
+  if (collegesSet && collegesSet.size > 0) {
+    const collegeIds = Array.from(collegesSet);
     const colleges = collegeIds.map((id: number) => getCollegeById(id)?.short_name).filter(Boolean);
     if (colleges.length > 0) return `🏛 ${colleges.join("، ")}`;
   }
@@ -150,10 +151,25 @@ export function registerContentHandlers(bot: Bot, supabase: SupabaseClient): voi
   bot.callbackQuery("browse_content", async (ctx) => {
     await ctx.answerCallbackQuery();
     const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const manageableContent = await getManageableContent(
-      ctx.from.id,
-      session.content_filter
-    );
+
+    let manageableContent: any[] = [];
+    try {
+      manageableContent = await getManageableContent(
+        ctx.from.id,
+        session.content_filter
+      );
+    } catch (e) {
+      console.error("browse_content: getManageableContent error:", e);
+      await ctx.editMessageText(
+        "⚠️ *تعذّر تحميل المحتوى*\n\nحدث خطأ أثناء جلب المحتوى. حاول مرة أخرى لاحقاً.",
+        {
+          reply_markup: new InlineKeyboard()
+            .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
 
     if (manageableContent.length === 0) {
       await ctx.editMessageText(ADMIN_TEXTS.content_mgmt.empty, {
@@ -166,7 +182,7 @@ export function registerContentHandlers(bot: Bot, supabase: SupabaseClient): voi
     let msg = ADMIN_TEXTS.browse_content.title(manageableContent.length);
     const kb = new InlineKeyboard();
     manageableContent.slice(0, 8).forEach((c) => {
-      const icon = c.is_starred ? "⭐" : getContentTypeEmoji(c.content_type);
+      const icon = c.is_starred ? "⭐" : getContentTypeEmoji(c.content_type_id);
       kb.text(`${icon} ${c.title.substring(0, 30)} (${c.download_count}⬇️)`, `content_detail_${c.id}`).row();
     });
     if (manageableContent.length > 8) {
@@ -527,40 +543,16 @@ export function registerContentHandlers(bot: Bot, supabase: SupabaseClient): voi
   });
 
   // ============================================
-  // Stubs للأزرار القادمة في المرحلة 2 و 3
+  // ملاحظة: المعالجات التالية مُسجّلة في ملفات منفصلة:
+  //   - search_content        → content_search_stats.ts
+  //   - content_stats         → content_search_stats.ts
+  //   - import_content        → content_import.ts
+  //   - content_audit_log     → content_audit_log.ts
+  //   - edit_content_<id>     → content_edit_move_copy.ts
+  //   - move_content_<id>     → content_edit_move_copy.ts
+  //   - copy_content_<id>     → content_edit_move_copy.ts
+  //
+  // لا تُسجّلها هنا كـ stubs — grammy يُنفّذ أول middleware مطابق
+  // فلو سُجّلت هنا، ستعترض المعالجات الحقيقية في الملفات الأخرى.
   // ============================================
-  bot.callbackQuery("search_content", async (ctx) => {
-    // تم نقل المعالجة لـ content_search_stats.ts (المرحلة 4)
-    await ctx.answerCallbackQuery();
-  });
-
-  bot.callbackQuery("content_stats", async (ctx) => {
-    // تم نقل المعالجة لـ content_search_stats.ts (المرحلة 4)
-    await ctx.answerCallbackQuery();
-  });
-
-  bot.callbackQuery("import_content", async (ctx) => {
-    // تم نقل المعالجة لـ content_import.ts (المرحلة 3)
-    await ctx.answerCallbackQuery();
-  });
-
-  bot.callbackQuery("content_audit_log", async (ctx) => {
-    // تم نقل المعالجة لـ content_audit_log.ts (المرحلة 3)
-    await ctx.answerCallbackQuery();
-  });
-
-  bot.callbackQuery(/edit_content_(\d+)/, async (ctx) => {
-    // تم نقل المعالجة لـ content_edit_move_copy.ts (المرحلة 2)
-    await ctx.answerCallbackQuery();
-  });
-
-  bot.callbackQuery(/move_content_(\d+)/, async (ctx) => {
-    // تم نقل المعالجة لـ content_edit_move_copy.ts (المرحلة 2)
-    await ctx.answerCallbackQuery();
-  });
-
-  bot.callbackQuery(/copy_content_(\d+)/, async (ctx) => {
-    // تم نقل المعالجة لـ content_edit_move_copy.ts (المرحلة 2)
-    await ctx.answerCallbackQuery();
-  });
 }

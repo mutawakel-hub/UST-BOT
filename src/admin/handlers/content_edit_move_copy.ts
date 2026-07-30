@@ -379,11 +379,16 @@ export function registerContentEditMoveCopyHandlers(bot: Bot, supabase: Supabase
     );
   });
 
-  // اختيار التخصص → المستوى
+  // اختيار التخصص → المستوى (+ تخزين specId في session)
   bot.callbackQuery(/move_spec_(\d+)_(\d+)/, async (ctx) => {
     const specId = parseInt(ctx.match[1]);
     const contentId = parseInt(ctx.match[2]);
     await ctx.answerCallbackQuery();
+
+    // خزّن specId في session ليُستخدم لاحقاً في move_lvl_
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    (session as any).awaiting_content_move_spec = specId;
+    await saveSession(session);
 
     const spec = getSpecialtyById(specId);
     const kb = levelsKeyboard(specId, "move", contentId);
@@ -399,21 +404,7 @@ export function registerContentEditMoveCopyHandlers(bot: Bot, supabase: Supabase
     const contentId = parseInt(ctx.match[2]);
     await ctx.answerCallbackQuery();
 
-    // نحتاج specialty_id من آخر اختيار — لكنه غير مخزّن في session
-    // الحل: نقرأه من الـ callback السابق غير ممكن، فنخزّنه في session
     const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    // specialty_id مخزّنة في حقل مؤقت
-    if (!session.import_context) {
-      session.import_context = {};
-    }
-    // لا، الأفضل تخزينه في حقل مخصص — لنضيفه لـ awaiting_content_move_step
-    // الحل الأبسط: نمرّر specId في كل callback
-    // لكن callbacks الطويلة قد تتجاوز حد تلغرام (64 بايت)
-    // الحل: نخزّن specId في session عند move_spec_
-    // دعنا نعدّل move_spec_ ليخزّن specId
-    // (تم التعديل أدناه في move_spec_)
-
-    // لذا نحتاج specialty_id — نقرأه من session
     const specId = (session as any).awaiting_content_move_spec;
     if (!specId) {
       await ctx.reply("⚠️ انتهت الجلسة. ابدأ النقل من جديد.");
@@ -424,26 +415,6 @@ export function registerContentEditMoveCopyHandlers(bot: Bot, supabase: Supabase
     const kb = await subjectsKeyboard(supabase, specId, level, "move", contentId);
     await ctx.editMessageText(
       ADMIN_TEXTS.content_move.select_subject(spec?.name || "", level),
-      { reply_markup: kb, parse_mode: "Markdown" }
-    );
-  });
-
-  // PATCH: تحديث move_spec_ لتخزين specId في session
-  // (سنعيد تعريفها فوق)
-  // ملاحظة: grammy يعالج الـ callbacks بترتيب التسجيل، لذا التعريف الأخير يفوز
-  // لكن لتجنب الالتباس، نستخدم حقل في session
-  bot.callbackQuery(/move_spec_(\d+)_(\d+)/, async (ctx) => {
-    const specId = parseInt(ctx.match[1]);
-    const contentId = parseInt(ctx.match[2]);
-    await ctx.answerCallbackQuery();
-    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    (session as any).awaiting_content_move_spec = specId;
-    await saveSession(session);
-
-    const spec = getSpecialtyById(specId);
-    const kb = levelsKeyboard(specId, "move", contentId);
-    await ctx.editMessageText(
-      ADMIN_TEXTS.content_move.select_level(spec?.name || ""),
       { reply_markup: kb, parse_mode: "Markdown" }
     );
   });

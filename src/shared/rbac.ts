@@ -86,16 +86,16 @@ export function initRbac(supabase: SupabaseClient, cacheKv: KVNamespace): void {
 // المستخدم لديه عدة مناصب. نُجمّعها هنا في UserPermissions واحدة.
 // ============================================
 export async function getUserPermissions(telegramId: number): Promise<UserPermissions> {
-  console.log(`🔍 [RBAC] getUserPermissions(${telegramId}) called`);
-
-  // 0. امسح cache أولاً (DIAGNOSTIC MODE — يمكن تعطيله لاحقاً)
-  // هذا يضمن أننا نقرأ من DB بدلاً من cache قديم
+  // 0. تحقق من cache أولاً (مدة 5 دقائق)
+  // ملاحظة: DIAGNOSTIC MODE السابق كان يحذف cache دائماً — عطّلناه للأداء
   const cacheKey = `perms:${telegramId}`;
   try {
-    await cacheStore.delete(cacheKey);
-    console.log(`🧹 [RBAC] Cleared cache for user ${telegramId} (diagnostic mode)`);
+    const cached = await cacheStore.get(cacheKey);
+    if (cached) {
+      return deserializePermissions(cached);
+    }
   } catch (e) {
-    console.warn(`⚠️ [RBAC] Failed to clear cache:`, e);
+    console.warn(`⚠️ [RBAC] Cache read failed:`, e);
   }
 
   // 1. محاولة أولى: استخدم View `user_permissions` (الأسرع لو يعمل)
@@ -581,6 +581,10 @@ async function fetchLevelPositionsForColleges(collegeIds: number[]): Promise<Use
 // يستخدم Supabase مع PostgREST filters.
 // لو مركزي: كل المحتوى النشط.
 // لو مسؤول كلية/مستوى: المحتوى في كلياته فقط.
+//
+// ملاحظة معمارية: جدول content لا يحتوي على college_id/specialty_id/level/semester.
+// العلاقة: content.subject_id → subjects.id → subjects.specialty_id → specialties.id → specialties.college_id
+// لذا نطبّق فلتر النطاق عبر JOIN منطقي: نجلب subject_ids للكليات أولاً ثم نفلتر content.
 export async function getManageableContent(
   telegramId: number,
   filters?: {
@@ -590,30 +594,91 @@ export async function getManageableContent(
     content_type?: string;
   }
 ): Promise<any[]> {
-  const userPerms = await getUserPermissions(telegramId);
+  try {
+    const userPerms = await getUserPermissions(telegramId);
 
-  // بناء الفلتر
-  const filterParts: string[] = ["is_active=eq.true"];
+    // بناء الفلتر الأساسي
+    const filterParts: string[] = ["is_active=eq.true"];
 
-  if (!userPerms.is_central) {
-    const collegeIds = Array.from(userPerms.effective_scope.colleges);
-    if (collegeIds.length === 0) return [];
-    filterParts.push(`college_id=in.(${collegeIds.join(",")})`);
+    // فلتر النطاق حسب الصلاحية
+    if (!userPerms.is_central) {
+      const collegeIds = Array.from(userPerms.effective_scope.colleges || []);
+      if (collegeIds.length === 0) return [];
+
+      // اجلب specialty_ids للكليات
+      let specIds: number[] = [];
+      try {
+        const specs = await supabaseClient.select("specialties", {
+          columns: "id",
+          filter: `college_id=in.(${collegeIds.join(",")})`,
+          limit: 200,
+        });
+        specIds = (Array.isArray(specs) ? specs : []).map((s: any) => s.id);
+      } catch (e) {
+        console.error("getManageableContent: specialties fetch error:", e);
+        return [];
+      }
+      if (specIds.length === 0) return [];
+
+      // اجلب subject_ids للتخصصات
+      let subjectIds: number[] = [];
+      try {
+        const subjects = await supabaseClient.select("subjects", {
+          columns: "id",
+          filter: `specialty_id=in.(${specIds.join(",")})`,
+          limit: 1000,
+        });
+        subjectIds = (Array.isArray(subjects) ? subjects : []).map((s: any) => s.id);
+      } catch (e) {
+        console.error("getManageableContent: subjects fetch error:", e);
+        return [];
+      }
+      if (subjectIds.length === 0) return [];
+
+      filterParts.push(`subject_id=in.(${subjectIds.join(",")})`);
+    }
+
+    // فلاتر اختيارية إضافية
+    if (filters?.subject_id) filterParts.push(`subject_id=eq.${filters.subject_id}`);
+    if (filters?.content_type) filterParts.push(`content_type_id=eq.${filters.content_type}`);
+
+    // لو فلتر college_id أو specialty_id محدد — نطبّقه عبر subject_ids
+    if (filters?.college_id || filters?.specialty_id) {
+      let specFilter = "";
+      if (filters?.specialty_id) {
+        specFilter = `specialty_id=eq.${filters.specialty_id}`;
+      } else if (filters?.college_id) {
+        const specs = await supabaseClient.select("specialties", {
+          columns: "id",
+          filter: `college_id=eq.${filters.college_id}`,
+          limit: 200,
+        });
+        const specIds = (Array.isArray(specs) ? specs : []).map((s: any) => s.id);
+        if (specIds.length === 0) return [];
+        specFilter = `specialty_id=in.(${specIds.join(",")})`;
+      }
+      const subjects = await supabaseClient.select("subjects", {
+        columns: "id",
+        filter: specFilter,
+        limit: 1000,
+      });
+      const subjectIds = (Array.isArray(subjects) ? subjects : []).map((s: any) => s.id);
+      if (subjectIds.length === 0) return [];
+      filterParts.push(`subject_id=in.(${subjectIds.join(",")})`);
+    }
+
+    const result = await supabaseClient.select("content", {
+      columns: "id,title,file_name,file_size_mb,file_size_bytes,mime_type,subject_id,content_type_id,telegram_message_id,telegram_file_id,is_starred,download_count,added_at,academic_year,added_by_telegram_id,added_by_position_id",
+      filter: filterParts.join("&"),
+      order: "is_starred.desc,added_at.desc",
+      limit: 50,
+    });
+
+    return Array.isArray(result) ? result : [];
+  } catch (e) {
+    console.error("getManageableContent error:", e);
+    return [];
   }
-
-  if (filters?.college_id) filterParts.push(`college_id=eq.${filters.college_id}`);
-  if (filters?.specialty_id) filterParts.push(`specialty_id=eq.${filters.specialty_id}`);
-  if (filters?.subject_id) filterParts.push(`subject_id=eq.${filters.subject_id}`);
-  if (filters?.content_type) filterParts.push(`content_type_id=eq.${filters.content_type}`);
-
-  const result = await supabaseClient.select("content", {
-    columns: "id,title,file_name,file_size_mb,college_id,specialty_id,subject_id,content_type_id,level,semester,is_starred,download_count,added_at,academic_year",
-    filter: filterParts.join("&"),
-    order: "is_starred.desc,added_at.desc",
-    limit: 50,
-  });
-
-  return Array.isArray(result) ? result : [];
 }
 
 // ============================================

@@ -101,7 +101,21 @@ export function registerContentSearchStatsHandlers(bot: Bot, supabase: SupabaseC
     const scopeLabel = await getScopeLabel(perms);
 
     // جلب كل المحتوى ضمن النطاق
-    const allContent = await getManageableContent(ctx.from.id);
+    let allContent: any[] = [];
+    try {
+      allContent = await getManageableContent(ctx.from.id);
+    } catch (e) {
+      console.error("content_stats: getManageableContent error:", e);
+      await ctx.editMessageText(
+        "⚠️ *تعذّر تحميل الإحصائيات*\n\nحدث خطأ أثناء جلب البيانات. حاول مرة أخرى لاحقاً.",
+        {
+          reply_markup: new InlineKeyboard().text("🔙 إدارة المحتوى", "content_mgmt"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
     if (allContent.length === 0) {
       await ctx.editMessageText(
         ADMIN_TEXTS.content_stats.empty,
@@ -220,7 +234,20 @@ export async function executeContentSearch(
   // البحث في title + file_name عبر ilike
   // نحتاج فلتر college_id عبر subjects → specialties
   // الأبسط: نأخذ كل المحتوى ضمن النطاق (getManageableContent) ثم نفلتر يدوياً
-  const allContent = await getManageableContent(ctx.from.id);
+  let allContent: any[] = [];
+  try {
+    allContent = await getManageableContent(ctx.from.id);
+  } catch (e) {
+    console.error("executeContentSearch: getManageableContent error:", e);
+    await ctx.reply(
+      "⚠️ تعذّر إجراء البحث. حاول مرة أخرى لاحقاً.",
+      {
+        reply_markup: new InlineKeyboard().text("🔙 إدارة المحتوى", "content_mgmt"),
+        parse_mode: "Markdown",
+      }
+    );
+    return;
+  }
   const q = query.trim().toLowerCase();
 
   const results = allContent.filter((c: any) => {
