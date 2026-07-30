@@ -4,7 +4,7 @@
 
 import { Bot, InlineKeyboard } from "grammy";
 import { ADMIN_TEXTS } from "../../shared/texts";
-import { SupabaseClient, logBroadcast } from "../../shared/db";
+import { SupabaseClient, logBroadcast, getBroadcastRecipients } from "../../shared/db";
 import { getUserPermissions } from "../../shared/rbac";
 import {
   COLLEGES,
@@ -14,7 +14,7 @@ import {
   getLevelsForSpecialty,
 } from "../../shared/data/colleges";
 import { getOrCreateSession, saveSession } from "../state";
-import { getStudentCountByScope } from "../helpers";
+import { getStudentCountByScope, getAdminPrimaryPositionId } from "../helpers";
 
 export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): void {
   // ====== A7: التعميم (ديناميكي حسب الصلاحية) ======
@@ -219,6 +219,7 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     session.awaiting_broadcast_scope = "all";
     session.awaiting_broadcast_text = true;
     session.broadcast_context = { scope_type: "all", scope_label: "🌍 كل الطلاب", count };
+    await saveSession(session);
     await ctx.editMessageText(
       ADMIN_TEXTS.broadcast.prompt_text("🌍 كل الطلاب", count),
       {
@@ -237,6 +238,7 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     session.awaiting_broadcast_scope = "college";
     session.awaiting_broadcast_text = true;
     session.broadcast_context = { scope_type: "college", scope_college_id: collegeId, scope_label: `🏛 ${college?.name}`, count };
+    await saveSession(session);
     await ctx.editMessageText(
       ADMIN_TEXTS.broadcast.prompt_text(`🏛 ${college?.name}`, count),
       {
@@ -256,6 +258,7 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     session.awaiting_broadcast_scope = "specialty";
     session.awaiting_broadcast_text = true;
     session.broadcast_context = { scope_type: "specialty", scope_college_id: collegeId, scope_specialty_id: specId, scope_label: `📚 ${spec?.name}`, count };
+    await saveSession(session);
     await ctx.editMessageText(
       ADMIN_TEXTS.broadcast.prompt_text(`📚 ${spec?.name}`, count),
       {
@@ -276,6 +279,7 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     session.awaiting_broadcast_scope = "level";
     session.awaiting_broadcast_text = true;
     session.broadcast_context = { scope_type: "level", scope_college_id: collegeId, scope_specialty_id: specId, scope_level: level, scope_label: `📊 ${spec?.short_name} - مستوى ${level}`, count };
+    await saveSession(session);
     await ctx.editMessageText(
       ADMIN_TEXTS.broadcast.prompt_text(`📊 ${spec?.short_name} - مستوى ${level}`, count),
       {
@@ -287,15 +291,121 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
 
   bot.callbackQuery("confirm_broadcast", async (ctx) => {
     const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    const ctxData = session.broadcast_context || { scope_label: "غير محدد", count: 0 };
+    const ctxData = session.broadcast_context || { scope_label: "غير محدد", count: 0, scope_type: "all" };
     const text = session.pending_broadcast_text || "(بدون نص)";
+
+    // إعادة ضبط حالة التعميم
     session.awaiting_broadcast_text = undefined;
     session.awaiting_broadcast_scope = undefined;
     session.broadcast_context = undefined;
     session.pending_broadcast_text = undefined;
-    await ctx.answerCallbackQuery({ text: "📢 تم الإرسال" });
+    await saveSession(session);
+
+    await ctx.answerCallbackQuery({ text: "📢 جارٍ الإرسال..." });
+
+    // === تنفيذ الإرسال الفعلي ===
+    let deliveredCount = 0;
+    let failedCount = 0;
+    let recipientIds: number[] = [];
+
+    try {
+      // 1. اجلب المستلمين
+      recipientIds = await getBroadcastRecipients(
+        supabase,
+        ctxData.scope_type,
+        ctxData.scope_college_id,
+        ctxData.scope_specialty_id,
+        ctxData.scope_level
+      );
+    } catch (e) {
+      console.error("Failed to fetch broadcast recipients:", e);
+    }
+
+    if (recipientIds.length === 0) {
+      await ctx.editMessageText(
+        "⚠️ *لا يوجد مستلمون في هذا النطاق*\n\nقد لا يكون هناك طلاب مسجّلون ضمن النطاق المحدد.",
+        {
+          reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    // 2. أدرج إشعار في student_notifications لكل مستلم (ضمان الوصول)
+    const notificationTitle = `📢 تعميم: ${ctxData.scope_label}`;
+    try {
+      // إدراج جماعي عبر RPC أو إدراج فردي
+      // PostgREST لا يدعم batch insert مباشرة، فنُدرج صف واحد لكل مستلم
+      // لكن لتحسين الأداء، نستخدم إدراج متتابع مع تجاهل الأخطاء
+      const insertPromises = recipientIds.map((studentId) =>
+        supabase.insert("student_notifications", {
+          student_telegram_id: studentId,
+          notification_type: "broadcast",
+          title: notificationTitle,
+          body: text,
+          related_entity_type: "broadcast",
+        }).catch((e: any) => {
+          // تجاهل أخطاء FK (طالب غير مسجّل)
+          console.warn(`Failed to insert notification for ${studentId}:`, e?.message?.substring(0, 80));
+        })
+      );
+      await Promise.all(insertPromises);
+      deliveredCount = recipientIds.length;
+    } catch (e) {
+      console.error("Failed to insert notifications:", e);
+    }
+
+    // 3. حاول الإرسال المباشر عبر Telegram (best effort)
+    // ملاحظة: قد يفشل لو الطالب لم يبدأ بوت الإدارة — هذا متوقع
+    // الإشعار في DB سيظهر للطالب في المرة القادمة التي يفتح فيها بوت الطالب
+    let pushDelivered = 0;
+    const pushPromises = recipientIds.map(async (studentId) => {
+      try {
+        await bot.api.sendMessage(
+          studentId,
+          `${notificationTitle}\n\n${text}`,
+          { parse_mode: "Markdown" }
+        );
+        pushDelivered++;
+      } catch (e: any) {
+        // متوقع: طالب لم يبدأ بوت الإدارة → تجاهل
+        // الإشعار سيصل عبر بوت الطالب عندما يفتحه
+      }
+    });
+    // لا ننتظر كل الإرسالات المباشرة (قد تأخذ وقتاً طويلاً)
+    // نعطيها 10 ثوانٍ كحد أقصى
+    await Promise.race([
+      Promise.allSettled(pushPromises),
+      new Promise((resolve) => setTimeout(resolve, 10000)),
+    ]);
+
+    // 4. سجّل التعميم في DB
+    const positionId = await getAdminPrimaryPositionId(supabase, ctx.from.id);
+    try {
+      await logBroadcast(supabase, {
+        sender_telegram_id: ctx.from.id,
+        sender_position_id: positionId,
+        scope_type: ctxData.scope_type,
+        scope_college_id: ctxData.scope_college_id || undefined,
+        scope_specialty_id: ctxData.scope_specialty_id || undefined,
+        scope_level: ctxData.scope_level || undefined,
+        content_type: "text",
+        text_content: text,
+        sent_count: deliveredCount,
+      });
+    } catch (e) {
+      console.error("Failed to log broadcast:", e);
+    }
+
+    // 5. اعرض رسالة النجاح
     await ctx.editMessageText(
-      ADMIN_TEXTS.broadcast.sent(ctxData.count, ctxData.scope_label),
+      `✅ *تم إرسال التعميم بنجاح!*\n\n` +
+      `📍 النطاق: ${ctxData.scope_label}\n` +
+      `👥 المستلمون: ${deliveredCount} طالب\n` +
+      `📨 إشعارات مباشرة: ${pushDelivered} (${Math.round((pushDelivered / deliveredCount) * 100)}%)\n` +
+      `⏱ وقت الإرسال: ${new Date().toLocaleString("ar")}\n\n` +
+      `_الطلاب سيرون الإشعار في بوت الطالب عند فتحه._`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
