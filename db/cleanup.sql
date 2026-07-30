@@ -17,11 +17,15 @@ DROP FUNCTION IF EXISTS award_contribution_points(BIGINT, BIGINT, BIGINT, TEXT, 
 DROP FUNCTION IF EXISTS notify_contribution_rejected(BIGINT, BIGINT, TEXT) CASCADE;
 DROP FUNCTION IF EXISTS get_broadcast_recipients(TEXT, INT, INT, INT) CASCADE;
 DROP FUNCTION IF EXISTS register_student(BIGINT, TEXT, TEXT, INT, INT, INT) CASCADE;
+DROP FUNCTION IF EXISTS increment_download(BIGINT) CASCADE;
+DROP FUNCTION IF EXISTS count_pending_for_scope(INT, INT, INT) CASCADE;
 
 -- حذف الـ Views
 DROP VIEW IF EXISTS user_permissions CASCADE;
 
 -- حذف الجداول (بالترتيب العكسي للتبعيات)
+DROP TABLE IF EXISTS ihsan_archive CASCADE;
+DROP TABLE IF EXISTS ihsan_settings CASCADE;
 DROP TABLE IF EXISTS student_notifications CASCADE;
 DROP TABLE IF EXISTS points_reset_logs CASCADE;
 DROP TABLE IF EXISTS contribution_honors CASCADE;
