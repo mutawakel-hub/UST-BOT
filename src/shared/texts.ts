@@ -741,10 +741,46 @@ export const ADMIN_TEXTS = {
     my_positions_empty: "⚠️ لا تشغل أي منصب حالياً.",
     my_positions_title: (count: number) => `👤 *مناصبي الحالية (${count})*\n\n`,
 
+    // ===== الهيكل الإداري التفاعلي =====
+    org_chart_title: "🗂️ *الهيكل الإداري*\n\nاختر كلية لعرض تفاصيلها:",
+    org_chart_college: (collegeName: string, holderName: string | null, totalReps: number, filledReps: number) =>
+      `🗂️ *${collegeName}*\n\n` +
+      `👤 مسؤول الكلية: ${holderName || "⚠️ شاغر"}\n` +
+      `📊 المندوبين: ${filledReps}/${totalReps} مشغول\n\n` +
+      `اختر تخصصاً لعرض المندوبين:`,
+    org_chart_specialty: (specName: string, collegeName: string) =>
+      `📚 *${specName}* — ${collegeName}\n\n`,
+    org_chart_level: (level: number, holderName: string | null) =>
+      `📊 المستوى ${level}: ${holderName || "⚠️ شاغر"}\n`,
+
+    // ===== سجل التعيينات بفلاتر =====
+    audit_log_title: (count: number) => `📜 *سجل التعيينات (${count})*\n\n`,
+    audit_log_empty: "📜 لا توجد سجلات تعيينات ضمن نطاقك بعد.",
+    audit_log_filter_all: "📋 الكل",
+    audit_log_filter_assign: "➕ التعيينات",
+    audit_log_filter_revoke: "❌ الإزالات",
+    audit_log_page: (page: number, totalPages: number) => `📄 صفحة ${page}/${totalPages}`,
+    audit_log_entry: (e: {
+      actionIcon: string;
+      posTitle: string;
+      oldName: string;
+      newName: string;
+      performedBy: string;
+      timestamp: string;
+    }) =>
+      `${e.actionIcon} *${e.posTitle}*\n` +
+      `   ${e.oldName} → ${e.newName}\n` +
+      `   👤 بواسطة: ${e.performedBy}\n` +
+      `   🕐 ${e.timestamp}\n\n`,
+    btn_audit_filter: "🔍 فلترة",
+    btn_next_page: "▶️ التالي",
+    btn_prev_page: "◀️ السابق",
+
     // ===== رسائل عامة =====
     empty: "⚠️ لا توجد مناصب ضمن نطاقك.",
     no_permission: "❌ *ليست لديك صلاحية إدارة المسؤولين.*\n\nهذه الميزة متاحة فقط للمسؤول المركزي.",
     no_permission_college: "❌ *ليست لديك صلاحية إدارة مندوبي المستويات.*",
+    no_permission_scope: (action: string) => `❌ *ليست لديك صلاحية ${action}.*\n\nهذا الإجراء خارج نطاقك.`,
   },
 
   // ====== شاشة A12: Committee Channels (جديدة) ======

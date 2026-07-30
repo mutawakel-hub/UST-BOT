@@ -156,6 +156,22 @@ export function registerPositionHandlers(bot: Bot, supabase: SupabaseClient): vo
     const collegeId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
 
+    // تحقق من الصلاحية (defense in depth): manage_admins للمركزي فقط
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(
+        ADMIN_TEXTS.positions.no_permission_scope("هذا الإجراء"),
+        {
+          reply_markup: new InlineKeyboard().text(
+            ADMIN_TEXTS.navigation.back_to_manage_admins,
+            "manage_admins"
+          ),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
     const college = getCollegeById(collegeId);
     if (!college) {
       await ctx.reply("⚠️ الكلية غير موجودة.");
@@ -256,8 +272,21 @@ export function registerPositionHandlers(bot: Bot, supabase: SupabaseClient): vo
     const collegeId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
 
-    // تحقق من الصلاحية لو مسؤول كلية
+    // تحقق من الصلاحية: manage_level_reps + نطاق الكلية
     const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_level_reps")) {
+      await ctx.editMessageText(
+        ADMIN_TEXTS.positions.no_permission_scope("هذا الإجراء"),
+        {
+          reply_markup: new InlineKeyboard().text(
+            ADMIN_TEXTS.navigation.back_to_manage_admins,
+            "manage_admins"
+          ),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
     if (!perms.is_central && !perms.effective_scope.colleges.has(collegeId)) {
       await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission_college, {
         reply_markup: new InlineKeyboard().text(
@@ -282,8 +311,21 @@ export function registerPositionHandlers(bot: Bot, supabase: SupabaseClient): vo
       return;
     }
 
-    // تحقق من الصلاحية
+    // تحقق من الصلاحية: manage_level_reps + نطاق الكلية
     const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_level_reps")) {
+      await ctx.editMessageText(
+        ADMIN_TEXTS.positions.no_permission_scope("هذا الإجراء"),
+        {
+          reply_markup: new InlineKeyboard().text(
+            ADMIN_TEXTS.navigation.back_to_manage_admins,
+            "manage_admins"
+          ),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
     if (!perms.is_central && !perms.effective_scope.colleges.has(spec.college_id)) {
       await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission_college, {
         reply_markup: new InlineKeyboard().text(
@@ -309,8 +351,21 @@ export function registerPositionHandlers(bot: Bot, supabase: SupabaseClient): vo
       return;
     }
 
-    // تحقق من الصلاحية
+    // تحقق من الصلاحية: manage_level_reps + نطاق الكلية
     const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_level_reps")) {
+      await ctx.editMessageText(
+        ADMIN_TEXTS.positions.no_permission_scope("هذا الإجراء"),
+        {
+          reply_markup: new InlineKeyboard().text(
+            ADMIN_TEXTS.navigation.back_to_manage_admins,
+            "manage_admins"
+          ),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
     if (!perms.is_central && !perms.effective_scope.colleges.has(spec.college_id)) {
       await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission_college, {
         reply_markup: new InlineKeyboard().text(
@@ -371,6 +426,23 @@ export function registerPositionHandlers(bot: Bot, supabase: SupabaseClient): vo
   bot.callbackQuery(/assign_college_(\d+)/, async (ctx) => {
     const collegeId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
+
+    // تحقق من الصلاحية: manage_admins فقط
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(
+        ADMIN_TEXTS.positions.no_permission_scope("هذا الإجراء"),
+        {
+          reply_markup: new InlineKeyboard().text(
+            ADMIN_TEXTS.navigation.back_to_manage_admins,
+            "manage_admins"
+          ),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
     await startAssignment(ctx, supabase, `college_admin_${collegeId}`, false);
   });
 
@@ -378,6 +450,23 @@ export function registerPositionHandlers(bot: Bot, supabase: SupabaseClient): vo
   bot.callbackQuery(/replace_college_(\d+)/, async (ctx) => {
     const collegeId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
+
+    // تحقق من الصلاحية: manage_admins فقط
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(
+        ADMIN_TEXTS.positions.no_permission_scope("هذا الإجراء"),
+        {
+          reply_markup: new InlineKeyboard().text(
+            ADMIN_TEXTS.navigation.back_to_manage_admins,
+            "manage_admins"
+          ),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
     await startAssignment(ctx, supabase, `college_admin_${collegeId}`, true);
   });
 
@@ -390,6 +479,32 @@ export function registerPositionHandlers(bot: Bot, supabase: SupabaseClient): vo
     const spec = getSpecialtyById(specId);
     if (!spec) {
       await ctx.reply("⚠️ التخصص غير موجود.");
+      return;
+    }
+
+    // تحقق من الصلاحية: manage_level_reps + نطاق الكلية
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_level_reps")) {
+      await ctx.editMessageText(
+        ADMIN_TEXTS.positions.no_permission_scope("هذا الإجراء"),
+        {
+          reply_markup: new InlineKeyboard().text(
+            ADMIN_TEXTS.navigation.back_to_manage_admins,
+            "manage_admins"
+          ),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+    if (!perms.is_central && !perms.effective_scope.colleges.has(spec.college_id)) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission_college, {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_manage_admins,
+          "manage_admins"
+        ),
+        parse_mode: "Markdown",
+      });
       return;
     }
 
@@ -419,6 +534,32 @@ export function registerPositionHandlers(bot: Bot, supabase: SupabaseClient): vo
     const spec = getSpecialtyById(specId);
     if (!spec) {
       await ctx.reply("⚠️ التخصص غير موجود.");
+      return;
+    }
+
+    // تحقق من الصلاحية: manage_level_reps + نطاق الكلية
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_level_reps")) {
+      await ctx.editMessageText(
+        ADMIN_TEXTS.positions.no_permission_scope("هذا الإجراء"),
+        {
+          reply_markup: new InlineKeyboard().text(
+            ADMIN_TEXTS.navigation.back_to_manage_admins,
+            "manage_admins"
+          ),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+    if (!perms.is_central && !perms.effective_scope.colleges.has(spec.college_id)) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission_college, {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_manage_admins,
+          "manage_admins"
+        ),
+        parse_mode: "Markdown",
+      });
       return;
     }
 
@@ -579,6 +720,23 @@ export function registerPositionHandlers(bot: Bot, supabase: SupabaseClient): vo
   bot.callbackQuery(/revoke_college_(\d+)/, async (ctx) => {
     const collegeId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
+
+    // تحقق من الصلاحية: manage_admins فقط
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(
+        ADMIN_TEXTS.positions.no_permission_scope("هذا الإجراء"),
+        {
+          reply_markup: new InlineKeyboard().text(
+            ADMIN_TEXTS.navigation.back_to_manage_admins,
+            "manage_admins"
+          ),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
     await showRevokeConfirm(ctx, supabase, `college_admin_${collegeId}`);
   });
 
@@ -586,6 +744,39 @@ export function registerPositionHandlers(bot: Bot, supabase: SupabaseClient): vo
     const specId = parseInt(ctx.match[1]);
     const levelNum = parseInt(ctx.match[2]);
     await ctx.answerCallbackQuery();
+
+    const spec = getSpecialtyById(specId);
+    if (!spec) {
+      await ctx.reply("⚠️ التخصص غير موجود.");
+      return;
+    }
+
+    // تحقق من الصلاحية: manage_level_reps + نطاق الكلية
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_level_reps")) {
+      await ctx.editMessageText(
+        ADMIN_TEXTS.positions.no_permission_scope("هذا الإجراء"),
+        {
+          reply_markup: new InlineKeyboard().text(
+            ADMIN_TEXTS.navigation.back_to_manage_admins,
+            "manage_admins"
+          ),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+    if (!perms.is_central && !perms.effective_scope.colleges.has(spec.college_id)) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission_college, {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_manage_admins,
+          "manage_admins"
+        ),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
     await showRevokeConfirm(ctx, supabase, `level_rep_${specId}_${levelNum}`);
   });
 
@@ -720,159 +911,178 @@ export function registerPositionHandlers(bot: Bot, supabase: SupabaseClient): vo
   });
 
   // =====================================================
-  // 11) الهيكل الإداري (org_chart) — عرض مبسّط
+  // 11) الهيكل الإداري (org_chart) — تفاعلي متعدد المستويات
   // =====================================================
+
+  // الشاشة الرئيسية: المركزي يرى قائمة الكليات، مسؤول الكلية ينتقل مباشرة لكليته
   bot.callbackQuery("org_chart", async (ctx) => {
     await ctx.answerCallbackQuery();
     const perms = await getUserPermissions(ctx.from.id);
 
-    let msg = "🗂️ *الهيكل الإداري*\n\n";
-
-    if (perms.is_central) {
-      // المركزي: اعرض كل الكليات ومسؤوليها + عدّد المندوبين
-      for (const college of COLLEGES) {
+    // مسؤول كلية: انتقل مباشرة لشاشة كليته (لو كلية واحدة)
+    if (!perms.is_central) {
+      const collegeIds = Array.from(perms.effective_scope.colleges);
+      if (collegeIds.length === 0) {
+        await ctx.editMessageText(ADMIN_TEXTS.positions.empty, {
+          reply_markup: new InlineKeyboard().text(
+            ADMIN_TEXTS.navigation.back_to_manage_admins,
+            "manage_admins"
+          ),
+          parse_mode: "Markdown",
+        });
+        return;
+      }
+      if (collegeIds.length === 1) {
+        await showOrgChartCollege(ctx, collegeIds[0]);
+        return;
+      }
+      // عدة كليات (نادر) — اعرض قائمة كلياته فقط
+      const kbScoped = new InlineKeyboard();
+      for (const cId of collegeIds) {
+        const college = getCollegeById(cId);
+        if (!college) continue;
         const posId = `college_admin_${college.id}`;
         const holder = await getPositionHolder(supabase, posId);
-        const holderUser = holder
-          ? await getAdminUser(supabase, holder.user_telegram_id)
-          : null;
-        msg += `${college.emoji} *${college.short_name}*\n`;
-        msg += `  👤 ${holderUser?.first_name || "⚠️ شاغر"}\n`;
+        const statusIcon = holder ? "✅" : "⚠️";
+        kbScoped.text(
+          `${college.emoji} ${college.short_name} ${statusIcon}`,
+          `org_chart_college_${college.id}`
+        ).row();
       }
-    } else {
-      // مسؤول كلية: اعرض كليته وتخصصاتها والمندوبين
-      const collegeIds = Array.from(perms.effective_scope.colleges);
-      for (const collegeId of collegeIds) {
-        const college = getCollegeById(collegeId);
-        if (!college) continue;
-        msg += `${college.emoji} *${college.short_name}*\n`;
-        const specialties = getSpecialtiesByCollege(collegeId);
-        for (const spec of specialties) {
-          msg += `  📚 ${spec.short_name}:\n`;
-          for (let lvl = 1; lvl <= spec.levels_count; lvl++) {
-            const posId = `level_rep_${spec.id}_${lvl}`;
-            const holder = await getPositionHolder(supabase, posId);
-            const holderUser = holder
-              ? await getAdminUser(supabase, holder.user_telegram_id)
-              : null;
-            msg += `    📊 م${lvl}: ${holderUser?.first_name || "—"}\n`;
-          }
-        }
-      }
-    }
-
-    await ctx.editMessageText(msg, {
-      reply_markup: new InlineKeyboard().text(
-        ADMIN_TEXTS.navigation.back_to_manage_admins,
-        "manage_admins"
-      ),
-      parse_mode: "Markdown",
-    });
-  });
-
-  // =====================================================
-  // 12) سجل التعيينات (audit_log) — آخر التغييرات
-  // =====================================================
-  bot.callbackQuery("audit_log", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const perms = await getUserPermissions(ctx.from.id);
-
-    let entries: any[] = [];
-    try {
-      if (perms.is_central) {
-        // المركزي: كل السجلات
-        const result = await supabase.select("position_audit_logs", {
-          columns:
-            "position_id,action,old_holder_id,new_holder_id,performed_by,performed_at",
-          order: "performed_at.desc",
-          limit: 15,
-        });
-        entries = Array.isArray(result) ? result : [];
-      } else {
-        // مسؤول كلية: جلب آخر 50 سجل ثم فلترة client-side
-        // (يشمل college_admin_X + level_rep_{specId}_{levelNum} لكلياته)
-        const collegeIds = Array.from(perms.effective_scope.colleges);
-        if (collegeIds.length === 0) {
-          await ctx.editMessageText("📜 لا توجد سجلات ضمن نطاقك.", {
-            reply_markup: new InlineKeyboard().text(
-              ADMIN_TEXTS.navigation.back_to_manage_admins,
-              "manage_admins"
-            ),
-            parse_mode: "Markdown",
-          });
-          return;
-        }
-
-        // جمّع specialty_ids للكليات
-        const specIds = new Set<number>();
-        for (const cId of collegeIds) {
-          for (const spec of getSpecialtiesByCollege(cId)) {
-            specIds.add(spec.id);
-          }
-        }
-
-        const result = await supabase.select("position_audit_logs", {
-          columns:
-            "position_id,action,old_holder_id,new_holder_id,performed_by,performed_at",
-          order: "performed_at.desc",
-          limit: 50,
-        });
-        const all = Array.isArray(result) ? result : [];
-
-        // فلترة client-side
-        entries = all.filter((e: any) => {
-          // college_admin_X
-          const caMatch = String(e.position_id).match(/^college_admin_(\d+)$/);
-          if (caMatch) {
-            return collegeIds.includes(parseInt(caMatch[1]));
-          }
-          // level_rep_X_Y
-          const lrMatch = String(e.position_id).match(/^level_rep_(\d+)_(\d+)$/);
-          if (lrMatch) {
-            return specIds.has(parseInt(lrMatch[1]));
-          }
-          return false;
-        }).slice(0, 15);
-      }
-    } catch (e) {
-      console.error("Failed to load audit logs:", e);
-    }
-
-    if (entries.length === 0) {
-      await ctx.editMessageText("📜 لا توجد سجلات تعيينات ضمن نطاقك بعد.", {
-        reply_markup: new InlineKeyboard().text(
-          ADMIN_TEXTS.navigation.back_to_manage_admins,
-          "manage_admins"
-        ),
+      kbScoped.text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins");
+      await ctx.editMessageText(ADMIN_TEXTS.positions.org_chart_title, {
+        reply_markup: kbScoped,
         parse_mode: "Markdown",
       });
       return;
     }
 
-    let msg = `📜 *آخر ${entries.length} تعيين/إزالة*\n\n`;
-    for (const e of entries) {
-      const actionIcon = e.action === "assign" ? "➕" : "❌";
-      const newPos = await getPositionById(supabase, e.position_id);
-      const posTitle = newPos?.title || e.position_id;
-      const newUserName = e.new_holder_id
-        ? (await getAdminUser(supabase, e.new_holder_id))?.first_name || e.new_holder_id
-        : "—";
-      const oldUserName = e.old_holder_id
-        ? (await getAdminUser(supabase, e.old_holder_id))?.first_name || e.old_holder_id
-        : "—";
-      const ts = new Date(e.performed_at).toLocaleString("ar-EG", { dateStyle: "short", timeStyle: "short" });
-      msg += `${actionIcon} *${posTitle}*\n`;
-      msg += `   ${oldUserName} → ${newUserName}\n`;
-      msg += `   🕐 ${ts}\n\n`;
+    // المركزي: اعرض كل الكليات السبع مع مؤشر الحالة
+    const kb = new InlineKeyboard();
+    for (const college of COLLEGES) {
+      const posId = `college_admin_${college.id}`;
+      const holder = await getPositionHolder(supabase, posId);
+      const statusIcon = holder ? "✅" : "⚠️";
+      kb.text(
+        `${college.emoji} ${college.short_name} ${statusIcon}`,
+        `org_chart_college_${college.id}`
+      ).row();
+    }
+    kb.text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins");
+
+    await ctx.editMessageText(ADMIN_TEXTS.positions.org_chart_title, {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  });
+
+  // شاشة الكلية: اسم الكلية + مسؤولها + عدّاد المندوبين + قائمة التخصصات
+  bot.callbackQuery(/org_chart_college_(\d+)/, async (ctx) => {
+    const collegeId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+
+    // تحقق من النطاق: مسؤول الكلية يرى كليته فقط
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.is_central && !perms.effective_scope.colleges.has(collegeId)) {
+      await ctx.editMessageText(
+        ADMIN_TEXTS.positions.no_permission_scope("هذا الإجراء"),
+        {
+          reply_markup: new InlineKeyboard().text(
+            ADMIN_TEXTS.navigation.back_to_manage_admins,
+            "manage_admins"
+          ),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    await showOrgChartCollege(ctx, collegeId);
+  });
+
+  // شاشة التخصص: اسم التخصص + الكلية + قائمة المستويات (نص فقط)
+  bot.callbackQuery(/org_chart_specialty_(\d+)/, async (ctx) => {
+    const specId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+
+    const spec = getSpecialtyById(specId);
+    if (!spec) {
+      await ctx.reply("⚠️ التخصص غير موجود.");
+      return;
+    }
+
+    // تحقق من النطاق: التخصص يجب أن ينتمي لكلية ضمن نطاق المستخدم
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.is_central && !perms.effective_scope.colleges.has(spec.college_id)) {
+      await ctx.editMessageText(
+        ADMIN_TEXTS.positions.no_permission_scope("هذا الإجراء"),
+        {
+          reply_markup: new InlineKeyboard().text(
+            ADMIN_TEXTS.navigation.back_to_manage_admins,
+            "manage_admins"
+          ),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    const college = getCollegeById(spec.college_id);
+    const collegeName = college?.name || "—";
+
+    let msg = ADMIN_TEXTS.positions.org_chart_specialty(spec.short_name, collegeName);
+    for (let lvl = 1; lvl <= spec.levels_count; lvl++) {
+      const posId = `level_rep_${specId}_${lvl}`;
+      const holder = await getPositionHolder(supabase, posId);
+      const holderUser = holder
+        ? await getAdminUser(supabase, holder.user_telegram_id)
+        : null;
+      const holderName = holderUser?.first_name || null;
+      msg += ADMIN_TEXTS.positions.org_chart_level(lvl, holderName);
     }
 
     await ctx.editMessageText(msg, {
-      reply_markup: new InlineKeyboard().text(
-        ADMIN_TEXTS.navigation.back_to_manage_admins,
-        "manage_admins"
-      ),
+      reply_markup: new InlineKeyboard()
+        .text("🔙 الكلية", `org_chart_college_${spec.college_id}`)
+        .row()
+        .text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins"),
       parse_mode: "Markdown",
     });
+  });
+
+  // =====================================================
+  // 12) سجل التعيينات (audit_log) — بفلاتر + ترقيم صفحات
+  // =====================================================
+
+  bot.callbackQuery("audit_log", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    // عند الدخول من القائمة الرئيسية: نبدأ من الصفحة 1 (الفلاتر تبقى كما هي)
+    session.audit_log_page = 1;
+    await saveSession(session);
+    const perms = await getUserPermissions(ctx.from.id);
+    await renderAuditLog(ctx, perms, session);
+  });
+
+  bot.callbackQuery(/audit_log_filter_(all|assign|revoke)/, async (ctx) => {
+    const filter = ctx.match[1] as "all" | "assign" | "revoke";
+    await ctx.answerCallbackQuery();
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.audit_log_filter = filter;
+    session.audit_log_page = 1; // فلتر جديد → نعود للصفحة 1
+    await saveSession(session);
+    const perms = await getUserPermissions(ctx.from.id);
+    await renderAuditLog(ctx, perms, session);
+  });
+
+  bot.callbackQuery(/audit_log_page_(\d+)/, async (ctx) => {
+    const page = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.audit_log_page = Math.max(1, page);
+    await saveSession(session);
+    const perms = await getUserPermissions(ctx.from.id);
+    await renderAuditLog(ctx, perms, session);
   });
 
   // =====================================================
@@ -1034,5 +1244,214 @@ export function registerPositionHandlers(bot: Bot, supabase: SupabaseClient): vo
         parse_mode: "Markdown",
       }
     );
+  }
+
+  // =====================================================
+  // Helper: org_chart — شاشة الكلية (مسؤولها + عدّاد المندوبين + تخصصات)
+  // =====================================================
+  async function showOrgChartCollege(ctx: any, collegeId: number): Promise<void> {
+    const college = getCollegeById(collegeId);
+    if (!college) {
+      await ctx.reply("⚠️ الكلية غير موجودة.");
+      return;
+    }
+
+    const posId = `college_admin_${collegeId}`;
+    const holder = await getPositionHolder(supabase, posId);
+    const holderUser = holder
+      ? await getAdminUser(supabase, holder.user_telegram_id)
+      : null;
+    const holderName = holderUser?.first_name || null;
+
+    // عدّ المندوبين لكل تخصصات الكلية
+    const specialties = getSpecialtiesByCollege(collegeId);
+    let totalReps = 0;
+    let filledReps = 0;
+    for (const spec of specialties) {
+      for (let lvl = 1; lvl <= spec.levels_count; lvl++) {
+        totalReps++;
+        const repHolder = await getPositionHolder(
+          supabase,
+          `level_rep_${spec.id}_${lvl}`
+        );
+        if (repHolder) filledReps++;
+      }
+    }
+
+    const msg = ADMIN_TEXTS.positions.org_chart_college(
+      college.name,
+      holderName,
+      totalReps,
+      filledReps
+    );
+
+    const kb = new InlineKeyboard();
+    for (const spec of specialties) {
+      kb.text(`📚 ${spec.short_name}`, `org_chart_specialty_${spec.id}`).row();
+    }
+    kb.text("🔙 الهيكل الإداري", "org_chart").row();
+    kb.text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins");
+
+    await ctx.editMessageText(msg, {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  }
+
+  // =====================================================
+  // Helper: audit_log — عرض السجل مع فلتر + ترقيم صفحات
+  // =====================================================
+  async function renderAuditLog(
+    ctx: any,
+    perms: Awaited<ReturnType<typeof getUserPermissions>>,
+    session: Awaited<ReturnType<typeof getOrCreateSession>>
+  ): Promise<void> {
+    const collegeIds = Array.from(perms.effective_scope.colleges);
+    const specIds = new Set<number>();
+    for (const cId of collegeIds) {
+      for (const spec of getSpecialtiesByCollege(cId)) {
+        specIds.add(spec.id);
+      }
+    }
+
+    let allEntries: any[] = [];
+    try {
+      // نجلب حدّاً كبيراً لدعم الترقيم (للمركزي: كل السجلات، لمسؤول الكلية: نُفلتر بعدها)
+      const result = await supabase.select("position_audit_logs", {
+        columns:
+          "position_id,action,old_holder_id,new_holder_id,performed_by,performed_at",
+        order: "performed_at.desc",
+        limit: 200,
+      });
+      const raw = Array.isArray(result) ? result : [];
+
+      if (perms.is_central) {
+        allEntries = raw;
+      } else if (collegeIds.length === 0) {
+        allEntries = [];
+      } else {
+        // فلترة client-side حسب نطاق الكليات
+        allEntries = raw.filter((e: any) => {
+          const caMatch = String(e.position_id).match(/^college_admin_(\d+)$/);
+          if (caMatch) {
+            return collegeIds.includes(parseInt(caMatch[1]));
+          }
+          const lrMatch = String(e.position_id).match(/^level_rep_(\d+)_(\d+)$/);
+          if (lrMatch) {
+            return specIds.has(parseInt(lrMatch[1]));
+          }
+          return false;
+        });
+      }
+    } catch (e) {
+      console.error("Failed to load audit logs:", e);
+    }
+
+    // طبقة الفلترة (all / assign / revoke)
+    const filter = session.audit_log_filter || "all";
+    if (filter !== "all") {
+      allEntries = allEntries.filter((e: any) => e.action === filter);
+    }
+
+    // ترقيم الصفحات (15 لكل صفحة)
+    const perPage = 15;
+    const totalPages = Math.max(1, Math.ceil(allEntries.length / perPage));
+    const currentPage = Math.min(
+      Math.max(1, session.audit_log_page || 1),
+      totalPages
+    );
+    const startIdx = (currentPage - 1) * perPage;
+    const pageEntries = allEntries.slice(startIdx, startIdx + perPage);
+
+    // بناء الرسالة
+    if (allEntries.length === 0) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.audit_log_empty, {
+        reply_markup: buildAuditLogKeyboard(filter, currentPage, totalPages),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    let msg = ADMIN_TEXTS.positions.audit_log_title(allEntries.length);
+    if (totalPages > 1) {
+      msg += ADMIN_TEXTS.positions.audit_log_page(currentPage, totalPages) + "\n\n";
+    }
+
+    for (const e of pageEntries) {
+      const actionIcon = e.action === "assign" ? "➕" : "❌";
+      const newPos = await getPositionById(supabase, e.position_id);
+      const posTitle = newPos?.title || e.position_id;
+      const newUserName = e.new_holder_id
+        ? (await getAdminUser(supabase, e.new_holder_id))?.first_name ||
+          String(e.new_holder_id)
+        : "—";
+      const oldUserName = e.old_holder_id
+        ? (await getAdminUser(supabase, e.old_holder_id))?.first_name ||
+          String(e.old_holder_id)
+        : "—";
+      const performedByUser = e.performed_by
+        ? (await getAdminUser(supabase, e.performed_by))?.first_name ||
+          String(e.performed_by)
+        : "—";
+      const ts = new Date(e.performed_at).toLocaleString("ar-EG", {
+        dateStyle: "short",
+        timeStyle: "short",
+      });
+      msg += ADMIN_TEXTS.positions.audit_log_entry({
+        actionIcon,
+        posTitle,
+        oldName: oldUserName,
+        newName: newUserName,
+        performedBy: performedByUser,
+        timestamp: ts,
+      });
+    }
+
+    await ctx.editMessageText(msg, {
+      reply_markup: buildAuditLogKeyboard(filter, currentPage, totalPages),
+      parse_mode: "Markdown",
+    });
+  }
+
+  // بناء لوحة أزرار سجل التعيينات (فلاتر + ترقيم + رجوع)
+  function buildAuditLogKeyboard(
+    filter: string,
+    currentPage: number,
+    totalPages: number
+  ): InlineKeyboard {
+    const kb = new InlineKeyboard();
+    // صف الفلاتر — الفعّال مُعلَّم بـ ✅
+    const allLabel =
+      (filter === "all" ? "✅ " : "") + ADMIN_TEXTS.positions.audit_log_filter_all;
+    const assignLabel =
+      (filter === "assign" ? "✅ " : "") +
+      ADMIN_TEXTS.positions.audit_log_filter_assign;
+    const revokeLabel =
+      (filter === "revoke" ? "✅ " : "") +
+      ADMIN_TEXTS.positions.audit_log_filter_revoke;
+    kb.text(allLabel, "audit_log_filter_all")
+      .text(assignLabel, "audit_log_filter_assign")
+      .text(revokeLabel, "audit_log_filter_revoke")
+      .row();
+
+    // صف الترقيم (سابق/تالي) لو كان هناك أكثر من صفحة
+    if (totalPages > 1) {
+      if (currentPage > 1) {
+        kb.text(
+          ADMIN_TEXTS.positions.btn_prev_page,
+          `audit_log_page_${currentPage - 1}`
+        );
+      }
+      if (currentPage < totalPages) {
+        kb.text(
+          ADMIN_TEXTS.positions.btn_next_page,
+          `audit_log_page_${currentPage + 1}`
+        );
+      }
+      kb.row();
+    }
+
+    kb.text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins");
+    return kb;
   }
 }

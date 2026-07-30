@@ -42,6 +42,9 @@ export interface AdminSession {
   awaiting_honor_new_data?: { student_id?: number; title?: string };
   // فلتر استعراض المحتوى
   content_filter?: { college_id?: number; specialty_id?: number; subject_id?: number; content_type?: string };
+  // فلتر + ترقيم سجل التعيينات
+  audit_log_filter?: "all" | "assign" | "revoke";
+  audit_log_page?: number;
   // سياق التعميم الحالي
   broadcast_context?: { scope_type: string; scope_college_id?: number; scope_specialty_id?: number; scope_level?: number; scope_label: string; count: number };
   // نص التعميم المؤقت
