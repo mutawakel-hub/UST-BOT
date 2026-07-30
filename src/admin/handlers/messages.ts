@@ -19,6 +19,8 @@ import {
   getPositionById,
   getPositionHolder,
   getChannelById,
+  getAdminPrimaryPositionId,
+  writeContentAuditLog,
 } from "../helpers";
 import {
   uploadFileToStorageChannel,
@@ -30,6 +32,221 @@ import {
   getContentTypeLabel,
   getContentTypeEmoji,
 } from "../../shared/data/admins";
+import { getSubjectById } from "../../shared/data/subjects";
+import { getSpecialtyById, getCollegeById } from "../../shared/data/colleges";
+import { formatContentCard } from "../../shared/texts";
+
+// ============================================
+// Helper: تنفيذ الرفع الفعلي للمحتوى بعد استلام العنوان والوصف
+// ============================================
+// يقوم بـ:
+//   1. الحصول على position_id الفعلي للمسؤول
+//   2. جلب بيانات المادة (specialty_id, college_id, level, semester)
+//   3. رفع الملف لقناة التخزين مع caption منسق (formatContentCard)
+//   4. إنشاء سجل content في DB (بدون أعمدة غير موجودة)
+//   5. كتابة audit log
+//   6. إعلام المسؤول بالنجاح
+// ============================================
+async function executeContentUpload(bot: Bot, supabase: SupabaseClient, ctx: any, session: any): Promise<void> {
+  const ctx2 = session.upload_context;
+
+  // إعادة ضبط حالة الرفع قبل أي شيء (حتى لو فشل كل شيء، الجلسة نظيفة)
+  session.awaiting_upload_step = undefined;
+  session.upload_context = undefined;
+  await saveSession(session);
+
+  if (!ctx2 || !ctx2.subject_id || !ctx2.content_type || !ctx2.file_id) {
+    await ctx.reply("⚠️ انتهت الجلسة أو ناقصة. ابدأ من جديد من ➕ إضافة محتوى.");
+    return;
+  }
+
+  // 1. position_id الفعلي
+  const positionId = await getAdminPrimaryPositionId(supabase, ctx.from.id);
+
+  // 2. جلب بيانات المادة من DB
+  let subjectDb: any = null;
+  let collegeName: string | null = null;
+  let specialtyName: string | null = null;
+  let storageChannelId: string | null = null;
+  let level: number | null = null;
+  let semester: number | null = null;
+
+  try {
+    const subjResult = await supabase.select("subjects", {
+      columns: "id,specialty_id,level,semester",
+      filter: `id=eq.${ctx2.subject_id}`,
+      single: true,
+    });
+    subjectDb = Array.isArray(subjResult) ? subjResult[0] : subjResult;
+    if (subjectDb) {
+      level = subjectDb.level;
+      semester = subjectDb.semester;
+    }
+  } catch (e) {
+    console.error("Failed to fetch subject:", e);
+  }
+
+  if (subjectDb?.specialty_id) {
+    try {
+      const specResult = await supabase.select("specialties", {
+        columns: "college_id,name",
+        filter: `id=eq.${subjectDb.specialty_id}`,
+        single: true,
+      }) as any;
+      const spec = Array.isArray(specResult) ? specResult[0] : specResult;
+      if (spec) {
+        specialtyName = spec.name;
+        if (spec.college_id) {
+          const collegeResult = await supabase.select("colleges", {
+            columns: "storage_channel_id,name",
+            filter: `id=eq.${spec.college_id}`,
+            single: true,
+          }) as any;
+          const college = Array.isArray(collegeResult) ? collegeResult[0] : collegeResult;
+          if (college) {
+            collegeName = college.name;
+            storageChannelId = college.storage_channel_id;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch specialty/college:", e);
+    }
+  }
+
+  if (!storageChannelId) {
+    // fallback: جرّب من البيانات الثابتة
+    const subjectStatic = getSubjectById(ctx2.subject_id);
+    if (subjectStatic) {
+      const spec = getSpecialtyById(subjectStatic.specialty_id);
+      if (spec) {
+        specialtyName = specialtyName || spec.name;
+        const college = getCollegeById(spec.college_id);
+        if (college) {
+          collegeName = collegeName || college.name;
+          storageChannelId = college.storage_channel_id;
+        }
+      }
+    }
+  }
+
+  if (!storageChannelId) {
+    await ctx.reply(
+      "⚠️ لا توجد قناة تخزين لهذه الكلية. تأكد من إعداد القناة.",
+      {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+    return;
+  }
+
+  // 3. بناء caption منسق
+  const subjectName = getSubjectById(ctx2.subject_id)?.name || "غير معروف";
+  const caption = formatContentCard({
+    title: ctx2.title || ctx2.file_name || "إحسان إداري",
+    contentType: ctx2.content_type,
+    subjectName,
+    collegeName: collegeName || undefined,
+    specialtyName: specialtyName || undefined,
+    level,
+    semester,
+    fileSizeBytes: ctx2.file_size_bytes || null,
+    fileSizeMb: ctx2.file_size_mb || null,
+    contributorName: ctx.from.first_name || "مسؤول",
+    uploadedAt: new Date().toISOString(),
+    description: ctx2.description,
+    ihsanId: null,
+  }, "channel_archive");
+
+  // 4. رفع الملف لقناة التخزين
+  let uploaded: any = null;
+  try {
+    uploaded = await uploadFileToStorageChannel(
+      bot,
+      storageChannelId,
+      { fileId: ctx2.file_id, fileName: ctx2.file_name },
+      {
+        caption,
+        parseMode: "Markdown",
+      }
+    );
+  } catch (e: any) {
+    console.error("File upload failed:", e);
+    await ctx.reply(
+      "❌ فشل رفع الملف لقناة التخزين. تأكد من أن البوت مشرف في القناة.\n\n" +
+      `السبب: ${(e?.message || "غير معروف").substring(0, 100)}`,
+      {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+    return;
+  }
+
+  // 5. إنشاء سجل content في DB (بدون specialty_id/college_id/level/semester — غير موجودة في الجدول)
+  let contentId: number | null = null;
+  try {
+    const result = await supabase.insert("content", {
+      subject_id: ctx2.subject_id,
+      content_type_id: ctx2.content_type,
+      title: ctx2.title || ctx2.file_name || "إحسان إداري",
+      file_name: ctx2.file_name,
+      file_size_mb: ctx2.file_size_mb || 0,
+      file_size_bytes: ctx2.file_size_bytes || null,
+      mime_type: ctx2.file_mime || null,
+      telegram_message_id: uploaded.message_id,
+      telegram_file_id: uploaded.file_id,
+      added_by_position_id: positionId,
+      added_by_telegram_id: ctx.from.id,
+      is_starred: false,
+      is_active: true,
+      academic_year: new Date().getFullYear().toString(),
+    }) as any;
+    contentId = result?.id || null;
+  } catch (e: any) {
+    console.error("Content insert failed:", e);
+    await ctx.reply(
+      `⚠️ تم رفع الملف لقناة التخزين (message_id: ${uploaded.message_id})\n` +
+      `لكن فشل تسجيله في قاعدة البيانات.\n\n` +
+      `السبب: ${(e?.message || "غير معروف").substring(0, 150)}`,
+      {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+        parse_mode: "Markdown",
+      }
+    );
+    return;
+  }
+
+  // 6. كتابة audit log
+  await writeContentAuditLog(supabase, {
+    content_id: contentId,
+    action: "create",
+    old_data: null,
+    new_data: {
+      title: ctx2.title,
+      subject_id: ctx2.subject_id,
+      content_type_id: ctx2.content_type,
+      file_name: ctx2.file_name,
+    },
+    performed_by_position_id: positionId,
+    performed_by_telegram_id: ctx.from.id,
+  });
+
+  // 7. إعلام المسؤول بالنجاح
+  await ctx.reply(
+    ADMIN_TEXTS.upload_wizard.success(ctx2.title || ctx2.file_name, subjectName),
+    {
+      reply_markup: new InlineKeyboard()
+        .text("📂 استعراض المحتوى", "browse_content")
+        .row()
+        .text("➕ رفع محتوى آخر", "upload_content")
+        .row()
+        .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+      parse_mode: "Markdown",
+    }
+  );
+}
 
 export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): void {
   // ====== استقبال الرسائل النصية ======
@@ -80,27 +297,50 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
       return;
     }
 
-    // استقبال تعديل عنوان محتوى
+    // استقبال تعديل عنوان محتوى (تم تعطيله مؤقتاً — سيُنفّذ في المرحلة 2)
     if (session.awaiting_content_edit) {
       const contentId = session.awaiting_content_edit;
-      let content: any = null;
-    try {
-      const result = await supabase.select("content", { filter: `id=eq.${contentId}`, single: true });
-      content = Array.isArray(result) ? result[0] : result;
-    } catch (e) { console.error("Content fetch error:", e); }
-      if (content) {
-        content.title = ctx.message.text;
-        content.last_modified_at = new Date().toISOString();
-        content.last_modified_by = ctx.from.id;
-      }
       session.awaiting_content_edit = undefined;
-      await ctx.reply(ADMIN_TEXTS.content_detail.edit_success, {
-        reply_markup: new InlineKeyboard()
-          .text("📄 تفاصيل المحتوى", `content_detail_${contentId}`)
-          .row()
-          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
-        parse_mode: "Markdown",
-      });
+      await saveSession(session);
+      await ctx.reply(
+        "⚠️ تعديل بيانات المحتوى قيد التطوير (المرحلة 2).",
+        {
+          reply_markup: new InlineKeyboard()
+            .text("📄 تفاصيل المحتوى", `content_detail_${contentId}`)
+            .row()
+            .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    // =====================================================
+    // استقبال عنوان/وصف المحتوى المرفوع (Upload Wizard)
+    // =====================================================
+    // التدفق بعد الملف:
+    //   step="title" → استقبال العنوان → step="description"
+    //   step="description" → استقبال الوصف → تنفيذ الرفع الفعلي
+    if (session.awaiting_upload_step === "title" && session.upload_context) {
+      const title = ctx.message.text.trim() || "بدون عنوان";
+      session.upload_context.title = title;
+      session.awaiting_upload_step = "description";
+      await saveSession(session);
+      await ctx.reply(
+        ADMIN_TEXTS.upload_wizard.awaiting_description,
+        {
+          reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_upload"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    if (session.awaiting_upload_step === "description" && session.upload_context) {
+      const desc = ctx.message.text.trim();
+      session.upload_context.description = (desc && desc !== "-") ? desc : null;
+      // تنفيذ الرفع الفعلي
+      await executeContentUpload(bot, supabase, ctx, session);
       return;
     }
 
@@ -437,115 +677,37 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
 
     // استقبال ملف لرفع محتوى (لو المسؤول اختار نوع المحتوى مسبقاً)
     const doc = ctx.message.document;
-    const fileSizeMb = bytesToMb(doc.file_size || 0);
+    const fileSizeBytes = doc.file_size || 0;
+    const fileSizeMb = bytesToMb(fileSizeBytes);
 
-    // لو المسؤول في وضع رفع محتوى، نرفع الملف لقناة التخزين
+    // لو المسؤول في وضع رفع محتوى، نطلب العنوان بعد الملف
     if (session?.awaiting_upload_step === "file" && session.upload_context) {
-      const ctx2 = session.upload_context;
-      session.awaiting_upload_step = undefined;
-      session.upload_context = undefined;
+      // نحتفظ بالسياق وننتقل لخطوة العنوان
+      session.awaiting_upload_step = "title";
+      session.upload_context = {
+        ...session.upload_context,
+        file_id: doc.file_id,
+        file_name: doc.file_name,
+        file_size_bytes: fileSizeBytes,
+        file_size_mb: fileSizeMb,
+        file_mime: (doc as any).mime_type,
+      };
       await saveSession(session);
 
-      // ابحث عن قناة التخزين للكلية
-      let storageChannelId: string | null = null;
-      try {
-        const collegeResult = await supabase.select("colleges", {
-          columns: "storage_channel_id",
-          filter: `id=eq.${ctx2.college_id}`,
-          single: true,
-        });
-        const college = Array.isArray(collegeResult) ? collegeResult[0] : collegeResult;
-        storageChannelId = college?.storage_channel_id || null;
-      } catch (e) {
-        console.error("Failed to fetch storage channel:", e);
-      }
-
-      if (!storageChannelId) {
-        await ctx.reply(
-          "⚠️ لا توجد قناة تخزين لهذه الكلية. تأكد من إعداد القناة.",
-          {
-            reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
-            parse_mode: "Markdown",
-          }
-        );
-        return;
-      }
-
-      // رفع الملف لقناة التخزين
-      let uploaded: any = null;
-      try {
-        uploaded = await uploadFileToStorageChannel(
-          bot,
-          storageChannelId,
-          { fileId: doc.file_id, fileName: doc.file_name },
-          {
-            caption: `📄 ${doc.file_name}\n📚 مادة: ${ctx2.subject_id}\n📂 نوع: ${ctx2.content_type}`,
-            parseMode: "Markdown",
-          }
-        );
-      } catch (e) {
-        console.error("File upload failed:", e);
-        await ctx.reply(
-          "❌ فشل رفع الملف لقناة التخزين. تأكد من أن البوت مشرف في القناة.",
-          {
-            reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
-            parse_mode: "Markdown",
-          }
-        );
-        return;
-      }
-
-      // إنشاء سجل content في DB
-      try {
-        await supabase.insert("content", {
-          subject_id: ctx2.subject_id,
-          specialty_id: ctx2.specialty_id || 0,
-          college_id: ctx2.college_id,
-          level: ctx2.level || 1,
-          semester: ctx2.semester || 1,
-          content_type_id: ctx2.content_type,
-          title: ctx2.title || doc.file_name,
-          file_name: doc.file_name,
-          file_size_mb: fileSizeMb,
-          telegram_message_id: uploaded.message_id,
-          telegram_file_id: uploaded.file_id,
-          added_by_position_id: "central_chair",
-          added_by_telegram_id: ctx.from.id,
-          is_starred: false,
-          is_active: true,
-          academic_year: new Date().getFullYear().toString(),
-        });
-
-        await ctx.reply(
-          `✅ *تم رفع المحتوى بنجاح!*\n\n` +
-          `📄 *الاسم:* ${doc.file_name}\n` +
-          `📊 *الحجم:* ${formatFileSize(doc.file_size || 0)}\n` +
-          `📨 *message_id:* ${uploaded.message_id}\n` +
-          `🗂 *النوع:* ${ctx2.content_type}\n\n` +
-          `✅ تم تسجيل المحتوى في قاعدة البيانات وهو متاح للطلاب الآن.`,
-          {
-            reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
-            parse_mode: "Markdown",
-          }
-        );
-      } catch (e) {
-        console.error("Content insert failed:", e);
-        await ctx.reply(
-          `⚠️ تم رفع الملف لقناة التخزين (message_id: ${uploaded.message_id})\n` +
-          `لكن فشل تسجيله في قاعدة البيانات. تواصل مع المسؤول.`,
-          {
-            reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
-            parse_mode: "Markdown",
-          }
-        );
-      }
+      await ctx.reply(
+        ADMIN_TEXTS.upload_wizard.awaiting_title,
+        {
+          reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_upload"),
+          parse_mode: "Markdown",
+        }
+      );
       return;
     }
 
     // رد افتراضي: الملف غير متوقع
     await ctx.reply(
-      `✅ *تم استلام الملف!*\n\n📄 *الاسم:* ${doc.file_name}\n📊 *الحجم:* ${formatFileSize(doc.file_size || 0)}\n\n` +
-      `ℹ️ لرفع محتوى رسمي، استخدم زر "📁 إدارة المحتوى" → "📤 رفع محتوى" من لوحة الإدارة.`,
+      `✅ *تم استلام الملف!*\n\n📄 *الاسم:* ${doc.file_name}\n📊 *الحجم:* ${formatFileSize(fileSizeBytes)}\n\n` +
+      `ℹ️ لرفع محتوى رسمي، استخدم زر "📁 إدارة المحتوى" → "➕ إضافة محتوى" من لوحة الإدارة.`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",

@@ -371,3 +371,70 @@ export async function notifyRevokedAdmin(
     }
   }
 }
+
+// ============================================
+// getAdminPrimaryPositionId — الحصول على position_id الفعلي للمسؤول
+// ============================================
+// يُستخدم في added_by_position_id عند رفع المحتوى بدل hardcode "central_chair"
+// الأولوية: central_chair > college_admin_{id} > level_rep_{spec}_{level}
+// لو لا يوجد منصب نشط: نُرجع "central_chair" كـ fallback (لن يخالف FK لو المنصب موجود)
+// ============================================
+export async function getAdminPrimaryPositionId(
+  supabase: SupabaseClient,
+  telegramId: number
+): Promise<string> {
+  try {
+    const result = await supabase.select("position_holders", {
+      columns: "position_id",
+      filter: `user_telegram_id=eq.${telegramId}&is_active=eq.true`,
+      order: "assigned_at.asc",
+    });
+    if (!Array.isArray(result) || result.length === 0) {
+      return "central_chair"; // fallback
+    }
+    // الأولوية: central > college > level
+    const central = result.find((p: any) => p.position_id === "central_chair");
+    if (central) return "central_chair";
+    const college = result.find((p: any) => p.position_id.startsWith("college_admin_"));
+    if (college) return college.position_id;
+    const level = result.find((p: any) => p.position_id.startsWith("level_rep_"));
+    if (level) return level.position_id;
+    // أي منصب آخر
+    return result[0].position_id;
+  } catch (e) {
+    console.warn("⚠️ [getAdminPrimaryPositionId] Failed, using fallback:", e);
+    return "central_chair";
+  }
+}
+
+// ============================================
+// writeContentAuditLog — كتابة سجل تدقيق لعمليات المحتوى
+// ============================================
+// يُستدعى بعد كل عملية على المحتوى (create/update/move/delete/copy/import)
+// يكتب في جدول content_audit_logs
+// ============================================
+export async function writeContentAuditLog(
+  supabase: SupabaseClient,
+  data: {
+    content_id: number | null;
+    action: "create" | "update" | "move" | "delete" | "copy" | "import";
+    old_data?: any;
+    new_data?: any;
+    performed_by_position_id: string;
+    performed_by_telegram_id: number;
+  }
+): Promise<void> {
+  try {
+    await supabase.insert("content_audit_logs", {
+      content_id: data.content_id,
+      action: data.action,
+      old_data: data.old_data || null,
+      new_data: data.new_data || null,
+      performed_by_position_id: data.performed_by_position_id,
+      performed_by_telegram_id: data.performed_by_telegram_id,
+    });
+  } catch (e) {
+    // لا نفشل العملية بسبب فشل التدقيق — نسجّل فقط
+    console.error("❌ [writeContentAuditLog] Failed to write audit log:", e);
+  }
+}

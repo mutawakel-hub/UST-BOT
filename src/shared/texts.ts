@@ -439,25 +439,7 @@ export const ADMIN_TEXTS = {
     btn_browse: "📂 استعراض الملفات",
   },
 
-  // ====== شاشة A5a: UploadWizard ======
-  upload_wizard: {
-    progress_header: (step: number, total: number) =>
-      `📤 *رفع ملف - خطوة ${step}/${total}*\n\n`,
-    start: "اختر الكلية:",
-    select_major: "اختر التخصص:",
-    select_level: "اختر المستوى:",
-    select_semester: "اختر الفصل:",
-    select_subject: "اختر المادة:",
-    select_type: "اختر تصنيف الملف:",
-    confirm: (fileName: string, subjectName: string, typeLabel: string) =>
-      `✅ *تأكيد الرفع*\n\n` +
-      `📎 الملف: \`${fileName}\`\n` +
-      `📚 المادة: ${subjectName}\n` +
-      `🏷 التصنيف: ${typeLabel}\n\n` +
-      "أرسل الملف الآن للتأكيد (في وضع التجربة سيتم محاكاة الرفع).",
-    awaiting_file: "📎 *أرسل الملف الآن* (PDF/DOCX/صورة):",
-    success: "✅ *تم رفع الملف بنجاح!*\n\nالملف متاح الآن للطلاب في القناة.",
-  },
+  // ====== شاشة A5a: UploadWizard — مُحدّث في المرحلة 1 (انظر content_mgmt.upload_wizard) ======
 
   // ====== شاشة A5b: BrowseFiles ======
   browse_files: {
@@ -629,11 +611,35 @@ export const ADMIN_TEXTS = {
 
   // ====== شاشة A5: Content Management (جديدة) ======
   content_mgmt: {
-    title: "📁 *إدارة المحتوى*\n\nاختر الإجراء:",
+    title: (scopeLabel: string = "") =>
+      `📁 *إدارة المحتوى*\n${scopeLabel ? `📍 ${scopeLabel}\n` : ""}\nاختر الإجراء:`,
     btn_browse: "📂 استعراض المحتوى",
-    btn_upload: "📤 رفع محتوى جديد",
+    btn_upload: "➕ إضافة محتوى",
+    btn_search: "🔍 البحث عن محتوى",
+    btn_stats: "📊 إحصائيات المحتوى",
+    btn_import: "📥 استيراد متتابع",
+    btn_audit_log: "📝 سجل العمليات",
     btn_filter: "🔍 فلترة المحتوى",
     empty: "📭 لا يوجد محتوى ضمن نطاق صلاحياتك حالياً.",
+  },
+
+  // ====== شاشة A5a: Upload Wizard (مسار الرفع الكامل) ======
+  upload_wizard: {
+    progress: (step: string, total: string) =>
+      `📤 *رفع محتوى جديد* — ${step} (${total})\n\n`,
+    select_type: "اختر نوع المحتوى:",
+    select_college: "اختر الكلية:",
+    select_specialty: (collegeName: string) => `📚 *${collegeName}*\n\nاختر التخصص:`,
+    select_level: (specName: string) => `📊 *${specName}*\n\nاختر المستوى:`,
+    select_subject: (specName: string, level: number) =>
+      `📖 *${specName}* — المستوى ${level}\n\nاختر المادة:`,
+    prompt_file: (typeName: string, subjectName: string) =>
+      `📎 *رفع الملف*\n\n🏷 النوع: ${typeName}\n📚 المادة: ${subjectName}\n\nأرسل الملف الآن:`,
+    awaiting_title: "📝 أرسل *عنواناً* للملف (سيظهر للطلاب):",
+    awaiting_description: "📌 أرسل *وصفاً مختصراً* (اختياري — أرسل '-' للتخطي):",
+    success: (title: string, subjectName: string) =>
+      `✅ *تم رفع المحتوى بنجاح!*\n\n📄 ${title}\n📚 ${subjectName}\n\nبات متاحاً للطلاب الآن.`,
+    canceled: "✅ تم إلغاء عملية الرفع.",
   },
 
   // ====== شاشة A5b: Browse Content ======
@@ -676,16 +682,15 @@ export const ADMIN_TEXTS = {
       msg += `📈 *السنة الدراسية:* ${c.academic_year}\n\n`;
       msg += `📊 *الحجم:* ${c.file_size.toFixed(2)} MB\n`;
       msg += `⬇️ *التحميلات:* ${c.download_count}\n`;
-      msg += `${c.is_starred ? "⭐ *محتوى مميز*\n" : ""}`;
+      if (c.is_starred) msg += "⭐ *محتوى مميز (عبر الإحسان)*\n";
       msg += `👤 *رافعه:* ${c.added_by}\n`;
       msg += `📅 *تاريخ الرفع:* ${c.added_at}\n`;
       return msg;
     },
-    btn_edit: "✏️ تعديل",
-    btn_move: "🔄 نقل",
-    btn_delete: "🗑 حذف",
-    btn_star: "⭐ تمييز",
-    btn_unstar: "☆ إلغاء التمييز",
+    btn_edit: "✏️ تعديل البيانات",
+    btn_move: "📂 نقل المحتوى",
+    btn_copy: "📋 نسخ المحتوى",
+    btn_delete: "🗑 حذف المحتوى",
     btn_view_file: "👁 معاينة الملف",
     delete_confirm: (title: string) =>
       `⚠️ *تأكيد الحذف*\n\nسيتم حذف:\n📄 *${title}*\n\n+ حذف المنشور من قناة التخزين.\n\nهل أنت متأكد؟`,

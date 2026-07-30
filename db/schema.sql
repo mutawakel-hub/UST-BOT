@@ -262,7 +262,7 @@ CREATE INDEX idx_position_audit_position ON position_audit_logs(position_id, per
 CREATE TABLE content_audit_logs (
   id BIGSERIAL PRIMARY KEY,
   content_id BIGINT,                              -- لا REFERENCES لأن المحتوى قد يُحذف
-  action TEXT NOT NULL CHECK (action IN ('create', 'update', 'move', 'delete', 'star', 'unstar')),
+  action TEXT NOT NULL CHECK (action IN ('create', 'update', 'move', 'delete', 'copy', 'import', 'star', 'unstar')),
   -- لقطة من البيانات قبل التغيير
   old_data JSONB,
   new_data JSONB,
