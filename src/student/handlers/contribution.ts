@@ -98,37 +98,82 @@ async function saveContribution(
   }
 ): Promise<number | null> {
   try {
-    // أولاً: التأكد من وجود الطالب في admin_users (مطلوب FK)
-    console.log(`📝 [Ihsan] Saving contribution: user=${data.userTelegramId}, subject=${data.subjectId}, type=${data.contentType}`);
-    await ensureStudentInAdminUsers(
-      supabase,
-      data.userTelegramId,
-      undefined,
-      undefined
-    );
+    console.log(`📝 [Ihsan] Saving: user=${data.userTelegramId}, subject=${data.subjectId}, type=${data.contentType}`);
+    await ensureStudentInAdminUsers(supabase, data.userTelegramId, undefined, undefined);
 
-    // ثانياً: حفظ الإحسان
-    const result = await supabase.insert("contributions", {
-      user_telegram_id: data.userTelegramId,
-      subject_id: data.subjectId,
-      content_type_id: data.contentType,
-      file_name: data.fileName,
-      file_size_mb: data.fileSizeMb,
-      telegram_file_id: data.telegramFileId,
-      title: data.title,
-      description: data.description || null,
-      status: "pending",
-    });
-    const inserted = result as any;
-    const newId = inserted?.id ?? null;
-    if (newId) {
-      console.log(`✅ [Ihsan] Contribution saved with ID: ${newId}`);
-    } else {
-      console.error(`❌ [Ihsan] Insert returned no ID. Result:`, JSON.stringify(inserted).substring(0, 200));
+    // محاولة 1: إدراج بكل الأعمدة (يحتاج schema محدّث)
+    try {
+      const result = await supabase.insert("contributions", {
+        user_telegram_id: data.userTelegramId,
+        subject_id: data.subjectId,
+        content_type_id: data.contentType,
+        file_name: data.fileName,
+        file_size_mb: data.fileSizeMb,
+        telegram_file_id: data.telegramFileId,
+        title: data.title,
+        description: data.description || null,
+        status: "pending",
+      });
+      const inserted = result as any;
+      if (inserted?.id) {
+        console.log(`✅ [Ihsan] Saved with ID: ${inserted.id}`);
+        return inserted.id;
+      }
+    } catch (e1: any) {
+      console.warn(`⚠️ [Ihsan] Full insert failed, trying without title:`, e1?.message?.substring(0, 150));
     }
-    return newId;
+
+    // محاولة 2: إدراج بدون 'title' (backward compatible مع schema القديم)
+    // نضع العنوان في file_name والوصف في description
+    const displayFileName = data.title && data.title !== "—" ? data.title : data.fileName;
+    const fullDescription = data.description && data.description !== "-"
+      ? `${data.fileName} | ${data.description}`
+      : data.fileName;
+
+    try {
+      const result = await supabase.insert("contributions", {
+        user_telegram_id: data.userTelegramId,
+        subject_id: data.subjectId,
+        content_type_id: data.contentType,
+        file_name: displayFileName,
+        file_size_mb: data.fileSizeMb,
+        telegram_file_id: data.telegramFileId,
+        description: fullDescription,
+        status: "pending",
+      });
+      const inserted = result as any;
+      if (inserted?.id) {
+        console.log(`✅ [Ihsan] Saved (no title column) with ID: ${inserted.id}`);
+        return inserted.id;
+      }
+    } catch (e2: any) {
+      console.warn(`⚠️ [Ihsan] Insert without title also failed:`, e2?.message?.substring(0, 150));
+    }
+
+    // محاولة 3: إدراج بأقل البيانات (الـ schema القديم تماماً)
+    try {
+      const result = await supabase.insert("contributions", {
+        user_telegram_id: data.userTelegramId,
+        subject_id: data.subjectId,
+        content_type_id: data.contentType,
+        file_name: displayFileName,
+        file_size_mb: data.fileSizeMb,
+        telegram_file_id: data.telegramFileId,
+        status: "pending",
+      });
+      const inserted = result as any;
+      if (inserted?.id) {
+        console.log(`✅ [Ihsan] Saved (minimal) with ID: ${inserted.id}`);
+        return inserted.id;
+      }
+    } catch (e3: any) {
+      console.error(`❌ [Ihsan] All insert attempts failed:`, e3?.message?.substring(0, 200));
+    }
+
+    console.error("❌ [Ihsan] All insert attempts returned no ID");
+    return null;
   } catch (e: any) {
-    console.error("❌ [Ihsan] Supabase contribution save error:", e?.message || e);
+    console.error("❌ [Ihsan] saveContribution error:", e?.message || e);
     return null;
   }
 }
