@@ -127,7 +127,6 @@ export const TEXTS = {
       subject_name: string;
       uploaded_at: string;
       download_count: number;
-      uploaded_by: string;
       is_starred: boolean;
     }) => {
       let msg = "";
@@ -137,7 +136,6 @@ export const TEXTS = {
       msg += `📚 *المادة:* ${f.subject_name}\n`;
       msg += `📅 *الرفع:* ${f.uploaded_at}\n`;
       msg += `⬇️ *التحميلات:* ${f.download_count}\n`;
-      msg += `👤 *رافع الملف:* ${f.uploaded_by}\n`;
       if (f.is_starred) msg += "⭐ *محتوى مميز*\n";
       return msg;
     },
@@ -145,86 +143,68 @@ export const TEXTS = {
     btn_back: "🔙 رجوع للقائمة",
   },
 
-  // ====== شاشة S9: Contribution (من شاشة المادة - 4 خطوات) ======
+  // ====== شاشة S9: الإحسان (من شاشة المادة - 5 خطوات) ======
   contribution: {
     intro: (subjectName: string) =>
-      `💡 *الإحسان في: ${subjectName}*\n\n` +
-      "شكراً لرغبتك في إثراء المحتوى! إحسانات الطلاب تساعد آلاف الزملاء.\n\n" +
-      "*الخطوة 1/3:* اختر نوع الإحسان:\n",
+      `🌟 *الإحسان في: ${subjectName}*\n\n` +
+      "اختر نوع المحتوى:\n",
     cancel: "✅ تم إلغاء الإحسان. يمكنك البدء من جديد في أي وقت.",
-    prompt_title: (subjectName: string, contentType: string) =>
-      `📝 *الخطوة 2/3: عنوان الإحسان*\n\n` +
-      `📚 المادة: ${subjectName}\n` +
-      `🏷 النوع: ${contentType}\n\n` +
-      "أرسل عنواناً وصفيّاً للإحسان.\n\n" +
-      "*أمثلة:*\n" +
-      "• `ملخص Python للفصل الأول`\n" +
-      "• `نموذج اختبار منتصف الفصل 1445`\n" +
-      "• `حلول تمارين الفصل 3`",
-    prompt_file: (subjectName: string, contentType: string, title: string) =>
-      `📎 *الخطوة 3/3: رفع الإحسان*\n\n` +
-      `📚 المادة: ${subjectName}\n` +
-      `🏷 النوع: ${contentType}\n` +
-      `📝 العنوان: ${title}\n\n` +
-      "أرسل الملف الآن:\n" +
-      "✅ الحد الأقصى: 50 MB (PDF/DOCX)، 10 MB (صور)\n" +
-      "❌ ممنوع: EXE, BAT, ZIP, RAR, APK",
-    received: (id: number, fileName: string, subjectName: string, contentType: string, title: string) =>
-      `✅ *تم استلام مساهمتك بنجاح!*\n\n` +
-      `📝 *العنوان:* ${title}\n` +
-      `📚 *المادة:* ${subjectName}\n` +
-      `🏷 *النوع:* ${contentType}\n` +
-      `📎 *الملف:* \`${fileName}\`\n` +
+    prompt_title: "📝 *أدخل عنوان المحتوى*\n\nأرسل عنواناً وصفيّاً للإحسان:",
+    prompt_description: "📌 *أدخل وصفاً مختصراً*\n\nأرسل وصفاً موجزاً (اختياري - أرسل '-' للتخطي):",
+    prompt_file: (title: string) =>
+      `📎 *رفع المحتوى*\n\n📝 العنوان: ${title}\n\nأرسل الملف الآن:`,
+    preview: (data: {
+      typeName: string;
+      subjectName: string;
+      title: string;
+      description?: string;
+    }) =>
+      `🌟 *مراجعة الإحسان*\n\n` +
+      `النوع: ${data.typeName}\n` +
+      `المادة: ${data.subjectName}\n` +
+      `العنوان: ${data.title}\n` +
+      (data.description ? `الوصف: ${data.description}\n` : "") +
+      `\n[✅ إرسال]\n[❌ إلغاء]`,
+    received: (id: number) =>
+      `✅ *تم استلام الإحسان!*\n\n` +
       `🔢 *رقم الإحسان:* \`#${id}\`\n\n` +
-      "🙏 *شكراً لك!* إحسانك سيُراجع من قبل *مسؤول الدفعة* في أقرب وقت.\n\n" +
-      "⏱ زمن المراجعة المتوقع: 24-48 ساعة\n" +
-      "🏆 عند الاعتماد، ستحصل على *10 نقاط* تُضاف لرصيدك في روّاد الإحسان.\n\n" +
-      "💡 يمكنك متابعة الحالة من: *👤 حسابي → 📋 إحساناتي*\n" +
-      "🔔 ستصل رسالة تنبيه فور اعتماد أو رفض الإحسان.",
+      "🟡 حالته الآن: *قيد المراجعة*\n" +
+      "سيتم إشعارك عند الاعتماد.\n\n" +
+      "🌟 شكراً لإحسانك العلمي!",
+    // Main flow (from main menu)
+    main_intro: "🌟 *إحسان علمي*\n\nشارك في بناء المحتوى العلمي\n\n➕ قدم إحسانًا",
   },
 
-  // ====== شاشة S13: Contribution من القائمة الرئيسية (9 خطوات) ======
+  // ====== شاشة S13: الإحسان من القائمة الرئيسية (5 خطوات) ======
   contribution_main: {
-    intro:
-      "🌟 *الإحسان في إثراء المحتوى*\n\n" +
-      "🤝 إحسانات الطلاب هي أساس هذا البوت. كل ملف ترفعه يساعد عشرات الزملاء في تخصصك.\n\n" +
-      "🏆 *التكريم:* في نهاية كل فصل، يتم تكريم *أبرز 5 محسنين* من كل تخصص من قبل اللجنة العلمية المركزية.\n\n" +
-      "💎 *المكافآت:*\n" +
-      "• ✅ كل إحسان معتمد = *10 نقاط*\n" +
-      "• ⭐ الإحسان المميز = *20 نقطة*\n" +
-      "• 🏆 التكريم الفصلي = *50 نقطة إضافية*\n\n" +
-      "📋 *خطوات الإحسان (9 خطوات بسيطة):*\n" +
-      "1️⃣ اختيار الكلية\n" +
-      "2️⃣ اختيار التخصص\n" +
-      "3️⃣ اختيار المستوى\n" +
-      "4️⃣ اختيار الفصل\n" +
-      "5️⃣ اختيار المادة\n" +
-      "6️⃣ اختيار نوع الإحسان\n" +
-      "7️⃣ عنوان الإحسان\n" +
-      "8️⃣ رفع الملف\n" +
-      "9️⃣ رسالة التأكيد\n\n" +
-      "_للإحسان السريع، تنقّل لأي مادة واضغط زر 💡 إحسان علمي (4 خطوات فقط)._",
-    step: (step: number, total: number, label: string) =>
-      `🌟 *الإحسان - خطوة ${step}/${total}*\n\n${label}`,
-    progress: (steps: string[]) =>
-      steps.map((s, i) => `${i + 1}. ${s}`).join("\n"),
+    intro: "🌟 *إحسان علمي*\n\nشارك في بناء المحتوى العلمي\n\n➕ قدم إحسانًا",
+    cancel: "✅ تم إلغاء الإحسان. يمكنك البدء من جديد في أي وقت من زر 🌟 إحسان علمي.",
+    select_type: "اختر نوع المحتوى:",
     select_college: "اختر الكلية:",
     select_specialty: "اختر التخصص:",
-    select_level: "اختر المستوى:",
-    select_semester: "اختر الفصل الدراسي:",
     select_subject: "اختر المادة:",
-    select_type: "اختر نوع الإحسان:",
-    prompt_title: (subjectName: string, contentType: string) =>
-      `📝 *عنوان الإحسان*\n\n` +
-      `📚 المادة: ${subjectName}\n` +
-      `🏷 النوع: ${contentType}\n\n` +
-      "أرسل عنواناً وصفيّاً.\n\n*أمثلة:* `ملخص Python للفصل الأول`، `نموذج اختبار نهائي 1445`",
+    prompt_title: "📝 *أدخل عنوان المحتوى*\n\nأرسل عنواناً وصفيّاً للإحسان:",
+    prompt_description: "📌 *أدخل وصفاً مختصراً*\n\nأرسل وصفاً موجزاً (اختياري - أرسل '-' للتخطي):",
     prompt_file: (title: string) =>
-      `📎 *رفع الإحسان*\n\n` +
-      `📝 العنوان: ${title}\n\n` +
-      "أرسل الملف الآن (PDF/DOCX/صورة)\n" +
-      "✅ الحد: 50 MB | ❌ ممنوع: EXE, ZIP, APK",
-    cancel: "✅ تم إلغاء الإحسان. يمكنك البدء من جديد في أي وقت من زر 🌟 إحسان علمي.",
+      `📎 *رفع المحتوى*\n\n📝 العنوان: ${title}\n\nأرسل الملف الآن:`,
+    preview: (data: {
+      typeName: string;
+      subjectName: string;
+      title: string;
+      description?: string;
+    }) =>
+      `🌟 *مراجعة الإحسان*\n\n` +
+      `النوع: ${data.typeName}\n` +
+      `المادة: ${data.subjectName}\n` +
+      `العنوان: ${data.title}\n` +
+      (data.description ? `الوصف: ${data.description}\n` : "") +
+      `\n[✅ إرسال]\n[❌ إلغاء]`,
+    received: (id: number) =>
+      `✅ *تم استلام الإحسان!*\n\n` +
+      `🔢 *رقم الإحسان:* \`#${id}\`\n\n` +
+      "🟡 حالته الآن: *قيد المراجعة*\n" +
+      "سيتم إشعارك عند الاعتماد.\n\n" +
+      "🌟 شكراً لإحسانك العلمي!",
   },
 
   // ====== شاشة S10: Search ======

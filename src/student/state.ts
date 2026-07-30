@@ -33,22 +33,36 @@ export interface UserState {
   accepted_contributions: number;
   recent_downloads: DownloadHistoryEntry[];
   my_contributions: ContributionEntry[];
-  // المسار القصير للمساهمة (من شاشة المادة - 4 خطوات)
+  // المسار القصير للإحسان (من شاشة المادة - 5 خطوات)
   awaiting_contribution_for_subject?: number;
   awaiting_contribution_type?: string;
-  awaiting_contribution_step?: "title" | "file";
+  awaiting_contribution_step?: "file" | "title" | "description" | "confirm";
   awaiting_contribution_title?: string;
-  // المسار الكامل للمساهمة (من القائمة الرئيسية - 9 خطوات)
+  awaiting_contribution_description?: string;
+  awaiting_contribution_file_id?: string;
+  awaiting_contribution_file_name?: string;
+  awaiting_contribution_file_size?: number;
+  // المسار الكامل للإحسان (من القائمة الرئيسية - 5 خطوات)
   contribution_main_context?: {
     college_id?: number;
     specialty_id?: number;
-    level?: number;
-    semester?: number;
     subject_id?: number;
     content_type?: string;
   };
-  contribution_main_step?: "college" | "specialty" | "level" | "semester" | "subject" | "type" | "title" | "file";
+  contribution_main_step?:
+    | "type"
+    | "college"
+    | "specialty"
+    | "subject"
+    | "file"
+    | "title"
+    | "description"
+    | "confirm";
   contribution_main_title?: string;
+  contribution_main_description?: string;
+  contribution_main_file_id?: string;
+  contribution_main_file_name?: string;
+  contribution_main_file_size?: number;
   // التسجيل الإلزامي
   registration_step?: "college" | "specialty" | "level";
   registration_context?: { college_id?: number; specialty_id?: number };

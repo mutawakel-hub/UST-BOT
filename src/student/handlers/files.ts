@@ -87,7 +87,6 @@ export async function showFilesList(
     telegram_message_id: f.telegram_message_id,
     telegram_file_id: f.telegram_file_id,
     uploaded_at: f.added_at || "غير معروف",
-    uploaded_by: "المسؤول",
   }));
 
   const bc = `📄 *${subject.name} - ${TYPE_LABELS[category]}*`;
@@ -161,7 +160,6 @@ export function registerFileHandlers(bot: Bot, supabase: SupabaseClient): void {
         subject_name: subject?.name || "غير معروف",
         uploaded_at: fileData.added_at || fileData.uploaded_at || "غير معروف",
         download_count: fileData.download_count || 0,
-        uploaded_by: "المسؤول",
         is_starred: fileData.is_starred || false,
       });
 
@@ -293,7 +291,6 @@ export function registerFileHandlers(bot: Bot, supabase: SupabaseClient): void {
         subject_name: subject?.name || "غير معروف",
         uploaded_at: fileData.added_at || "غير معروف",
         download_count: fileData.download_count || 0,
-        uploaded_by: "المسؤول",
         is_starred: fileData.is_starred || false,
       });
 

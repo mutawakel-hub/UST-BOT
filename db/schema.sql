@@ -199,19 +199,24 @@ CREATE TABLE contributions (
   file_name TEXT NOT NULL,
   file_size_mb DECIMAL(10, 2),
   telegram_file_id TEXT,
+  title TEXT,
   description TEXT,
   status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'approved', 'rejected')),
+    CHECK (status IN ('pending', 'approved', 'rejected', 'published', 'revision_requested')),
   is_starred BOOLEAN DEFAULT FALSE,
+  points_awarded INT DEFAULT 0,
   reject_reason TEXT,
   reviewed_by_position_id TEXT,
   reviewed_by_telegram_id BIGINT,
   reviewed_at TIMESTAMPTZ,
   escalation_level INT DEFAULT 0,
+  escalated_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX idx_contributions_status ON contributions(status, created_at);
 CREATE INDEX idx_contributions_subject ON contributions(subject_id);
+CREATE INDEX idx_contributions_user ON contributions(user_telegram_id, status);
+CREATE INDEX idx_contributions_escalation ON contributions(escalation_level, created_at) WHERE status = 'pending';
 
 -- ============================================
 -- 12. التعميمات
@@ -278,6 +283,8 @@ CREATE TABLE students (
   current_level INT,
   total_downloads INT DEFAULT 0,
   accepted_contributions INT DEFAULT 0,
+  total_points_all_time INT DEFAULT 0,
+  total_points_current_cycle INT DEFAULT 0,
   is_blocked BOOLEAN DEFAULT FALSE,
   last_activity TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -705,11 +712,11 @@ INSERT INTO position_level_permissions (position_level, permission_id) VALUES
   ('central', 'view_honors_log');
 
 -- ============================================
--- Function: حساب أعلى 5 مساهمين في تخصص
+-- Function: حساب أعلى المحسنين في تخصص ومستوى
 -- ============================================
 CREATE OR REPLACE FUNCTION get_top_contributors_specialty(
   p_specialty_id INT,
-  p_limit INT DEFAULT 5
+  p_limit INT DEFAULT 3
 ) RETURNS TABLE (
   student_telegram_id BIGINT,
   first_name TEXT,
@@ -718,23 +725,23 @@ CREATE OR REPLACE FUNCTION get_top_contributors_specialty(
 ) AS $$
 BEGIN
   RETURN QUERY
-  SELECT s.telegram_id, s.first_name, s.total_points,
+  SELECT s.telegram_id, s.first_name, s.total_points_current_cycle,
          s.accepted_contributions
   FROM students s
-  WHERE s.total_points > 0
+  WHERE s.total_points_current_cycle > 0
     AND EXISTS (
       SELECT 1 FROM contributions c
       WHERE c.user_telegram_id = s.telegram_id
         AND c.subject_id IN (SELECT id FROM subjects WHERE specialty_id = p_specialty_id)
-        AND c.status = 'approved'
+        AND c.status IN ('approved', 'published')
     )
-  ORDER BY s.total_points DESC
+  ORDER BY s.total_points_current_cycle DESC
   LIMIT p_limit;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================
--- Function: منح نقاط للطالب (عند اعتماد مساهمة)
+-- Function: منح نقاط للطالب (عند اعتماد إحسان)
 -- ============================================
 CREATE OR REPLACE FUNCTION award_contribution_points(
   p_student_telegram_id BIGINT,
@@ -746,21 +753,27 @@ CREATE OR REPLACE FUNCTION award_contribution_points(
 BEGIN
   -- إضافة سجل النقاط
   INSERT INTO student_points (student_telegram_id, points, reason, related_contribution_id, awarded_by_position_id, awarded_by_telegram_id)
-  VALUES (p_student_telegram_id, p_points, 'contribution_approved', p_contribution_id, p_awarded_by_position_id, p_awarded_by_telegram_id);
+  VALUES (p_student_telegram_id, p_points, 'ihsan_approved', p_contribution_id, p_awarded_by_position_id, p_awarded_by_telegram_id);
 
-  -- تحديث إجمالي نقاط الطالب
+  -- تحديث نقاط الطالب (الحالية + التاريخية)
   UPDATE students
-  SET total_points = total_points + p_points,
+  SET total_points_all_time = total_points_all_time + p_points,
+      total_points_current_cycle = total_points_current_cycle + p_points,
       accepted_contributions = accepted_contributions + 1
   WHERE telegram_id = p_student_telegram_id;
+
+  -- تسجيل النقاط في جدول الإحسانات
+  UPDATE contributions
+  SET points_awarded = p_points
+  WHERE id = p_contribution_id;
 
   -- إنشاء إشعار للطالب
   INSERT INTO student_notifications (student_telegram_id, notification_type, title, body, related_entity_type, related_entity_id)
   VALUES (
     p_student_telegram_id,
     'contribution_approved',
-    '✅ تم اعتماد مساهمتك!',
-    'تمت الموافقة على مساهمتك ومنحك ' || p_points || ' نقطة. شكراً لإثرائك المحتوى!',
+    '✅ تم اعتماد إحسانك!',
+    'تمت الموافقة على إحسانك ومنحك ' || p_points || ' نقطة. شكراً لإثرائك المحتوى!',
     'contribution',
     p_contribution_id
   );

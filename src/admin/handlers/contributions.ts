@@ -1,6 +1,12 @@
 // ============================================
 // 📥 Contributions Handlers — pending, review, approve, reject
 // ============================================
+// في هذه المرحلة (Phase 2)، أضفنا:
+//   - نقاط متغيرة حسب نوع المحتوى (POINTS_RANGES)
+//   - أزرار لاختيار النقاط (min / mid / max / starred)
+//   - تخزين النقاط المختارة في contributions.points_awarded
+//   - منح النقاط الفعلية للطالب عبر award_contribution_points RPC
+// ============================================
 
 import { Bot } from "grammy";
 import { InlineKeyboard } from "grammy";
@@ -10,6 +16,44 @@ import { getUserPermissions } from "../../shared/rbac";
 import { getSubjectById } from "../../shared/data/subjects";
 import { uploadFileToStorageChannel } from "../../shared/storage";
 import { getOrCreateSession } from "../state";
+
+// ============================================
+// نقاط لكل نوع محتوى (min / max)
+// (هاردكود مؤقتاً — ستأتي من ihsan_settings في Phase 5)
+// ============================================
+const POINTS_RANGES: Record<string, { min: number; max: number }> = {
+  book_theory: { min: 20, max: 50 },
+  book_practical: { min: 20, max: 50 },
+  summary: { min: 10, max: 30 },
+  exam: { min: 15, max: 40 },
+  video: { min: 30, max: 100 },
+  reference: { min: 15, max: 50 },
+  schedule: { min: 10, max: 30 },
+};
+
+// النطاق الافتراضي لو النوع غير معروف
+const DEFAULT_RANGE: { min: number; max: number } = { min: 10, max: 30 };
+
+// عامل المكافأة للمحتوى المميّز (max + 50%)
+const STARRED_BONUS = 0.5;
+
+// ============================================
+// Helper: حساب النقاط (min / mid / max / starred) لنوع محتوى
+// ============================================
+function getPointsForType(contentType: string): {
+  min: number;
+  mid: number;
+  max: number;
+  starred: number;
+} {
+  const range = POINTS_RANGES[contentType] || DEFAULT_RANGE;
+  const min = range.min;
+  const max = range.max;
+  const mid = Math.round((min + max) / 2);
+  const starred = Math.round(max + max * STARRED_BONUS);
+  return { min, mid, max, starred };
+}
+
 
 export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient): void {
   // ====== A3: المساهمات المعلقة ======
@@ -114,16 +158,23 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     }
 
     const subjectName = getSubjectById(contrib.subject_id)?.name || "غير معروف";
+    const contentType: string = contrib.content_type_id || "summary";
+    const points = getPointsForType(contentType);
+
     await ctx.editMessageText(
       ADMIN_TEXTS.review.title({
         id: contrib.id, fileName: contrib.file_name, subjectName,
         userName: "طالب", uploadedAt: contrib.created_at || "حديثاً",
         fileSizeMb: parseFloat(contrib.file_size_mb) || 0, description: contrib.description,
-      }),
+      }) +
+      `\n💎 *النقاط المتاحة:* ${points.min}–${points.max} (المميّز: ${points.starred})\n`,
       {
         reply_markup: new InlineKeyboard()
-          .text(ADMIN_TEXTS.review.approve, `approve_${contribId}`)
-          .text(ADMIN_TEXTS.review.approve_starred, `approve_star_${contribId}`)
+          .text(`✅ اعتماد (${points.min} نقطة)`, `approve_${contribId}_${points.min}`)
+          .text(`✅ اعتماد (${points.mid} نقطة)`, `approve_${contribId}_${points.mid}`)
+          .row()
+          .text(`✅ اعتماد (${points.max} نقطة)`, `approve_${contribId}_${points.max}`)
+          .text(`⭐ مميّز (${points.starred} نقطة)`, `approve_star_${contribId}_${points.starred}`)
           .row()
           .text(ADMIN_TEXTS.review.reject, `reject_${contribId}`)
           .row()
@@ -133,8 +184,11 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     );
   });
 
-  // ====== A4b: اعتماد مساهمة ======
-  bot.callbackQuery(/approve(?:_star)?_(\d+)/, async (ctx) => {
+  // ====== A4b: اعتماد مساهمة (مع نقاط مختارة) ======
+  // الصيغة الموسّعة: approve(_star)?_<contribId>(_<points>)?
+  // - match[1]: contribId
+  // - match[2]: points (اختياري - لو غير محدد، نستخدم min لنوع المحتوى)
+  bot.callbackQuery(/approve(?:_star)?_(\d+)(?:_(\d+))?/, async (ctx) => {
     const isStarred = ctx.match[0].includes("star");
     const contribId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery({ text: isStarred ? "⭐ تم الاعتماد المميز" : "✅ تم الاعتماد" });
@@ -238,15 +292,22 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
 
     // 5. تحديث حالة المساهمة + منح النقاط
     try {
+      // تحديد النقاط: من الـ callback (match[2]) أو الافتراضي لنوع المحتوى
+      const contentTypeForPoints: string = contribution.content_type_id || "summary";
+      const fallbackPoints = isStarred
+        ? getPointsForType(contentTypeForPoints).starred
+        : getPointsForType(contentTypeForPoints).min;
+      const points = ctx.match[2] ? parseInt(ctx.match[2]) : fallbackPoints;
+
       await supabase.update("contributions", {
         status: "approved",
         is_starred: isStarred,
+        points_awarded: points,
         reviewed_by_telegram_id: ctx.from.id,
         reviewed_at: new Date().toISOString(),
       }, `id=eq.${contribId}`);
 
       if (contribution.user_telegram_id) {
-        const points = isStarred ? 20 : 10;
         await supabase.rpc("award_contribution_points", {
           p_student_telegram_id: contribution.user_telegram_id,
           p_contribution_id: contribId,
@@ -255,6 +316,20 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
           p_points: points,
         });
       }
+
+      // عرض رسالة النجاح بالنقاط الفعلية والخروج
+      await ctx.editMessageText(
+        `${isStarred ? "⭐" : "✅"} *تم اعتماد الإحسان #${contribId}*\n\n` +
+        (uploadedMessageId
+          ? `📤 تم رفع الملف لقناة التخزين (message_id: ${uploadedMessageId})\n`
+          : `⚠️ تعذّر رفع الملف لقناة التخزين — تحقق من إعدادات القناة\n`) +
+        `💎 تم منح الطالب ${points} نقطة.`,
+        {
+          reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
     } catch (e) {
       console.error("Supabase approve error:", e);
     }
@@ -264,7 +339,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
       (uploadedMessageId
         ? `📤 تم رفع الملف لقناة التخزين (message_id: ${uploadedMessageId})\n`
         : `⚠️ تعذّر رفع الملف لقناة التخزين — تحقق من إعدادات القناة\n`) +
-      `💎 تم منح الطالب ${isStarred ? "20" : "10"} نقطة.`,
+      `💎 تم منح الطالب نقاطًا.`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
         parse_mode: "Markdown",
