@@ -1,256 +1,307 @@
-# 🎓 UST Central Bot — v3.0 (Student) / v3.3 (Admin)
+# 🎓 UST Central Bot — نظام البوت العلمي المركزي
 
 > **البوت العلمي المركزي لجامعة العلوم والتكنولوجيا - اليمن**
-> مبني على Cloudflare Workers + Supabase + Telegram Webhooks (مجاني 100%)
+> منشور على Cloudflare Workers + Telegram Webhooks + Supabase (مجاني 100%)
+
+[![Deploy Status](https://github.com/mutawakel-hub/UST-BOT/actions/workflows/deploy.yml/badge.svg)](https://github.com/mutawakel-hub/UST-BOT/actions)
+[![Tests](https://img.shields.io/badge/tests-83%2F83-brightgreen)](tests/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6%2B-blue)](tsconfig.json)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
 
-## 📚 التوثيق
+## 📖 جدول المحتويات
 
-| الملف | الوصف |
-|---|---|
-| 📖 **[README.md](README.md)** | هذا الملف — نظرة عامة ودليل سريع |
-| 🚀 **[DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md)** | دليل النشر والانتقال للإنتاج (Cloudflare + Supabase + GitHub Actions) |
-| 🏗 **[ARCHITECTURE.md](ARCHITECTURE.md)** | شرح البنية التقنية (Workers + Supabase + RBAC) |
-| 🗄️ **[SCHEMA-GUIDE.md](SCHEMA-GUIDE.md)** | شرح قاعدة البيانات (24 جدول + 6 Functions) |
-| 📋 **[CHANGELOG.md](CHANGELOG.md)** | سجل التغييرات بين الإصدارات |
+- [نظرة عامة](#نظرة-عامة)
+- [المميزات](#المميزات)
+- [التقنيات المستخدمة](#التقنيات-المستخدمة)
+- [بنية المشروع](#بنية-المشروع)
+- [نظام 🌟 إحسان علمي](#نظام--إحسان-علمي)
+- [قاعدة البيانات](#قاعدة-البيانات)
+- [الأمان](#الأمان)
+- [التثبيت والنشر](#التثبيت-والنشر)
+- [الاختبارات](#الاختبارات)
+- [CI/CD](#cicd)
+- [استكشاف الأخطاء](#استكشاف-الأخطاء)
 
 ---
 
-## 📱 البوتين المباشرين
+## نظرة عامة
 
-| البوت | الرابط | الـ Worker URL |
+نظام متكامل من بوتين تلغرام لإدارة المحتوى العلمي لجامعة العلوم والتكنولوجيا:
+
+| البوت | الرابط | الوظيفة |
 |---|---|---|
-| 🎓 **بوت الطالب (v3.0)** | [@usttesterbot](https://t.me/usttesterbot) | https://ust-student-bot.atow73768.workers.dev |
-| 🛡 **بوت الإدارة (v3.3)** | [@usttesteradminbot](https://t.me/usttesteradminbot) | https://ust-admin-bot.atow73768.workers.dev |
+| 🎓 **بوت الطالب** | [@usttesterbot](https://t.me/usttesterbot) | تصفّح الكليات والتخصصات والمواد، تحميل الملفات، تقديم إحسان علمي، روّاد الإحسان |
+| 🛡 **بوت الإدارة** | [@usttesteradminbot](https://t.me/usttesteradminbot) | إدارة الإحسان، المراجعة والاعتماد، التعميمات، إدارة المسؤولين، الإحصائيات |
 
-> ✅ **بوت الطالب متكامل بالكامل مع Supabase** — لا توجد بيانات وهمية.
-> ⚠️ **بوت الإدارة مدمج جزئياً** — المساهمات والتعميمات تعمل على Supabase، البقية تنتقل تدريجياً.
-
----
-
-## 🏗️ البنية الحالية
-
-```
-                  ┌──────────────────────────────┐
-                  │     Telegram Messenger       │
-                  │   (Students + Admins)        │
-                  └────────────┬─────────────────┘
-                               │ HTTPS Webhooks
-                               ▼
-   ┌──────────────────────────────────────────────────────────┐
-   │              Cloudflare Workers (Free Tier)               │
-   │                                                            │
-   │  ┌─────────────────┐  ┌─────────────────┐  ┌────────────┐ │
-   │  │ ust-student-bot │  │  ust-admin-bot  │  │ust-pdf-srv │ │
-   │  │     (v3.0)      │  │     (v3.3)      │  │            │ │
-   │  └────────┬────────┘  └────────┬────────┘  └────────────┘ │
-   │           └─────────┬──────────┘                            │
-   │                     │                                       │
-   └─────────────────────┼───────────────────────────────────────┘
-                         │ HTTPS REST (PostgREST)
-                         ▼
-   ┌──────────────────────────────────────────────────────────┐
-   │                Supabase (PostgreSQL)                       │
-   │  24 Tables · 6 Functions · 1 View · 2 Triggers             │
-   │  Schema v1.2                                               │
-   └──────────────────────────────────────────────────────────┘
-                         ▲
-                         │ file_id (message_id)
-   ┌──────────────────────────────────────────────────────────┐
-   │           Telegram Storage Channels (real)                │
-   │  • Medicine  (-1004405014472) — كلية الطب                 │
-   │  • Computers (-1003727164402) — كلية الحاسبات             │
-   └──────────────────────────────────────────────────────────┘
-```
-
-### 🤖 النشر التلقائي (GitHub Actions)
-
-```
-git push origin main
-        │
-        ▼
-GitHub Actions (2 workflows بالتوازي)
-        │
-        ├─ 🚀 deploy.yml
-        │   ├─ 🔍 فحص TypeScript
-        │   ├─ 🎓 نشر Student Bot
-        │   ├─ 🛡 نشر Admin Bot
-        │   └─ 📄 نشر PDF Server
-        │
-        └─ 🗄️ supabase-sync.yml (عند تعديل db/schema.sql)
-            └─ 📦 تطبيق الـ Schema على Supabase
-        │
-        ▼
-البوت وقاعدة البيانات يتحدّثان خلال 60 ثانية ✅
-```
-
----
-
-## 📋 المميزات
-
-### 🎓 بوت الطالب v3.0 (Production-Ready)
-
-- ✅ **تكامل كامل مع Supabase** — لا بيانات وهمية، كل شيء من قاعدة البيانات
-- ✅ **نظام تسجيل صريح** عند أول `/start` (الكلية، التخصص، المستوى)
-- ✅ 7 كليات + 34 تخصص (تغطية كاملة لجامعة UST)
-- ✅ استرجاع المواد والمحتوى من Supabase حسب نطاق الطالب
-- ✅ Breadcrumb في كل شاشة (مسار التنقّل)
-- ✅ عدّاد ملفات لكل تصنيف (استعلامات حقيقية على `content`)
-- ✅ **شاشة معاينة الملف** قبل التحميل (اسم، حجم، تاريخ، رافع، عدّاد)
-- ✅ **إرسال الملف الفعلي** من قنوات التخزين عبر `telegram_file_id`
-- ✅ بحث شامل في المواد والملفات (باستخدام `pg_trgm`)
-- ✅ لوحة الشرف من جدول `students` (ترتيب حسب `total_points`)
-- ✅ حسابي: إحصائيات + مساهماتي + تحميلاتي + إشعاراتي
-- ✅ نظام النقاط (`student_points` + `contribution_honors`)
-- ✅ Pagination في القوائم الطويلة (8 عناصر/صفحة)
-- ✅ مساهمة الطلاب برفع الملفات (تُسجَّل في `contributions`)
-- ✅ تسجيل التحميلات في `downloads` للإحصائيات
-- ✅ إشعارات الطالب (`student_notifications`)
-
-### 🛡 بوت الإدارة v3.3
-
-- ✅ نظام تسجيل دخول بأربعة أدوار هرمية
-- ✅ **نظام RBAC كامل** — 19 صلاحية موزّعة على 9 مناصب (مع الوراثة)
-- ✅ لوحة إدارة ديناميكية (تتغير حسب صلاحيات المستخدم من Supabase)
-- ✅ **مراجعة المساهمات من Supabase** (اعتماد / اعتماد مميز / رفض مع سبب)
-- ✅ **التعميمات تُسجَّل في `broadcasts`** — تُرسَل للمستلمين حسب RBAC
-- ✅ **تعميمات ديناميكية بنطاقات**: الكل / كلية / تخصص / مستوى (معاينة قبل الإرسال)
-- ✅ معالج رفع ملفات كامل (6 خطوات + شريط تقدّم)
-- ✅ استعراض الملفات مع فلاتر
-- ✅ إدارة المواد (إضافة/تعديل/قائمة)
-- ✅ إدارة المسؤولين (إضافة فعلي + قائمة)
-- ✅ إحصائيات شاملة (استعلامات Supabase)
-- ✅ تخصيص النصوص (`custom_texts`)
-- ✅ تحديث لوحة الشرف (`leaderboard` + `contribution_honors`)
-- ✅ نظام تكريم المساهمين (`manage_honors` permission)
-- ✅ إعادة ضبط النقاط (`reset_points` + `points_reset_logs`)
-- ✅ تسجيل الخروج
-
----
-
-## 🗄️ قاعدة البيانات (Supabase)
-
-### الإحصائيات
+### إحصائيات المشروع
 
 | البند | القيمة |
 |---|---|
-| إصدار الـ Schema | v1.2 |
-| عدد الجداول | **24** |
-| عدد الـ Functions (RPC) | 6 |
-| عدد الـ Triggers | 2 |
-| عدد الـ Views | 1 (`user_permissions`) |
-| عدد المناصب | 9 (1 مركزي + 7 كليات + مندوب مستوى) |
-| عدد الصلاحيات | **19** |
-| أنواع المحتوى | 6 (كتاب نظري/عملي، اختبارات، ملخصات، مرئيات، مراجع) |
-
-### الجداول الـ 24
-
-**الهيكل الأكاديمي (3):** `colleges` · `specialties` · `subjects`
-**المحتوى (2):** `content_types` · `content`
-**نظام RBAC (5):** `admin_users` · `positions` · `position_holders` · `permissions` · `position_level_permissions`
-**المساهمات والمراجعة (2):** `contributions` · `broadcasts`
-**سجلات التدقيق (2):** `position_audit_logs` · `content_audit_logs`
-**الطلاب والتفاعل (5):** `students` · `downloads` · `leaderboard` · `student_subscriptions` · `student_notifications`
-**النقاط والتكريم (3):** `student_points` · `contribution_honors` · `points_reset_logs`
-**التخصيص والقنوات (2):** `custom_texts` · `committee_channels`
-
-### الـ Functions الست
-
-| Function | الوصف |
-|---|---|
-| `register_student(...)` | تسجيل/تحديث بيانات الطالب عند `/start` |
-| `user_has_permission(...)` | التحقق من صلاحية لمستخدم في نطاق محدد |
-| `get_broadcast_recipients(...)` | إرجاع مستلمي التعميم حسب النطاق (الكل/كلية/تخصص/مستوى) |
-| `get_top_contributors_specialty(...)` | أعلى المساهمين في تخصص محدد (للوحة الشرف) |
-| `award_contribution_points(...)` | منح النقاط للطالب عند اعتماد مساهمته |
-| `notify_contribution_rejected(...)` | إنشاء إشعار تلقائي عند رفض مساهمة |
+| الإصدار | v3.3 (الإدارة) / v3.0 (الطالب) |
+| عدد الكليات | 7 (جميعها بقنوات تخزين فعّالة) |
+| عدد التخصصات | 34 |
+| عدد المواد | 25+ (قابلة للتوسيع) |
+| جداول قاعدة البيانات | 26 |
+| دوال PostgreSQL | 10 |
+| أنواع المحتوى | 7 |
+| الصلاحيات (RBAC) | 19 |
+| المناصب | 9 (1 مركزي + 7 كليات + ديناميكية للمستويات) |
+| قنوات التخزين | 7 (واحدة لكل كلية) + قناة أرشيف |
+| اختبارات وحدة | 83 (4 ملفات) |
+| سطور الكود | ~13,186 سطر TypeScript |
+| التكلفة الشهرية | $0 |
 
 ---
 
-## 📦 قنوات التخزين (Storage Channels)
+## المميزات
 
-قنوات تلغرام حقيقية تُستخدم لتخزين الملفات (يفصل بين الإدارة والتخزين):
+### 🎓 بوت الطالب
 
-| الكلية | معرّف القناة | الحالة |
+- ✅ **7 كليات + 34 تخصص** بتغطية كاملة لجامعة UST
+- ✅ **تسجيل صريح** عند أول `/start` (كلية → تخصص → مستوى)
+- ✅ **تصفّح هرمي**: كليات → تخصصات → مستويات → فصول → مواد
+- ✅ **7 أنواع محتوى** لكل مادة (نظري، عملي، ملخصات، اختبارات، مرئيات، مراجع، جداول)
+- ✅ **🌟 إحسان علمي**: تقديم محتوى علمي للمساهمة في بناء المكتبة
+- ✅ **🏆 روّاد الإحسان**: عرض أفضل 3 محسنين لكل مستوى + أرشيف الدورات السابقة
+- ✅ **👤 حسابي**: إحصائيات، إحساناتي (حالة كل إحسان)، إشعارات
+- ✅ **بحث شامل** في المواد والملفات
+- ✅ **Breadcrumb** (مسار التنقّل) في كل شاشة
+- ✅ **تسليم الملفات** عبر `forwardMessage` مع fallback إلى `sendDocument`
+
+### 🛡 بوت الإدارة
+
+- ✅ **نظام RBAC هرمي** (مركزي → كلية → مستوى) مع وراثة الصلاحيات
+- ✅ **🌟 إدارة الإحسان**: مراجعة، اعتماد بنقاط متغيرة، رفض، تمييز، معاينة قبل الاعتماد
+- ✅ **⏰ تصعيد تلقائي**: تنبيهات متدرّجة (24س → 48س → 72س) عبر Cron Trigger
+- ✅ **👥 إدارة المسؤولين**: تعيين/استبدال/إزالة بـ 5 خطوات + هيكل إداري + سجل تعيينات
+- ✅ **📢 تعميمات ديناميكية** حسب الصلاحية (الكل/كلية/تخصص/مستوى)
+- ✅ **📊 إحصائيات وتقارير** حسب النطاق
+- ✅ **⚙️ إعدادات النظام**: نقاط الأنواع، مدة التصعيد، عدد المتصدرين
+- ✅ **🔄 إنهاء الدورة**: أرشفة في قناة + تصفير النقاط الحالية + حفظ التاريخ
+- ✅ **📊 أداء المسؤولين**: متوسط زمن المراجعة، الحالات المتأخرة، معدل الاعتماد
+- ✅ **إشعارات تلقائية** للمسؤولين الجدد/المُزالين
+
+---
+
+## التقنيات المستخدمة
+
+| الطبقة | التقنية | السبب |
 |---|---|---|
-| 🏥 كلية الطب والعلوم الصحية | `-1004405014472` | ✅ فعّالة |
-| 💻 كلية الحاسبات وتكنولوجيا المعلومات | `-1003727164402` | ✅ فعّالة |
-| 🦷 كلية طب الأسنان | — | ⏳ قيد الإنشاء |
-| 💊 كلية الصيدلة | — | ⏳ قيد الإنشاء |
-| ⚙️ كلية الهندسة | — | ⏳ قيد الإنشاء |
-| 📊 كلية العلوم الإدارية | — | ⏳ قيد الإنشاء |
-| 📚 كلية العلوم الإنسانية | — | ⏳ قيد الإنشاء |
-
-> يُخزَّن `storage_channel_id` في جدول `colleges`، ويُربط كل محتوى بـ `telegram_message_id` + `telegram_file_id`.
+| Runtime | **Cloudflare Workers** | 100k طلب/يوم مجاناً |
+| اللغة | **TypeScript 5.6+** (strict) | أمان الأنواع |
+| مكتبة TG | **grammY ^1.30** | مصممة لـ Serverless |
+| النشر | **Wrangler 4** | CLI رسمي من Cloudflare |
+| قاعدة البيانات | **Supabase** (PostgreSQL) | مجاني 500MB + PostgREST |
+| الجلسات والـ Cache | **Cloudflare KV** | مجاني 100k قراءة/يوم |
+| تخزين الملفات | **Telegram Channels** | مجاني غير محدود |
+| CI/CD | **GitHub Actions** | مجاني للمستودعات العامة |
+| الاختبارات | **Vitest ^1.6** | سريع + coverage |
+| امتدادات PG | `pg_trgm` + `pgcrypto` | بحث ضبابي عربي + تشفير |
 
 ---
 
-## 🏗 بنية المشروع
+## بنية المشروع
 
 ```
-ust-central-bot/
-├── package.json                  # Dependencies + scripts
-├── tsconfig.json                 # TypeScript config
-├── wrangler.student.toml         # إعداد بوت الطالب
-├── wrangler.admin.toml           # إعداد بوت الإدارة
-├── .env.example                  # مثال على متغيرات البيئة
-├── .dev.vars.example             # مثال على متغيرات التطوير المحلي
-├── .gitignore
-├── README.md                     # هذا الملف
-│
-├── .github/workflows/
-│   ├── deploy.yml                # نشر البوتات + PDF Server على Cloudflare
-│   └── supabase-sync.yml         # مزامنة db/schema.sql مع Supabase
+UST-BOT/
+├── package.json                  # 14 سكريبت + dependencies
+├── tsconfig.json                 # strict mode (بدون strictNullChecks)
+├── vitest.config.ts              # إعدادات الاختبارات
+├── wrangler.student.toml         # إعداد بوت الطالب (KV × 2)
+├── wrangler.admin.toml           # إعداد بوت الإدارة (KV × 2 + Cron)
 │
 ├── db/
-│   ├── schema.sql                # الـ Schema الكامل (24 جدول + 6 Functions)
-│   └── cleanup.sql               # سكريبت التنظيف (للتراجع)
+│   ├── schema.sql                # 26 جدول + 10 دوال + 7 أنواع محتوى
+│   ├── cleanup.sql               # حذف كل الجداول
+│   ├── seed_data.sql             # بيانات أولية (مواد + مسؤولين)
+│   └── update_storage_channels.sql # تحديث قنوات التخزين
 │
 ├── src/
-│   ├── shared/                   # الكود المشترك
-│   │   ├── data/
-│   │   │   ├── colleges.ts       # 7 كليات + 34 تخصص + storage_channel_id
-│   │   │   ├── subjects.ts       # بيانات المواد (تُستخدم للبذرة الأولية)
-│   │   │   ├── leaderboard.ts    # بيانات البذرة للوحة الشرف
-│   │   │   └── admins.ts         # بيانات البذرة للمسؤولين
-│   │   ├── keyboards.ts          # جميع الـ Keyboards
-│   │   ├── texts.ts              # كل النصوص (عربي فصحى مبسّطة)
-│   │   ├── db.ts                 # عميل Supabase + كل الاستعلامات
-│   │   └── rbac.ts               # التحقق من الصلاحيات
+│   ├── shared/                   # الكود المشترك (8 ملفات + 4 بيانات)
+│   │   ├── db.ts                 # عميل Supabase + 23 دالة
+│   │   ├── rbac.ts               # نظام الصلاحيات (786 سطر)
+│   │   ├── session.ts            # SessionStore + CacheStore + RateLimiter
+│   │   ├── storage.ts            # رفع/تسليم/حذف الملفات
+│   │   ├── callback-signing.ts   # توقيع HMAC-SHA256
+│   │   ├── keyboards.ts          # 30+ لوحة مفاتيح
+│   │   ├── texts.ts              # كل النصوص (914 سطر)
+│   │   └── data/
+│   │       ├── colleges.ts       # 7 كليات + 34 تخصص
+│   │       ├── subjects.ts       # 25 مادة + دوال مساعدة
+│   │       ├── admins.ts         # أنواع المحتوى + بيانات RBAC
+│   │       └── leaderboard.ts    # بيانات لوحة الشرف
 │   │
-│   ├── student/
-│   │   └── index.ts              # بوت الطالب v3.0 (متكامل مع Supabase)
+│   ├── admin/                    # بوت الإدارة
+│   │   ├── index.ts              # Orchestrator + Cron handler
+│   │   ├── state.ts              # AdminSession
+│   │   ├── helpers.ts            # 15 دالة مساعدة
+│   │   └── handlers/             # 13 ملف handler
+│   │       ├── dashboard.ts      # /start + لوحة الإدارة
+│   │       ├── contributions.ts  # مراجعة + اعتماد + رفض + معاينة
+│   │       ├── content.ts        # إدارة المحتوى
+│   │       ├── subjects.ts       # إدارة المواد
+│   │       ├── broadcast.ts      # التعميمات
+│   │       ├── statistics.ts     # الإحصائيات
+│   │       ├── texts.ts          # تخصيص النصوص
+│   │       ├── positions.ts      # إدارة المسؤولين (1,457 سطر)
+│   │       ├── channels.ts       # قنوات اللجان
+│   │       ├── honors.ts         # التكريم
+│   │       ├── messages.ts       # :text + :document + :photo
+│   │       ├── escalation.ts     # التصعيد التلقائي (Cron)
+│   │       └── ihsan_management.ts # إدارة الإحسان الشاملة
 │   │
-│   └── admin/
-│       └── index.ts              # بوت الإدارة v3.3 (جزئي مع Supabase)
+│   └── student/                  # بوت الطالب
+│       ├── index.ts              # Orchestrator + debug endpoints
+│       ├── state.ts              # UserState
+│       └── handlers/             # 9 ملفات handler
+│           ├── start.ts          # /start + التسجيل
+│           ├── navigation.ts     # التنقل + Breadcrumb
+│           ├── files.ts          # عرض + تحميل الملفات
+│           ├── contribution.ts   # تقديم الإحسان (5 خطوات)
+│           ├── search.ts         # البحث
+│           ├── leaderboard.ts    # روّاد الإحسان
+│           ├── profile.ts        # حسابي + إحساناتي
+│           ├── committee.ts      # قنوات اللجان
+│           └── messages.ts       # :text + :document
 │
-├── pdf-server/                   # خدمة PDF احتياطية
-│   ├── index.ts
-│   └── wrangler.toml
+├── tests/                        # 4 ملفات اختبار
+│   ├── db.test.ts                # URL encoding (18 اختبار)
+│   ├── session.test.ts           # KV stores + RateLimiter (24 اختبار)
+│   ├── callback-signing.test.ts  # HMAC + timing attacks (25 اختبار)
+│   └── storage.test.ts           # تحويلات الأحجام (16 اختبار)
 │
-└── scripts/
-    ├── setup.js                  # سكريبت الإعداد الكامل
-    ├── set-secrets.js            # تعيين Bot Tokens كأسرار
-    ├── set-webhooks.js           # تسجيل Webhooks
-    ├── webhook-manager.js        # فحص/تنظيف/إعادة تسجيل الـ webhooks
-    ├── load-env.js               # تحميل .env
-    ├── generate_mock_pdf.py      # توليد PDF تجريبي
-    └── mockup_sample.pdf         # ملف PDF التجريبي
+├── pdf-server/                   # Worker منفصل لملف PDF تجريبي
+├── scripts/                      # 11 سكريبت إعداد وإدارة
+└── .github/workflows/            # 2 workflow (deploy + supabase-sync)
 ```
 
 ---
 
-## 🚀 خطوات التثبيت والنشر
+## نظام 🌟 إحسان علمي
+
+نظام متكامل لإشراك الطلاب في بناء المحتوى العلمي عبر تقديم الملفات وكسب النقاط.
+
+### أنواع المحتوى (7 أنواع)
+
+| النوع | الإيموجي | النقاط (min-max) |
+|---|---|---|
+| المقرر (نظري) | 📘 | 20 - 50 |
+| المقرر (عملي) | 📗 | 20 - 50 |
+| ملخصات | 📄 | 10 - 30 |
+| نماذج اختبارات | 📝 | 15 - 40 |
+| مرئيات وصوتيات | 🎥 | 30 - 100 |
+| مراجع | 📖 | 15 - 50 |
+| جداول دراسية واختبارات | 📅 | 10 - 30 |
+
+> ⭐ المحتوى المميّز يحصل على +50% فوق الحد الأقصى
+
+### دورة حياة الإحسان
+
+```
+الطالب يقدّم إحساناً
+    ↓
+🟡 قيد المراجعة (pending)
+    ↓
+المسؤول يراجع (مع معاينة الملف)
+    ↓
+┌────────────────┬────────────────┐
+│ ✅ معتمد        │ ❌ مرفوض        │
+│ (نقاط متغيرة)  │ (مع سبب)        │
+└────────┬───────┴────────────────┘
+         ↓
+📤 نشر للطلاب (بدون اسم صاحبه)
+    ↓
+💎 منح النقاط (current_cycle + all_time)
+    ↓
+🏆 تحديث ترتيب روّاد الإحسان
+```
+
+### التصعيد التلقائي
+
+| الوقت | الإجراء | المستلم |
+|---|---|---|
+| 24 ساعة | ⏰ تذكير | مسؤول المستوى |
+| 48 ساعة | ⚠️ تنبيه | مسؤول الكلية |
+| 72 ساعة | 🚨 تنبيه عاجل | المسؤول المركزي |
+
+> يعمل عبر Cron Trigger كل ساعة على بوت الإدارة
+
+### إنهاء الدورة
+
+عند انتهاء الفصل الدراسي، المسؤول المركزي يضغط "🔄 إنهاء الدورة":
+
+1. يجمع ترتيب روّاد الإحسان (أفضل 3 لكل مستوى)
+2. يُرسل رسالة منسّقة لقناة الأرشيف `@ust_ihsan_archive`
+3. يُصفّر `total_points_current_cycle` للجميع
+4. يحتفظ بـ `total_points_all_time` (النقاط التاريخية)
+5. يُحدّث اسم الدورة للفصل القادم
+
+---
+
+## قاعدة البيانات
+
+### 26 جدول
+
+| المجموعة | الجداول |
+|---|---|
+| الهيكل الأكاديمي | `colleges`, `specialties`, `subjects` |
+| المحتوى | `content_types`, `content` |
+| RBAC | `admin_users`, `positions`, `position_holders`, `permissions`, `position_level_permissions` |
+| الإحسان والتعميمات | `contributions`, `broadcasts` |
+| سجلات التدقيق | `position_audit_logs`, `content_audit_logs` |
+| الطلاب | `students`, `downloads`, `leaderboard`, `student_subscriptions`, `student_notifications` |
+| النقاط والتكريم | `student_points`, `contribution_honors`, `points_reset_logs` |
+| التخصيص والقنوات | `custom_texts`, `committee_channels` |
+| نظام الإحسان | `ihsan_settings`, `ihsan_archive` |
+
+### 10 دوال PostgreSQL
+
+| الدالة | الوظيفة |
+|---|---|
+| `user_has_permission()` | التحقق من الصلاحية مع وراثة |
+| `get_broadcast_recipients()` | مستلمو التعميم حسب النطاق |
+| `register_student()` | تسجيل/تحديث طالب |
+| `get_top_contributors_specialty()` | أفضل المحسنين في تخصص |
+| `award_contribution_points()` | منح النقاط + إشعار الطالب |
+| `notify_contribution_rejected()` | إشعار الرفض |
+| `increment_download()` | زيادة عدّاد التحميل (atomic) |
+| `count_pending_for_scope()` | عدّ الإحسانات المعلقة في نطاق |
+| `prevent_central_deletion()` | منع حذف المنصب المركزي (trigger) |
+| `prevent_central_orphan()` | منع تعطيل آخر مركزي (trigger) |
+
+---
+
+## الأمان
+
+| الميزة | الحالة |
+|---|---|
+| Bot Tokens كـ Cloudflare Secrets | ✅ |
+| Supabase Service Key كـ Secret | ✅ |
+| HMAC-SHA256 لتوقيع callback_data | ✅ |
+| RBAC هرمي مع وراثة | ✅ |
+| Postgres Triggers لحماية المنصب المركزي | ✅ |
+| Audit Trail (سجلات التدقيق) | ✅ |
+| Rate Limiter (عبر KV) | ✅ متاح |
+| KV-based Sessions (TTL) | ✅ |
+| Webhook يُرجع 200 دائماً | ✅ |
+| `drop_pending_updates` عند التسجيل | ✅ |
+| عرض المحتوى بدون اسم صاحبه | ✅ |
+| منع التعيين الذاتي للمناصب | ✅ |
+
+---
+
+## التثبيت والنشر
 
 ### المتطلبات المسبقة
 
 1. **Node.js 18+** — [تحميل](https://nodejs.org/)
-2. **حساب Cloudflare** مجاني — [التسجيل](https://dash.cloudflare.com/sign-up)
-3. **حساب Supabase** مجاني — [التسجيل](https://supabase.com)
+2. **حساب Cloudflare** مجاني
+3. **حساب Supabase** مجاني
 4. **Bot Tokens** من [@BotFather](https://t.me/BotFather) (بوتان)
 
-### الإعداد السريع
+### الخطوات
 
 ```bash
 # 1. استنساخ المشروع
@@ -258,189 +309,98 @@ git clone https://github.com/mutawakel-hub/UST-BOT.git
 cd UST-BOT
 
 # 2. تثبيت الـ dependencies
-npm install
+npm install --legacy-peer-deps
 
-# 3. نسخ ملف المتغيرات وتعبئته
-cp .env.example .env
-# (حرّر .env وأضف: CLOUDFLARE_API_TOKEN، CLOUDFLARE_ACCOUNT_ID،
-#  WORKERS_SUBDOMAIN، STUDENT_BOT_TOKEN، ADMIN_BOT_TOKEN،
-#  SUPABASE_URL، SUPABASE_SERVICE_KEY)
+# 3. إنشاء KV namespaces
+npx wrangler kv namespace create SESSIONS --config wrangler.student.toml
+npx wrangler kv namespace create CACHE --config wrangler.student.toml
+npx wrangler kv namespace create SESSIONS --config wrangler.admin.toml
+npx wrangler kv namespace create CACHE --config wrangler.admin.toml
 
-# 4. تطبيق الـ Schema على Supabase (من SQL Editor يدوياً)
-#    أو ارفع db/schema.sql في مستودعك وسيُطبَّق تلقائياً عبر supabase-sync.yml
+# 4. تحديث KV IDs في wrangler.*.toml
 
-# 5. تعيين Bot Tokens كـ Cloudflare Secrets
-echo "STUDENT_TOKEN_HERE" | npx wrangler secret put BOT_TOKEN --config wrangler.student.toml
-echo "ADMIN_TOKEN_HERE"   | npx wrangler secret put BOT_TOKEN --config wrangler.admin.toml
+# 5. إضافة Cloudflare Secrets
+echo "TOKEN" | npx wrangler secret put BOT_TOKEN --config wrangler.student.toml
+echo "https://xxx.supabase.co" | npx wrangler secret put SUPABASE_URL --config wrangler.student.toml
+echo "eyJhbGc..." | npx wrangler secret put SUPABASE_SERVICE_KEY --config wrangler.student.toml
+echo "SECRET" | npx wrangler secret put CALLBACK_SECRET --config wrangler.student.toml
+# كرّر لبوت الإدارة
 
-# 6. تعيين Supabase Secret
-echo "SUPABASE_SERVICE_KEY_HERE" | npx wrangler secret put SUPABASE_SERVICE_KEY --config wrangler.student.toml
-echo "SUPABASE_SERVICE_KEY_HERE" | npx wrangler secret put SUPABASE_SERVICE_KEY --config wrangler.admin.toml
+# 6. تطبيق قاعدة البيانات
+# في Supabase SQL Editor:
+#   1. شغّل db/cleanup.sql (لو توجد جداول سابقة)
+#   2. شغّل db/schema.sql
+#   3. شغّل db/seed_data.sql
+#   4. شغّل db/update_storage_channels.sql
 
-# 7. نشر الـ Workers
+# 7. النشر
 npm run deploy:all
 
-# 8. تسجيل الـ Webhooks
-npm run webhook:reset
+# 8. تسجيل Webhooks
+npm run set-webhooks
 ```
 
-> 📖 التفاصيل الكاملة في **[DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md)**.
-
----
-
-## ⚙️ متغيرات البيئة (.env)
+### متغيرات البيئة المطلوبة
 
 | المتغير | الوصف | مطلوب؟ |
 |---|---|---|
-| `CLOUDFLARE_API_TOKEN` | Token بصلاحيات Workers | ✅ |
-| `CLOUDFLARE_ACCOUNT_ID` | معرّف الحساب | ✅ |
-| `WORKERS_SUBDOMAIN` | Subdomain من workers.dev | ✅ |
-| `STUDENT_BOT_TOKEN` | Token بوت الطالب | ✅ |
-| `ADMIN_BOT_TOKEN` | Token بوت الإدارة | ✅ |
-| `STUDENT_BOT_USERNAME` | username بوت الطالب (بدون @) | ✅ |
-| `ADMIN_BOT_USERNAME` | username بوت الإدارة (بدون @) | ✅ |
+| `BOT_TOKEN` | Token البوت من BotFather | ✅ |
 | `SUPABASE_URL` | Project URL من Supabase | ✅ |
-| `SUPABASE_SERVICE_KEY` | service_role key (⚠️ سري) | ✅ |
-| `PDF_SERVER_URL` | URL لـ PDF Server (اختياري) | ❌ |
-| `ENVIRONMENT` | development / production | ❌ |
-
-> ⚠️ `SUPABASE_SERVICE_KEY` يجب أن تكون **Cloudflare Secret** وليست `var` عادي.
+| `SUPABASE_SERVICE_KEY` | service_role key من Supabase | ✅ |
+| `CALLBACK_SECRET` | سرّ HMAC (مشترك بين البوتين) | ✅ |
+| `CLOUDFLARE_API_TOKEN` | للـ CI/CD | ✅ (GitHub Secret) |
+| `CLOUDFLARE_ACCOUNT_ID` | معرّف حساب Cloudflare | ✅ (GitHub Secret) |
+| `SUPABASE_DB_URL` | connection string للمزامنة | اختياري |
 
 ---
 
-## 🛠 أوامر التشغيل
+## الاختبارات
 
 ```bash
-# الإعداد الكامل (مرة واحدة)
-npm run setup
+# تشغيل كل الاختبارات
+npm test
 
-# النشر
-npm run deploy:student         # نشر بوت الطالب فقط
-npm run deploy:admin           # نشر بوت الإدارة فقط
-npm run deploy:all             # نشر البوتين + PDF Server
+# مع coverage
+npm run test:coverage
 
-# إدارة الـ Webhooks
-npm run webhook:status         # فحص حالة الـ webhooks
-npm run webhook:clear          # تنظيف التحديثات المعلّقة
-npm run webhook:reset          # إعادة تسجيل الـ webhooks
+# مراقبة مستمرة
+npm run test:watch
+```
 
-# التطوير المحلي
-npm run dev:student            # تشغيل بوت الطالب محلياً
-npm run dev:admin              # تشغيل بوت الإدارة محلياً
+| الملف | عدد الاختبارات | التغطية |
+|---|---|---|
+| `db.test.ts` | 18 | URL encoding للعربية والمسافات والرموز |
+| `session.test.ts` | 24 | SessionStore + CacheStore + RateLimiter |
+| `callback-signing.test.ts` | 25 | HMAC + مقاومة timing attacks |
+| `storage.test.ts` | 16 | تحويلات الأحجام |
+| **الإجمالي** | **83** | |
 
-# الفحص
-npm run typecheck              # فحص TypeScript
+---
+
+## CI/CD
+
+### `deploy.yml` — النشر التلقائي
+
+```
+git push origin main
+    ↓
+🧪 Tests (Vitest) → 🔍 TypeCheck → 🚀 Deploy (student + admin + pdf)
+```
+
+### `supabase-sync.yml` — مزامنة قاعدة البيانات
+
+عند تعديل `db/schema.sql`:
+```
+git push (يعدّل db/schema.sql)
+    ↓
+psql $SUPABASE_DB_URL -f db/schema.sql
+    ↓
+✅ تم تحديث قاعدة البيانات
 ```
 
 ---
 
-## 🛡️ نظام الصلاحيات (RBAC)
-
-### هرم الوراثة (9 مناصب)
-
-```
-🛡 رئيس اللجنة المركزية (central_chair) — 1 منصب
-   │ + 8 صلاحيات خاصة به
-   │
-   ▼ يرث ↓
-🏛 مسؤول كلية (college_admin_1..7) — 7 مناصب
-   │ + 4 صلاحيات لكل كلية
-   │
-   ▼ يرث ↓
-📊 مندوب مستوى (level_rep_<spec>_<lvl>) — قوالب ديناميكية
-     4 صلاحيات أساسية
-```
-
-### الصلاحيات الـ 19
-
-- **مستوى (4):** `level_broadcast` · `approve_level_contributions` · `manage_level_content` · `view_level_stats`
-- **كلية (+4):** `manage_subjects` · `college_broadcast` · `manage_level_reps` · `view_college_stats`
-- **مركزي (+8):** `manage_admins` · `manage_colleges` · `manage_specialties` · `manage_committee_channels` · `view_central_stats` · `view_reports` · `system_settings` · `central_broadcast`
-- **مركزي — التكريم والنقاط (+3):** `manage_honors` · `reset_points` · `view_honors_log`
-
-> الصلاحيات تُفحَص عبر Function `user_has_permission(...)` مع الوراثة التلقائية.
-
----
-
-## 🧪 سيناريوهات التجربة
-
-### 🎓 بوت الطالب — التسجيل لأول مرة
-
-```
-/start
-↓ 👋 مرحباً! لاستخدام البوت، نحتاج بياناتك
-↓ 🏛 اختر كليتك
-↓ 💻 الحاسبات وتكنولوجيا المعلومات
-↓ تقنية معلومات (IT)
-↓ المستوى 1
-↓ ✅ تم تسجيلك في Supabase!
-↓ 🏠 القائمة الرئيسية
-```
-
-### 🎓 بوت الطالب — تحميل ملف
-
-```
-/start
-↓ 🏛 الكليات → الحاسبات → IT → المستوى 1 → الفصل الأول
-↓ برمجة حاسوب (1) - Python
-↓ 📘 المقرر (نظري) — 2
-↓ اختر ملفاً ⭐
-↓ 📄 معاينة الملف (اسم، حجم، تاريخ، رافع، عدّاد)
-↓ ⬇️ تحميل الملف
-✅ يصلك الملف الفعلي من قناة التخزين!
-```
-
-### 🛡 بوت الإدارة — تعميم ديناميكي
-
-```
-/start
-↓ أدخل معرّف المسؤول
-↓ 📢 التعميمات
-↓ ✍️ إنشاء تعميم جديد
-↓ اختر النطاق (الكل/كلية/تخصص/مستوى)
-↓ معاينة قبل الإرسال
-↓ ✅ تأكيد
-✅ يُرسَل لكل المستلمين + يُسجَّل في جدول broadcasts
-```
-
----
-
-## 📊 إحصائيات المشروع
-
-| البند | القيمة |
-|---|---|
-| إصدار بوت الطالب | **v3.0** |
-| إصدار بوت الإدارة | **v3.3** |
-| إصدار قاعدة البيانات | **v1.2** |
-| عدد الكليات | 7 |
-| عدد التخصصات | 34 |
-| جداول قاعدة البيانات | 24 |
-| صلاحيات RBAC | 19 |
-| مناصب RBAC | 9 |
-| Functions (RPC) | 6 |
-| قنوات التخزين الفعلية | 2 (الطب + الحاسبات) |
-| Workers منشورة | 3 (student + admin + pdf-server) |
-| Workflows (GitHub Actions) | 2 (deploy + supabase-sync) |
-| إجمالي سطور الكود (الأساسية) | ~7,000 |
-| التكلفة الشهرية | $0 (Cloudflare + Supabase Free Tiers) |
-
----
-
-## 🔐 الأمان
-
-- ✅ Bot Tokens مُخزّنة كـ **Cloudflare Secrets** (مشفّرة)
-- ✅ `SUPABASE_SERVICE_KEY` مُخزّنة كـ **Cloudflare Secrets** (وليس كـ var)
-- ✅ لا توجد بيانات حساسة في الكود
-- ✅ معالجة أخطاء شاملة (لا أخطاء 500 للـ Telegram)
-- ✅ تجاهل أخطاء "query is too old" و "message not modified"
-- ✅ **Triggers** تمنع حذف المسؤول المركزي (`prevent_central_deletion`, `prevent_central_orphan`)
-- ✅ **Audit Trail** كامل لكل تغييرات المناصب والمحتوى
-- ⏳ Rate Limiting (KV + Durable Objects) — مرحلة قادمة
-- ⏳ HMAC signing على callback_data — مرحلة قادمة
-
----
-
-## 🐛 استكشاف الأخطاء
+## استكشاف الأخطاء
 
 ### البوت لا يستجيب
 
@@ -448,82 +408,48 @@ npm run typecheck              # فحص TypeScript
 # 1. فحص حالة الـ Webhook
 npm run webhook:status
 
-# 2. إن وجدت أخطاء، نظّف التحديثات المعلّقة
+# 2. تنظيف التحديثات المعلّقة
 npm run webhook:clear
 
-# 3. أعد تسجيل الـ Webhook
+# 3. إعادة تسجيل الـ Webhook
 npm run webhook:reset
-
-# 4. أرسل /start من جديد في البوت
 ```
 
-### فشل اتصال Supabase
+### فحص الصحة
 
 ```bash
-# تتبّع سجلات بوت الطالب
-npx wrangler tail --config wrangler.student.toml
-
-# ابحث عن رسائل "Supabase SELECT error" أو "Supabase INSERT error"
-# الأسباب الشائعة:
-# - SUPABASE_SERVICE_KEY غير صحيحة في Cloudflare Secrets
-# - SUPABASE_URL غير صحيح في wrangler.toml
-# - الـ Schema لم يُطبَّق بعد على Supabase
-```
-
-### فحص صحة الـ Workers
-
-```bash
+# بوت الطالب
 curl https://ust-student-bot.atow73768.workers.dev/health
+
+# بوت الإدارة
 curl https://ust-admin-bot.atow73768.workers.dev/health
 ```
 
----
+### Endpoints تشخيصية
 
-## 🌍 معلومات النشر الحالي
+```bash
+# فحص صلاحيات مستخدم (الإدارة)
+curl https://ust-admin-bot.atow73768.workers.dev/debug/rbac/1330666633
 
-- **GitHub Repo:** https://github.com/mutawakel-hub/UST-BOT (خاص)
-- **Workers.dev Subdomain:** `atow73768`
-- **بيئة التشغيل:** Cloudflare Workers (مجاني 100%)
-- **قاعدة البيانات:** Supabase (Free Tier)
-- **Workers منشورة:**
-  - `ust-student-bot` — بوت الطالب v3.0
-  - `ust-admin-bot` — بوت الإدارة v3.3
-  - `ust-pdf-server` — خدمة PDF احتياطية
-- **GitHub Actions:**
-  - `deploy.yml` — نشر البوتات عند كل push على main
-  - `supabase-sync.yml` — مزامنة الـ Schema عند تعديل `db/schema.sql`
+# فحص إدراج الإحسان (الطالب)
+curl https://ust-student-bot.atow73768.workers.dev/debug/contribution
 
----
+# فحص محتوى مادة (الطالب)
+curl https://ust-student-bot.atow73768.workers.dev/debug/content/101
+```
 
-## 🎯 خريطة الطريق للمراحل القادمة
+### سجلات Cloudflare
 
-### المرحلة القادمة: استكمال تكامل بوت الإدارة
-
-- [ ] ربط إدارة المواد بـ Supabase (CRUD كامل)
-- [ ] ربط استعراض الملفات بـ Supabase
-- [ ] ربط إحصائيات الإدارة بـ Supabase
-- [ ] ربط إدارة المسؤولين بـ `position_holders`
-
-### المرحلة 4: قنوات التخزين المتبقية
-
-- [ ] إنشاء 5 قنوات تخزين للكليات المتبقية (طب أسنان، صيدلة، هندسة، علوم إدارية، علوم إنسانية)
-- [ ] رفع الملفات للقنوات
-- [ ] ربط كل كلية بـ `storage_channel_id` الخاص بها
-
-### المرحلة 5: ميزات متقدمة
-
-- [ ] Rate Limiting (KV + Durable Objects)
-- [ ] Audit Log شامل عبر Admin UI
-- [ ] توقيع callback_data بـ HMAC
-- [ ] فحص الملفات (Magic Bytes)
-- [ ] تنبيهات أمان للمسؤول المركزي
+```bash
+npx wrangler tail --config wrangler.student.toml
+npx wrangler tail --config wrangler.admin.toml
+```
 
 ---
 
 ## 📞 الدعم
 
 - **GitHub Issues:** https://github.com/mutawakel-hub/UST-BOT/issues
-- **المشرف:** UST Central Bot Team
 - **البريد:** support@ust.edu.ye
 - **تيليجرام:** @ust_support
 
