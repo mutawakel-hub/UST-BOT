@@ -31,12 +31,15 @@ import {
 } from "../../shared/keyboards";
 import { getUserState } from "../state";
 
-// تصنيفات الملفات
+// تصنيفات الملفات (7 أنواع)
 const TYPE_LABELS: Record<string, string> = {
   book_theory: "📘 المقرر (نظري)",
   book_practical: "📗 المقرر (عملي)",
-  exam: "📑 نماذج اختبارات",
-  summary: "📝 ملخصات",
+  summary: "📄 ملخصات",
+  exam: "📝 نماذج اختبارات",
+  video: "🎥 مرئيات وصوتيات",
+  reference: "📖 مراجع",
+  schedule: "📅 جداول دراسية واختبارات",
 };
 
 // ============================================
