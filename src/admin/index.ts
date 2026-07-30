@@ -42,6 +42,7 @@ import { registerChannelHandlers } from "./handlers/channels";
 import { registerHonorHandlers } from "./handlers/honors";
 import { registerMessageHandlers } from "./handlers/messages";
 import { runEscalationCheck, getAdminPerformanceReport, registerEscalationHandlers } from "./handlers/escalation";
+import { registerIhsanManagementHandlers } from "./handlers/ihsan_management";
 
 // ============================================
 // إنشاء البوت
@@ -76,6 +77,7 @@ export function createAdminBot(
   registerHonorHandlers(bot, supabase);
   registerMessageHandlers(bot, supabase);
   registerEscalationHandlers(bot, supabase);
+  registerIhsanManagementHandlers(bot, supabase);
 
   // معالجة الأخطاء الشاملة
   bot.catch(async (err) => {

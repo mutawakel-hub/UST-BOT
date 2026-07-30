@@ -19,16 +19,19 @@ export function buildDynamicDashboard(perms: UserPermissions, pendingCount: numb
   const kb = new InlineKeyboard();
   const p = perms.permissions;
 
-  // صف 1: المساهمات (مخفية للمركزي مؤقتاً) + المحتوى
-  if (p.has("approve_level_contributions") && !perms.is_central) {
-    kb.text(ADMIN_TEXTS.dashboard.btn_pending(pendingCount), "pending");
+  // صف 1: إدارة الإحسان (للجميع الذين يملكون صلاحية مراجعة)
+  if (p.has("approve_level_contributions") || perms.is_central) {
+    kb.text(`🌟 إدارة الإحسان${pendingCount > 0 ? ` (${pendingCount})` : ""}`, "ihsan_management");
   }
+  kb.row();
+
+  // صف 2: المحتوى
   if (p.has("manage_level_content")) {
     kb.text("📁 إدارة المحتوى", "content_mgmt");
   }
   kb.row();
 
-  // صف 2: المواد + التعميم
+  // صف 3: المواد + التعميم
   if (p.has("manage_subjects")) {
     kb.text("📖 إدارة المواد", "subjects_mgmt");
   }
@@ -37,7 +40,7 @@ export function buildDynamicDashboard(perms: UserPermissions, pendingCount: numb
   }
   kb.row();
 
-  // صف 3: الإحصائيات + التخصيص
+  // صف 4: الإحصائيات + التخصيص
   if (p.has("view_level_stats") || p.has("view_central_stats")) {
     kb.text("📊 إحصائيات", "statistics");
   }
@@ -46,9 +49,7 @@ export function buildDynamicDashboard(perms: UserPermissions, pendingCount: numb
   }
   kb.row();
 
-  // صف 4: المناصب + اللجان (للمركزي ومسؤول الكلية)
-  // manage_admins → المركزي فقط
-  // manage_level_reps → مسؤول الكلية (يدخل لشاشة محدودة)
+  // صف 5: المناصب + اللجان
   if (p.has("manage_admins") || p.has("manage_level_reps")) {
     kb.text("👥 إدارة المناصب", "manage_admins");
   }
@@ -57,7 +58,7 @@ export function buildDynamicDashboard(perms: UserPermissions, pendingCount: numb
   }
   kb.row();
 
-  // صف 5: التكريم + إعادة ضبط النقاط (للمركزي فقط)
+  // صف 6: التكريم + إعادة ضبط النقاط (للمركزي فقط)
   if (p.has("manage_honors")) {
     kb.text("🏆 إدارة التكريم", "manage_honors");
   }
@@ -66,10 +67,12 @@ export function buildDynamicDashboard(perms: UserPermissions, pendingCount: numb
   }
   kb.row();
 
-  // صف 6: روّاد الإحسان + أداء المسؤولين (للمركزي فقط)
+  // صف 7: روّاد الإحسان + أداء المسؤولين + الإعدادات (للمركزي فقط)
   if (perms.is_central) {
     kb.text("🏆 روّاد الإحسان", "leaderboard_update");
     kb.text("📊 أداء المسؤولين", "admin_performance").row();
+    kb.text("⚙️ إعدادات الإحسان", "ihsan_settings").row();
+    kb.text("🔄 إنهاء الدورة", "end_ihsan_cycle").row();
   }
 
   return kb;
