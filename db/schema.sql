@@ -805,10 +805,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- تحديث الأوصاف: "مندوب المستوى" → "مسؤول الدفعة"
 -- ============================================
 UPDATE permissions
-SET name = REPLACE(name, 'مندوبي المستويات', 'مسؤولي الدفع'),
-    description = REPLACE(description, 'مندوبي المستويات', 'مسؤولي الدفع'),
-    name = REPLACE(name, 'مندوب المستوى', 'مسؤول الدفعة'),
-    description = REPLACE(description, 'مندوب المستوى', 'مسؤول الدفعة');
+SET name = REPLACE(REPLACE(name, 'مندوبي المستويات', 'مسؤولي الدفع'), 'مندوب المستوى', 'مسؤول الدفعة'),
+    description = REPLACE(REPLACE(description, 'مندوبي المستويات', 'مسؤولي الدفع'), 'مندوب المستوى', 'مسؤول الدفعة');
 
 UPDATE positions
 SET title = REPLACE(title, 'مندوب', 'مسؤول'),
