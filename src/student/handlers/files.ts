@@ -101,11 +101,11 @@ export async function showFilesList(
 
 export function registerFileHandlers(bot: Bot, supabase: SupabaseClient): void {
   // S8: عرض الملفات حسب النوع
-  bot.callbackQuery(/type_book_theory_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^type_book_theory_(\d+)$/, async (ctx) => {
     await showFilesList(supabase, ctx, parseInt(ctx.match[1]), "book_theory");
   });
 
-  bot.callbackQuery(/type_book_practical_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^type_book_practical_(\d+)$/, async (ctx) => {
     const subject = getSubjectByIdWithFallback(parseInt(ctx.match[1]));
     if (!subject?.has_practical) {
     await ctx.answerCallbackQuery({ text: "⚠️ هذه المادة لا تحتوي على مقرر عملي.", show_alert: true });
@@ -114,23 +114,23 @@ export function registerFileHandlers(bot: Bot, supabase: SupabaseClient): void {
     await showFilesList(supabase, ctx, parseInt(ctx.match[1]), "book_practical");
   });
 
-  bot.callbackQuery(/type_exams_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^type_exams_(\d+)$/, async (ctx) => {
     await showFilesList(supabase, ctx, parseInt(ctx.match[1]), "exam");
   });
 
-  bot.callbackQuery(/type_summaries_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^type_summaries_(\d+)$/, async (ctx) => {
     await showFilesList(supabase, ctx, parseInt(ctx.match[1]), "summary");
   });
 
-  bot.callbackQuery(/type_video_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^type_video_(\d+)$/, async (ctx) => {
     await showFilesList(supabase, ctx, parseInt(ctx.match[1]), "video");
   });
 
-  bot.callbackQuery(/type_reference_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^type_reference_(\d+)$/, async (ctx) => {
     await showFilesList(supabase, ctx, parseInt(ctx.match[1]), "reference");
   });
 
-  bot.callbackQuery(/type_schedule_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^type_schedule_(\d+)$/, async (ctx) => {
     await showFilesList(supabase, ctx, parseInt(ctx.match[1]), "schedule");
   });
 
