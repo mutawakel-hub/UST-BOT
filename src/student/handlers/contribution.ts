@@ -60,7 +60,7 @@ function contentTypesKeyboard(prefix: string, subjectId?: number): InlineKeyboar
 }
 
 // ============================================
-// Helper: إدراج الطالب في admin_users (لـ FK constraint)
+// Helper: التأكد من وجود الطالب في admin_users (لـ FK constraint)
 // ============================================
 async function ensureStudentInAdminUsers(
   supabase: SupabaseClient,
@@ -68,16 +68,39 @@ async function ensureStudentInAdminUsers(
   firstName?: string,
   username?: string
 ): Promise<void> {
+  // تحقق من وجود المستخدم أولاً
   try {
-    await supabase
-      .insert("admin_users", {
-        telegram_id: telegramId,
-        first_name: firstName || "طالب",
-        username: username || null,
-      })
-      .catch(() => {}); // تجاهل لو موجود مسبقاً
-  } catch (e) {
-    // تجاهل
+    const existing = await supabase.select("admin_users", {
+      columns: "telegram_id",
+      filter: `telegram_id=eq.${telegramId}`,
+      limit: 1,
+    });
+    if (Array.isArray(existing) && existing.length > 0) {
+      // موجود — لا حاجة للإدراج
+      return;
+    }
+  } catch {
+    // تجاهل — نحاول الإدراج
+  }
+
+  // غير موجود — أدرجه
+  try {
+    await supabase.insert("admin_users", {
+      telegram_id: telegramId,
+      first_name: firstName || "طالب",
+      username: username || null,
+      is_active: true,
+    });
+    console.log(`✅ [Ihsan] Auto-registered user ${telegramId} in admin_users`);
+  } catch (e: any) {
+    // لو الخطأ "duplicate key" — يعني موجود بالفعل (safe to ignore)
+    const msg = String(e?.message || "");
+    if (msg.includes("duplicate") || msg.includes("23505")) {
+      // موجود — لا مشكلة
+      return;
+    }
+    console.error(`❌ [Ihsan] Failed to register user in admin_users:`, msg.substring(0, 200));
+    throw e; // أعد رمي الخطأ — يجب أن يوقف العملية
   }
 }
 

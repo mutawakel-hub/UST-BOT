@@ -163,6 +163,104 @@ export default {
         );
       }
 
+      // ====== Debug: Test contribution insert ======
+      if (url.pathname === "/debug/contribution") {
+        const debug: any = { timestamp: new Date().toISOString(), tests: {} };
+
+        // 1. Check admin_users
+        try {
+          const resp = await fetch(
+            `${env.SUPABASE_URL}/rest/v1/admin_users?select=telegram_id,first_name&limit=5`,
+            { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+          );
+          debug.tests.admin_users = { status: resp.status, body: (await resp.text()).substring(0, 300) };
+        } catch (e: any) { debug.tests.admin_users = { error: e.message }; }
+
+        // 2. Check content_types
+        try {
+          const resp = await fetch(
+            `${env.SUPABASE_URL}/rest/v1/content_types?select=id,name&limit=10`,
+            { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+          );
+          debug.tests.content_types = { status: resp.status, body: (await resp.text()).substring(0, 500) };
+        } catch (e: any) { debug.tests.content_types = { error: e.message }; }
+
+        // 3. Check subjects
+        try {
+          const resp = await fetch(
+            `${env.SUPABASE_URL}/rest/v1/subjects?select=id,name&limit=5`,
+            { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+          );
+          debug.tests.subjects = { status: resp.status, body: (await resp.text()).substring(0, 300) };
+        } catch (e: any) { debug.tests.subjects = { error: e.message }; }
+
+        // 4. Check contributions columns (try select)
+        try {
+          const resp = await fetch(
+            `${env.SUPABASE_URL}/rest/v1/contributions?select=id,title,points_awarded,escalated_at&limit=1`,
+            { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+          );
+          const body = await resp.text();
+          debug.tests.contributions_new_columns = {
+            status: resp.status,
+            ok: resp.ok,
+            body: body.substring(0, 400),
+            note: resp.status === 400 ? "NEW COLUMNS MISSING — apply schema.sql" : "OK"
+          };
+        } catch (e: any) { debug.tests.contributions_new_columns = { error: e.message }; }
+
+        // 5. Try actual insert (test)
+        try {
+          const resp = await fetch(
+            `${env.SUPABASE_URL}/rest/v1/contributions`,
+            {
+              method: "POST",
+              headers: {
+                apikey: env.SUPABASE_SERVICE_KEY,
+                Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+                "Content-Type": "application/json",
+                Prefer: "return=representation",
+              },
+              body: JSON.stringify({
+                user_telegram_id: 8796334849,
+                subject_id: 101,
+                content_type_id: "summary",
+                file_name: "test_debug.pdf",
+                file_size_mb: 0.1,
+                telegram_file_id: "test_debug_id",
+                title: "Test Debug",
+                status: "pending",
+              }),
+            }
+          );
+          const body = await resp.text();
+          debug.tests.insert_test = {
+            status: resp.status,
+            ok: resp.ok,
+            body: body.substring(0, 500),
+          };
+
+          // Clean up: delete test record
+          if (resp.ok) {
+            const inserted = JSON.parse(body);
+            if (inserted[0]?.id) {
+              await fetch(
+                `${env.SUPABASE_URL}/rest/v1/contributions?id=eq.${inserted[0].id}`,
+                {
+                  method: "DELETE",
+                  headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` },
+                }
+              );
+              debug.tests.insert_test.cleanup = "deleted test record";
+            }
+          }
+        } catch (e: any) { debug.tests.insert_test = { error: e.message }; }
+
+        return new Response(JSON.stringify(debug, null, 2), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
       // ====== Webhook endpoint ======
       if (url.pathname === "/webhook") {
         try {
