@@ -8,13 +8,12 @@
 //   - منح النقاط الفعلية للطالب عبر award_contribution_points RPC
 // ============================================
 
-import { Bot } from "grammy";
-import { InlineKeyboard } from "grammy";
+import { Bot, InlineKeyboard } from "grammy";
 import { ADMIN_TEXTS } from "../../shared/texts";
 import { SupabaseClient } from "../../shared/db";
 import { getUserPermissions } from "../../shared/rbac";
 import { getSubjectById } from "../../shared/data/subjects";
-import { uploadFileToStorageChannel } from "../../shared/storage";
+import { getContentTypeLabel } from "../../shared/data/admins";
 import { getOrCreateSession } from "../state";
 
 // ============================================
@@ -143,7 +142,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     let contrib: any = null;
     try {
       const result = await supabase.select("contributions", {
-        columns: "id,file_name,subject_id,content_type_id,description,file_size_mb,created_at,user_telegram_id",
+        columns: "id,file_name,title,subject_id,content_type_id,description,file_size_mb,created_at,user_telegram_id,telegram_file_id",
         filter: `id=eq.${contribId}`,
         single: true,
       });
@@ -159,29 +158,77 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
 
     const subjectName = getSubjectById(contrib.subject_id)?.name || "غير معروف";
     const contentType: string = contrib.content_type_id || "summary";
+    const typeLabel = getContentTypeLabel(contentType);
     const points = getPointsForType(contentType);
+    const title = contrib.title || contrib.file_name || "بدون عنوان";
 
-    await ctx.editMessageText(
-      ADMIN_TEXTS.review.title({
-        id: contrib.id, fileName: contrib.file_name, subjectName,
-        userName: "طالب", uploadedAt: contrib.created_at || "حديثاً",
-        fileSizeMb: parseFloat(contrib.file_size_mb) || 0, description: contrib.description,
-      }) +
-      `\n💎 *النقاط المتاحة:* ${points.min}–${points.max} (المميّز: ${points.starred})\n`,
-      {
-        reply_markup: new InlineKeyboard()
-          .text(`✅ اعتماد (${points.min} نقطة)`, `approve_${contribId}_${points.min}`)
-          .text(`✅ اعتماد (${points.mid} نقطة)`, `approve_${contribId}_${points.mid}`)
-          .row()
-          .text(`✅ اعتماد (${points.max} نقطة)`, `approve_${contribId}_${points.max}`)
-          .text(`⭐ مميّز (${points.starred} نقطة)`, `approve_star_${contribId}_${points.starred}`)
-          .row()
-          .text(ADMIN_TEXTS.review.reject, `reject_${contribId}`)
-          .row()
-          .text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
+    let msg = `🌟 *مراجعة الإحسان #${contrib.id}*\n\n`;
+    msg += `📝 *العنوان:* ${title}\n`;
+    msg += `📂 *النوع:* ${typeLabel}\n`;
+    msg += `📚 *المادة:* ${subjectName}\n`;
+    msg += `📊 *الحجم:* ${(parseFloat(contrib.file_size_mb) || 0).toFixed(2)} MB\n`;
+    if (contrib.description) msg += `📌 *الوصف:* ${contrib.description}\n`;
+    msg += `📅 *التاريخ:* ${contrib.created_at || "حديثاً"}\n\n`;
+    msg += `💎 *النقاط المتاحة:* ${points.min}–${points.max} (المميّز: ${points.starred})\n`;
+
+    const kb = new InlineKeyboard();
+
+    // زر معاينة الملف (يفتح الملف في شات المسؤول)
+    if (contrib.telegram_file_id) {
+      kb.text("👁 معاينة الملف", `preview_ihsan_${contribId}`).row();
+    }
+
+    // أزرار الاعتماد
+    kb.text(`✅ اعتماد (${points.min} نقطة)`, `approve_${contribId}_${points.min}`)
+      .text(`✅ اعتماد (${points.mid} نقطة)`, `approve_${contribId}_${points.mid}`).row();
+    kb.text(`✅ اعتماد (${points.max} نقطة)`, `approve_${contribId}_${points.max}`)
+      .text(`⭐ مميّز (${points.starred} نقطة)`, `approve_star_${contribId}_${points.starred}`).row();
+    kb.text(ADMIN_TEXTS.review.reject, `reject_${contribId}`).row();
+    kb.text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending");
+
+    await ctx.editMessageText(msg, {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  });
+
+  // ====== معاينة ملف الإحسان قبل الاعتماد ======
+  bot.callbackQuery(/preview_ihsan_(\d+)/, async (ctx) => {
+    const contribId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery({ text: "⏳ جارٍ جلب الملف..." });
+
+    let contrib: any = null;
+    try {
+      const result = await supabase.select("contributions", {
+        columns: "id,file_name,title,telegram_file_id",
+        filter: `id=eq.${contribId}`,
+        single: true,
+      });
+      contrib = Array.isArray(result) ? result[0] : result;
+    } catch (e) {
+      console.error("Failed to fetch contribution for preview:", e);
+    }
+
+    if (!contrib || !contrib.telegram_file_id) {
+      await ctx.reply("⚠️ تعذّر جلب الملف. قد يكون file_id غير متاح.");
+      return;
+    }
+
+    try {
+      // إرسال الملف للمسؤول لمعاينته
+      await bot.api.sendDocument(ctx.chat.id, contrib.telegram_file_id, {
+        caption: `👁 *معاينة الإحسان #${contribId}*\n📝 ${contrib.title || contrib.file_name}`,
         parse_mode: "Markdown",
-      }
-    );
+      });
+    } catch (e: any) {
+      console.error("Failed to send preview:", e);
+      await ctx.reply(
+        `⚠️ تعذّر إرسال الملف للمعاينة.\n` +
+        `السبب: ${e?.message?.substring(0, 100) || "غير معروف"}\n` +
+        `قد يكون file_id غير صالح لهذا البوت.`,
+        { parse_mode: "Markdown" }
+      );
+    }
   });
 
   // ====== A4b: اعتماد مساهمة (مع نقاط مختارة) ======
