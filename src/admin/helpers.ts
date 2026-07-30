@@ -68,7 +68,7 @@ export function buildDynamicDashboard(perms: UserPermissions, pendingCount: numb
 
   // صف 6: لوحة الشرف (للمركزي فقط)
   if (perms.is_central) {
-    kb.text("🏆 لوحة الشرف", "leaderboard_update").row();
+    kb.text("🏆 روّاد الإحسان", "leaderboard_update").row();
   }
 
   return kb;

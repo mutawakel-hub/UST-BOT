@@ -80,12 +80,13 @@ CREATE TABLE content_types (
 );
 
 INSERT INTO content_types (id, name, emoji, description, sort_order) VALUES
-  ('book_theory',    'المقرر النظري',       '📘', 'الكتاب الأساسي للمادة',           1),
-  ('book_practical', 'المقرر العملي',       '📗', 'الدليل العملي للمادة',            2),
-  ('exam',           'نماذج اختبارات',      '📑', 'نماذج الاختبارات السابقة',         3),
-  ('summary',        'ملخصات',              '📝', 'ملخصات المادة',                    4),
-  ('video',          'مرئيات',              '🎥', 'شرح فيديو للمادة',                 5),
-  ('reference',      'مراجع',               '📚', 'مراجع إضافية',                     6);
+  ('book_theory',    'المقرر (نظري)',              '📘', 'الكتاب الأساسي النظري للمادة',           1),
+  ('book_practical', 'المقرر (عملي)',              '📗', 'الدليل العملي للمادة',                   2),
+  ('summary',        'ملخصات',                     '📄', 'ملخصات المادة وخرائط ذهنية',             3),
+  ('exam',           'نماذج اختبارات',             '📝', 'نماذج الاختبارات السابقة وبنوك الأسئلة', 4),
+  ('video',          'مرئيات وصوتيات',             '🎥', 'محاضرات مسجلة وشروحات وتسجيلات صوتية',   5),
+  ('reference',      'مراجع',                      '📖', 'كتب وأبحاث ومصادر تعليمية موثوقة',       6),
+  ('schedule',       'جداول دراسية واختبارات',     '📅', 'جداول المحاضرات والاختبارات النصفية والنهائية', 7);
 
 -- ============================================
 -- 5. المحتوى (مع ربط القناة)
@@ -955,10 +956,51 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================
+-- 25. إعدادات نظام إحسان علمي
+-- ============================================
+CREATE TABLE ihsan_settings (
+  id INT PRIMARY KEY DEFAULT 1,
+  -- نقاط الأنواع (min-max)
+  book_theory_min INT DEFAULT 20, book_theory_max INT DEFAULT 50,
+  book_practical_min INT DEFAULT 20, book_practical_max INT DEFAULT 50,
+  summary_min INT DEFAULT 10, summary_max INT DEFAULT 30,
+  exam_min INT DEFAULT 15, exam_max INT DEFAULT 40,
+  video_min INT DEFAULT 30, video_max INT DEFAULT 100,
+  reference_min INT DEFAULT 15, reference_max INT DEFAULT 50,
+  schedule_min INT DEFAULT 10, schedule_max INT DEFAULT 30,
+  -- إعدادات التصعيد
+  escalation_hours_1 INT DEFAULT 24,  -- تذكير مسؤول المستوى
+  escalation_hours_2 INT DEFAULT 48,  -- تنبيه مسؤول الكلية
+  escalation_hours_3 INT DEFAULT 72,  -- تنبيه المركزي
+  -- عدد المتصدرين
+  leaderboard_top_n INT DEFAULT 3,
+  -- قناة الأرشيف
+  archive_channel_id TEXT DEFAULT '-1004342924841',
+  -- الدورة الحالية
+  current_cycle_name TEXT DEFAULT 'الفصل الأول 2026',
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- صف إعدادات افتراضي
+INSERT INTO ihsan_settings (id) VALUES (1);
+
+-- ============================================
+-- 26. أرشيف دورات الإحسان
+-- ============================================
+CREATE TABLE ihsan_archive (
+  id BIGSERIAL PRIMARY KEY,
+  cycle_name TEXT NOT NULL,
+  telegram_message_id BIGINT NOT NULL,
+  archived_by BIGINT NOT NULL,
+  archived_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================
 -- نهاية الـ Schema
 -- ============================================
--- إجمالي الجداول: 24 جدول (مع اشتراكات الطلاب)
+-- إجمالي الجداول: 26 (مع ihsan_settings + ihsan_archive)
 -- إجمالي المناصب: 9 (1 مركزي + 7 كليات + 1 دفعة)
 -- إجمالي الصلاحيات: 19 صلاحية
--- Functions: 8 (user_has_permission + get_top_contributors + award_points + notify_rejected + get_broadcast_recipients + register_student + increment_download + count_pending_for_scope)
+-- إجمالي أنواع المحتوى: 7
+-- Functions: 8 + 3 جديدة قيد الإضافة
 -- ============================================

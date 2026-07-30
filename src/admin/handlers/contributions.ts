@@ -109,7 +109,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     }
 
     if (!contrib) {
-      await ctx.reply("⚠️ المساهمة غير موجودة أو تمت معالجتها.");
+      await ctx.reply("⚠️ الإحسان غير موجود أو تمت معالجته.");
       return;
     }
 
@@ -153,7 +153,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     }
 
     if (!contribution) {
-      await ctx.reply("⚠️ المساهمة غير موجودة.");
+      await ctx.reply("⚠️ الإحسان غير موجود.");
       return;
     }
 
@@ -260,7 +260,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     }
 
     await ctx.editMessageText(
-      `${isStarred ? "⭐" : "✅"} *تم اعتماد المساهمة #${contribId}*\n\n` +
+      `${isStarred ? "⭐" : "✅"} *تم اعتماد الإحسان #${contribId}*\n\n` +
       (uploadedMessageId
         ? `📤 تم رفع الملف لقناة التخزين (message_id: ${uploadedMessageId})\n`
         : `⚠️ تعذّر رفع الملف لقناة التخزين — تحقق من إعدادات القناة\n`) +
@@ -327,7 +327,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     }
 
     await ctx.editMessageText(
-      `✅ *تم رفض المساهمة #${contribId}*\n\nالسبب: ${reasons[reasonKey]}\n\n🔔 تم إشعار الطالب بالرفض.`,
+      `✅ *تم رفض الإحسان #${contribId}*\n\nالسبب: ${reasons[reasonKey]}\n\n🔔 تم إشعار الطالب بالرفض.`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_pending, "back_to_pending"),
         parse_mode: "Markdown",

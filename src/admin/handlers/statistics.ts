@@ -48,7 +48,7 @@ export function registerStatisticsHandlers(bot: Bot, supabase: SupabaseClient): 
         console.error("Statistics count error:", e);
       }
       statsText += `📁 إجمالي الملفات في نطاقك: ${contentCount}\n`;
-      statsText += `📥 المساهمات المعلقة: ${pendingCount}\n`;
+      statsText += `📥 الإحسانات المعلقة: ${pendingCount}\n`;
       statsText += `🏛 الكليات التي تديرها: ${collegeIds.length}\n`;
     }
     await ctx.editMessageText(statsText, {

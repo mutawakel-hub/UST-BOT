@@ -83,7 +83,7 @@ export function registerProfileHandlers(bot: Bot, supabase: SupabaseClient): voi
 
   bot.callbackQuery("my_contributions", async (ctx) => {
     await ctx.answerCallbackQuery();
-    let msg = "📋 *مساهماتي*\n\n";
+    let msg = "📋 *إحساناتي*\n\n";
 
     // قراءة من Supabase
     let dbContribs: any[] = [];

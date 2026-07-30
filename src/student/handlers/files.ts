@@ -67,7 +67,7 @@ export async function showFilesList(
 
   if (files.length === 0) {
     const bc = `📄 *${subject.name} - ${TYPE_LABELS[category]}*`;
-    await ctx.editMessageText(`${bc}\n\n📭 لا توجد ملفات في هذا التصنيف حالياً.\n💡 يمكنك المساهمة بأول ملف!`, {
+    await ctx.editMessageText(`${bc}\n\n📭 لا توجد ملفات في هذا التصنيف حالياً.\n💡 يمكنك الإحسان بأول ملف!`, {
       reply_markup: new InlineKeyboard().text(
         TEXTS.navigation.back_to_subject_menu,
         `back_to_subject_menu_${subjectId}`

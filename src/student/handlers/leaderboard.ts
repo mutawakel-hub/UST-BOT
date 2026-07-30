@@ -29,7 +29,7 @@ async function showLeaderboard(
   id?: number
 ): Promise<void> {
   let entries: any[] = [];
-  let scopeLabel = "🌍 لوحة الشرف العالمية";
+  let scopeLabel = "🌍 روّاد الإحسان العالمية";
 
   // قراءة من Supabase
   try {
@@ -46,11 +46,11 @@ async function showLeaderboard(
     const college = getCollegeById(id);
     // فلترة حسب الكلية
     entries = entries.filter((e: any) => e.current_college_id === id || e.college_id === id);
-    scopeLabel = `🏛 لوحة شرف - ${college?.name}`;
+    scopeLabel = `🏛 روّاد الإحسان - ${college?.name}`;
   } else if (scope === "specialty" && id) {
     const spec = getSpecialtyById(id);
     entries = entries.filter((e: any) => e.current_specialty_id === id || e.specialty_id === id);
-    scopeLabel = `📚 لوحة شرف - ${spec?.name}`;
+    scopeLabel = `📚 روّاد الإحسان - ${spec?.name}`;
   }
 
   let msg = `${scopeLabel}\n\n`;
@@ -61,7 +61,7 @@ async function showLeaderboard(
       const rank = idx + 1;
       const badge = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : `${rank}.`;
       msg += `${badge} *${e.student_name}* — ${e.points} نقطة\n`;
-      msg += `     📥 ${e.contributions_count} مساهمة • 📚 ${e.specialty_name}\n\n`;
+      msg += `     📥 ${e.contributions_count} إحسان • 📚 ${e.specialty_name}\n\n`;
     });
   }
   await ctx.editMessageText(msg, {
@@ -85,7 +85,7 @@ export function registerLeaderboardHandlers(bot: Bot, supabase: SupabaseClient):
   bot.callbackQuery("leader_colleges", async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(
-      "🏛 *تصفية لوحة الشرف بالكلية*\n\nاختر الكلية:",
+      "🏛 *تصفية روّاد الإحسان بالكلية*\n\nاختر الكلية:",
       {
         reply_markup: new InlineKeyboard()
           .text("🏥 الطب", "leader_col_1")
@@ -114,7 +114,7 @@ export function registerLeaderboardHandlers(bot: Bot, supabase: SupabaseClient):
   bot.callbackQuery("leader_majors", async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(
-      "📚 *تصفية لوحة الشرف بالتخصص*\n\nاختر الكلية أولاً:",
+      "📚 *تصفية روّاد الإحسان بالتخصص*\n\nاختر الكلية أولاً:",
       {
         reply_markup: new InlineKeyboard()
           .text("💻 الحاسبات", "leader_majors_col_5")

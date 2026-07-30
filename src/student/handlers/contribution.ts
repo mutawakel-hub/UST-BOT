@@ -109,7 +109,7 @@ export function registerContributionHandlers(bot: Bot, supabase: SupabaseClient)
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(TEXTS.contribution_main.intro, {
       reply_markup: new InlineKeyboard()
-        .text("🚀 ابدأ المساهمة", "contribute_main_start")
+        .text("🚀 ابدأ الإحسان", "contribute_main_start")
         .row()
         .text(TEXTS.navigation.back_to_main, "back_to_main"),
       parse_mode: "Markdown",

@@ -197,7 +197,7 @@ export const MOCK_POSITION_HOLDERS: MockPositionHolder[] = [
 export const MOCK_PERMISSIONS: Permission[] = [
   // مسؤول الدفعة (القاعدة)
   { id: "level_broadcast", name: "نشر إعلانات الدفعة", description: "السماح بنشر تعميمات على دفعة محددة", min_level: "level" },
-  { id: "approve_level_contributions", name: "الموافقة/رفض مساهمات الدفعة", description: "مراجعة مساهمات الطلاب", min_level: "level" },
+  { id: "approve_level_contributions", name: "الموافقة/رفض إحسانات الدفعة", description: "مراجعة إحسانات الطلاب", min_level: "level" },
   { id: "manage_level_content", name: "إدارة محتوى الدفعة", description: "رفع/تعديل/نقل/حذف محتوى", min_level: "level" },
   { id: "view_level_stats", name: "عرض إحصائيات الدفعة", description: "الاطلاع على إحصائيات", min_level: "level" },
   // مسؤول الكلية
@@ -215,7 +215,7 @@ export const MOCK_PERMISSIONS: Permission[] = [
   { id: "system_settings", name: "إعدادات النظام", description: "تخصيص النصوص والإعدادات", min_level: "central" },
   { id: "central_broadcast", name: "نشر تعميمات شاملة", description: "تعميم على كل الطلاب", min_level: "central" },
   // صلاحيات جديدة (للمركزي فقط)
-  { id: "manage_honors", name: "إدارة تكريم المساهمين", description: "اعتماد/رفض ترشيحات التكريم + منح تكريم يدوي", min_level: "central" },
+  { id: "manage_honors", name: "إدارة تكريم المحسنين", description: "اعتماد/رفض ترشيحات التكريم + منح تكريم يدوي", min_level: "central" },
   { id: "reset_points", name: "إعادة ضبط النقاط", description: "تصفير نقاط الطلاب (شهري/فصلي/سنوي)", min_level: "central" },
   { id: "view_honors_log", name: "عرض سجل التكريم", description: "الاطلاع على التكريمات السابقة", min_level: "central" },
 ];
@@ -264,12 +264,13 @@ export const MOCK_POSITION_LEVEL_PERMISSIONS: PositionLevelPermission[] = [
 // أنواع المحتوى (6 أنواع)
 // ============================================
 export const CONTENT_TYPES = [
-  { id: "book_theory",    name: "المقرر النظري",   emoji: "📘", sort_order: 1 },
-  { id: "book_practical", name: "المقرر العملي",   emoji: "📗", sort_order: 2 },
-  { id: "exam",           name: "نماذج اختبارات",  emoji: "📑", sort_order: 3 },
-  { id: "summary",        name: "ملخصات",          emoji: "📝", sort_order: 4 },
-  { id: "video",          name: "مرئيات",          emoji: "🎥", sort_order: 5 },
-  { id: "reference",      name: "مراجع",           emoji: "📚", sort_order: 6 },
+  { id: "book_theory",    name: "المقرر (نظري)",           emoji: "📘", sort_order: 1 },
+  { id: "book_practical", name: "المقرر (عملي)",           emoji: "📗", sort_order: 2 },
+  { id: "summary",        name: "ملخصات",                  emoji: "📄", sort_order: 3 },
+  { id: "exam",           name: "نماذج اختبارات",          emoji: "📝", sort_order: 4 },
+  { id: "video",          name: "مرئيات وصوتيات",          emoji: "🎥", sort_order: 5 },
+  { id: "reference",      name: "مراجع",                   emoji: "📖", sort_order: 6 },
+  { id: "schedule",       name: "جداول دراسية واختبارات",  emoji: "📅", sort_order: 7 },
 ];
 
 export function getContentTypeLabel(typeId: string): string {
