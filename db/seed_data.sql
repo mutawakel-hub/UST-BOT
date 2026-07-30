@@ -8,7 +8,7 @@
 -- 1. إضافة المستخدم الحالي في admin_users
 -- ============================================
 INSERT INTO admin_users (telegram_id, first_name, is_active)
-VALUES (8796334849, 'أحمد', true)
+VALUES (1330666633, 'أحمد', true)
 ON CONFLICT (telegram_id) DO UPDATE
 SET first_name = 'أحمد', is_active = true;
 
@@ -16,14 +16,14 @@ SET first_name = 'أحمد', is_active = true;
 -- 2. إضافة المستخدم في students (لو ليس طالباً)
 -- ============================================
 INSERT INTO students (telegram_id, first_name, is_blocked)
-VALUES (8796334849, 'أحمد', false)
+VALUES (1330666633, 'أحمد', false)
 ON CONFLICT (telegram_id) DO NOTHING;
 
 -- ============================================
 -- 3. تعيينه كمسؤول مركزي
 -- ============================================
 INSERT INTO position_holders (position_id, user_telegram_id, assigned_by, is_active)
-VALUES ('central_chair', 8796334849, 8796334849, true)
+VALUES ('central_chair', 1330666633, 1330666633, true)
 ON CONFLICT DO NOTHING;
 
 -- ============================================
