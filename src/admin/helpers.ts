@@ -58,22 +58,7 @@ export function buildDynamicDashboard(perms: UserPermissions, pendingCount: numb
   }
   kb.row();
 
-  // صف 6: التكريم + إعادة ضبط النقاط (للمركزي فقط)
-  if (p.has("manage_honors")) {
-    kb.text("🏆 إدارة التكريم", "manage_honors");
-  }
-  if (p.has("reset_points")) {
-    kb.text("🔄 إعادة ضبط النقاط", "manage_reset_points");
-  }
-  kb.row();
-
-  // صف 7: روّاد الإحسان + أداء المسؤولين + الإعدادات (للمركزي فقط)
-  if (perms.is_central) {
-    kb.text("🏆 روّاد الإحسان", "leaderboard_update");
-    kb.text("📊 أداء المسؤولين", "admin_performance").row();
-    kb.text("⚙️ إعدادات الإحسان", "ihsan_settings").row();
-    kb.text("🔄 إنهاء الدورة", "end_ihsan_cycle").row();
-  }
+  // صف 6: (فارغ — تم نقل كل شيء لإدارة الإحسان)
 
   return kb;
 }

@@ -29,13 +29,33 @@ export function registerIhsanManagementHandlers(bot: Bot, supabase: SupabaseClie
     const kb = new InlineKeyboard();
 
     if (perms.is_central) {
-      // المسؤول المركزي: 4 خيارات
+      // المسؤول المركزي
+      let pendingCount = 0;
+      try {
+        const pending = await supabase.select<{ id: number }>("contributions", {
+          columns: "id",
+          filter: "status=eq.pending",
+          limit: 100,
+        });
+        pendingCount = Array.isArray(pending) ? pending.length : 0;
+      } catch {}
+
       msg += "اختر القسم:";
-      kb.text("📥 متابعة الإحسانات", "ihsan_central_overview");
+      kb.text(`📥 متابعة الإحسانات${pendingCount > 0 ? ` (${pendingCount})` : ""}`, "ihsan_central_overview");
       kb.row();
       kb.text("⭐ المحتوى المميّز", "ihsan_starred");
       kb.row();
       kb.text("📊 إحصائيات تفصيلية", "ihsan_central_stats");
+      kb.row();
+      kb.text("🏆 روّاد الإحسان", "leaderboard_update");
+      kb.row();
+      kb.text("🏆 إدارة التكريم", "manage_honors");
+      kb.row();
+      kb.text("📊 أداء المسؤولين", "admin_performance");
+      kb.row();
+      kb.text("⚙️ إعدادات الإحسان", "ihsan_settings");
+      kb.row();
+      kb.text("🔄 إنهاء الدورة", "end_ihsan_cycle");
       kb.row();
     } else if (perms.permissions.has("manage_level_reps") || perms.permissions.has("approve_level_contributions")) {
       // مندوب المستوى أو مسؤول الكلية
@@ -55,13 +75,13 @@ export function registerIhsanManagementHandlers(bot: Bot, supabase: SupabaseClie
       kb.row();
 
       if (perms.permissions.has("manage_level_reps")) {
-        // مسؤول كلية: إحصائيات الكلية + الإحسانات المصعدة
+        // مسؤول كلية
         kb.text("📊 تقرير الكلية", "ihsan_college_report");
         kb.row();
         kb.text("⭐ المحتوى المميّز", "ihsan_starred");
         kb.row();
       } else {
-        // مندوب مستوى: إحصائيات المستوى
+        // مندوب مستوى
         kb.text("📊 إحصائيات المستوى", "ihsan_level_stats");
         kb.row();
       }
