@@ -39,6 +39,7 @@ export class SupabaseClient {
       filter?: string;
       order?: string;
       limit?: number;
+      offset?: number;
       single?: boolean;
     } = {}
   ): Promise<T | T[]> {
@@ -50,6 +51,7 @@ export class SupabaseClient {
     if (options.filter) path += `&${options.filter}`;
     if (options.order) path += `&order=${options.order}`;
     if (options.limit) path += `&limit=${options.limit}`;
+    if (options.offset !== undefined) path += `&offset=${options.offset}`;
     if (options.single) path += `&limit=1`;
 
     const headers = this.getHeaders();

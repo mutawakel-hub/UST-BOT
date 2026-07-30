@@ -35,6 +35,9 @@ import {
 import { getSubjectById } from "../../shared/data/subjects";
 import { getSpecialtyById, getCollegeById } from "../../shared/data/colleges";
 import { formatContentCard } from "../../shared/texts";
+import { validateUploadedFile } from "../../shared/storage";
+import { importSingleFile, importLoopKeyboard } from "./content_import";
+import { executeContentSearch } from "./content_search_stats";
 
 // ============================================
 // Helper: تنفيذ الرفع الفعلي للمحتوى بعد استلام العنوان والوصف
@@ -274,6 +277,16 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
       return;
     }
 
+    // =====================================================
+    // استقبال استعلام البحث عن محتوى (المرحلة 4)
+    // =====================================================
+    if (session.awaiting_content_search) {
+      session.awaiting_content_search = false;
+      await saveSession(session);
+      await executeContentSearch(supabase, ctx, ctx.message.text);
+      return;
+    }
+
     // استقبال اسم مادة جديدة
     if (session.awaiting_subject_add) {
       session.awaiting_subject_add = false;
@@ -316,6 +329,86 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
     }
 
     // =====================================================
+    // استقبال تعديل العنوان أو الوصف (المرحلة 2)
+    // =====================================================
+    if (session.awaiting_content_edit_id && session.awaiting_content_edit_field) {
+      const contentId = session.awaiting_content_edit_id;
+      const field = session.awaiting_content_edit_field;
+      const newValue = ctx.message.text.trim();
+
+      // إعادة ضبط الحالة
+      session.awaiting_content_edit_id = undefined;
+      session.awaiting_content_edit_field = undefined;
+      await saveSession(session);
+
+      if (!newValue) {
+        await ctx.reply("⚠️ القيمة لا يمكن أن تكون فارغة.");
+        return;
+      }
+
+      // اقرأ القديم للتدقيق
+      let oldData: any = null;
+      try {
+        const result = await supabase.select("content", {
+          columns: `id,title,description`,
+          filter: `id=eq.${contentId}`,
+          single: true,
+        });
+        oldData = Array.isArray(result) ? result[0] : result;
+      } catch (e) {
+        console.error("Content fetch error:", e);
+      }
+
+      // حدّث الحقل المناسب
+      const updateData: any = {
+        last_modified_at: new Date().toISOString(),
+        last_modified_by: ctx.from.id,
+      };
+      if (field === "title") {
+        updateData.title = newValue;
+      } else if (field === "description") {
+        updateData.description = (newValue === "-") ? null : newValue;
+      }
+
+      try {
+        await supabase.update("content", updateData, `id=eq.${contentId}`);
+
+        // audit log
+        const positionId = await getAdminPrimaryPositionId(supabase, ctx.from.id);
+        await writeContentAuditLog(supabase, {
+          content_id: contentId,
+          action: "update",
+          old_data: oldData ? { [field]: oldData[field] } : null,
+          new_data: { [field]: updateData[field] ?? null },
+          performed_by_position_id: positionId,
+          performed_by_telegram_id: ctx.from.id,
+        });
+
+        const fieldLabel = field === "title" ? "العنوان" : "الوصف";
+        await ctx.reply(
+          ADMIN_TEXTS.content_edit.success(fieldLabel),
+          {
+            reply_markup: new InlineKeyboard()
+              .text("📄 تفاصيل المحتوى", `content_detail_${contentId}`)
+              .row()
+              .text("🔙 إدارة المحتوى", "content_mgmt"),
+            parse_mode: "Markdown",
+          }
+        );
+      } catch (e: any) {
+        console.error("Content edit error:", e);
+        await ctx.reply(
+          `⚠️ فشل تحديث ${field}.\n\nالسبب: ${(e?.message || "غير معروف").substring(0, 150)}`,
+          {
+            reply_markup: new InlineKeyboard().text("🔙 إدارة المحتوى", "content_mgmt"),
+            parse_mode: "Markdown",
+          }
+        );
+      }
+      return;
+    }
+
+    // =====================================================
     // استقبال عنوان/وصف المحتوى المرفوع (Upload Wizard)
     // =====================================================
     // التدفق بعد الملف:
@@ -341,6 +434,56 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
       session.upload_context.description = (desc && desc !== "-") ? desc : null;
       // تنفيذ الرفع الفعلي
       await executeContentUpload(bot, supabase, ctx, session);
+      return;
+    }
+
+    // =====================================================
+    // استقبال عنوان ملف في الاستيراد المتتابع (المرحلة 3)
+    // =====================================================
+    if (session.awaiting_import_step === "title" && session.import_context) {
+      const title = ctx.message.text.trim() || session.import_context.current_file_name || "بدون عنوان";
+
+      // بيانات الملف المخزّنة في import_context
+      const fileData = {
+        file_id: session.import_context.current_file_id,
+        file_name: session.import_context.current_file_name || "ملف",
+        file_size: session.import_context.current_file_size || 0,
+        mime_type: session.import_context.current_file_mime,
+      };
+
+      // تنفيذ رفع ملف واحد
+      const result = await importSingleFile(bot, supabase, ctx, session, fileData, title);
+
+      if (result.success) {
+        // زيادة العداد
+        session.import_context.import_count = (session.import_context.import_count || 0) + 1;
+        // مسح بيانات الملف الحالي
+        session.import_context.current_file_id = undefined;
+        session.import_context.current_file_name = undefined;
+        session.import_context.current_file_size = undefined;
+        session.import_context.current_file_mime = undefined;
+        session.awaiting_import_step = "file"; // نطلب الملف التالي
+        await saveSession(session);
+
+        await ctx.reply(
+          ADMIN_TEXTS.content_import.file_uploaded(title, session.import_context.import_count) +
+          "\n\n" + ADMIN_TEXTS.content_import.prompt_next_file(session.import_context.import_count),
+          {
+            reply_markup: importLoopKeyboard(),
+            parse_mode: "Markdown",
+          }
+        );
+      } else {
+        // فشل الرفع — اعرض الخطأ واطلب ملفاً آخر
+        await ctx.reply(
+          `⚠️ فشل استيراد الملف: ${result.error || "خطأ غير معروف"}\n\n` +
+          ADMIN_TEXTS.content_import.prompt_next_file(session.import_context?.import_count || 0),
+          {
+            reply_markup: importLoopKeyboard(),
+            parse_mode: "Markdown",
+          }
+        );
+      }
       return;
     }
 
@@ -679,6 +822,51 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
     const doc = ctx.message.document;
     const fileSizeBytes = doc.file_size || 0;
     const fileSizeMb = bytesToMb(fileSizeBytes);
+
+    // =====================================================
+    // استقبال ملف في الاستيراد المتتابع (المرحلة 3)
+    // =====================================================
+    if (session?.awaiting_import_step === "file" && session.import_context) {
+      const contentType = session.import_context.content_type || "summary";
+
+      // فحص نوع الملف
+      const validation = validateUploadedFile(contentType, {
+        file_name: doc.file_name,
+        mime_type: (doc as any).mime_type,
+      });
+
+      if (!validation.valid) {
+        await ctx.reply(
+          validation.reason || ADMIN_TEXTS.content_import.invalid_file,
+          {
+            parse_mode: "Markdown",
+            reply_markup: importLoopKeyboard(),
+          }
+        );
+        return;
+      }
+
+      // انتقل لخطوة العنوان — نخزّن بيانات الملف في import_context
+      session.import_context = {
+        ...session.import_context,
+        current_file_id: doc.file_id,
+        current_file_name: doc.file_name,
+        current_file_size: fileSizeBytes,
+        current_file_mime: (doc as any).mime_type,
+      };
+      session.awaiting_import_step = "title";
+      await saveSession(session);
+
+      const count = session.import_context.import_count || 0;
+      await ctx.reply(
+        ADMIN_TEXTS.content_import.prompt_title(doc.file_name || "ملف", count),
+        {
+          reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_import"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
 
     // لو المسؤول في وضع رفع محتوى، نطلب العنوان بعد الملف
     if (session?.awaiting_upload_step === "file" && session.upload_context) {

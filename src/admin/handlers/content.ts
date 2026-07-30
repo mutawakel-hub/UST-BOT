@@ -530,89 +530,37 @@ export function registerContentHandlers(bot: Bot, supabase: SupabaseClient): voi
   // Stubs للأزرار القادمة في المرحلة 2 و 3
   // ============================================
   bot.callbackQuery("search_content", async (ctx) => {
+    // تم نقل المعالجة لـ content_search_stats.ts (المرحلة 4)
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(
-      "🔍 *البحث عن محتوى*\n\n_هذه الميزة قيد التطوير (المرحلة 4)._",
-      {
-        reply_markup: new InlineKeyboard()
-          .text("🔙 إدارة المحتوى", "content_mgmt"),
-        parse_mode: "Markdown",
-      }
-    );
   });
 
   bot.callbackQuery("content_stats", async (ctx) => {
+    // تم نقل المعالجة لـ content_search_stats.ts (المرحلة 4)
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(
-      "📊 *إحصائيات المحتوى*\n\n_هذه الميزة قيد التطوير (المرحلة 4)._",
-      {
-        reply_markup: new InlineKeyboard()
-          .text("🔙 إدارة المحتوى", "content_mgmt"),
-        parse_mode: "Markdown",
-      }
-    );
   });
 
   bot.callbackQuery("import_content", async (ctx) => {
+    // تم نقل المعالجة لـ content_import.ts (المرحلة 3)
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(
-      "📥 *الاستيراد المتتابع*\n\n_هذه الميزة قيد التطوير (المرحلة 3)._",
-      {
-        reply_markup: new InlineKeyboard()
-          .text("🔙 إدارة المحتوى", "content_mgmt"),
-        parse_mode: "Markdown",
-      }
-    );
   });
 
   bot.callbackQuery("content_audit_log", async (ctx) => {
+    // تم نقل المعالجة لـ content_audit_log.ts (المرحلة 3)
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(
-      "📝 *سجل العمليات*\n\n_هذه الميزة قيد التطوير (المرحلة 3)._",
-      {
-        reply_markup: new InlineKeyboard()
-          .text("🔙 إدارة المحتوى", "content_mgmt"),
-        parse_mode: "Markdown",
-      }
-    );
   });
 
   bot.callbackQuery(/edit_content_(\d+)/, async (ctx) => {
-    const contentId = parseInt(ctx.match[1]);
+    // تم نقل المعالجة لـ content_edit_move_copy.ts (المرحلة 2)
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(
-      "✏️ *تعديل بيانات المحتوى*\n\n_هذه الميزة قيد التطوير (المرحلة 2)._",
-      {
-        reply_markup: new InlineKeyboard()
-          .text("🔙 تفاصيل المحتوى", `content_detail_${contentId}`),
-        parse_mode: "Markdown",
-      }
-    );
   });
 
   bot.callbackQuery(/move_content_(\d+)/, async (ctx) => {
-    const contentId = parseInt(ctx.match[1]);
+    // تم نقل المعالجة لـ content_edit_move_copy.ts (المرحلة 2)
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(
-      "📂 *نقل المحتوى*\n\n_هذه الميزة قيد التطوير (المرحلة 2)._",
-      {
-        reply_markup: new InlineKeyboard()
-          .text("🔙 تفاصيل المحتوى", `content_detail_${contentId}`),
-        parse_mode: "Markdown",
-      }
-    );
   });
 
   bot.callbackQuery(/copy_content_(\d+)/, async (ctx) => {
-    const contentId = parseInt(ctx.match[1]);
+    // تم نقل المعالجة لـ content_edit_move_copy.ts (المرحلة 2)
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(
-      "📋 *نسخ المحتوى*\n\n_هذه الميزة قيد التطوير (المرحلة 2)._",
-      {
-        reply_markup: new InlineKeyboard()
-          .text("🔙 تفاصيل المحتوى", `content_detail_${contentId}`),
-        parse_mode: "Markdown",
-      }
-    );
   });
 }

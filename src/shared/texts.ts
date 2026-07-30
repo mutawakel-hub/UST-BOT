@@ -698,9 +698,175 @@ export const ADMIN_TEXTS = {
     btn_cancel_delete: "❌ إلغاء",
     delete_success: "✅ تم حذف المحتوى بنجاح.\n\nالمنشور محذوف من القناة.",
     move_prompt: "🔄 *نقل المحتوى*\n\nاختر الوجهة الجديدة:",
-    move_success: "✅ تم نقل المحتوى بنجاح.",
+    move_success: (newSubjectName: string) =>
+      `✅ *تم نقل المحتوى بنجاح!*\n\n📚 المادة الجديدة: ${newSubjectName}`,
     edit_prompt: "✏️ أرسل العنوان الجديد للمحتوى:",
     edit_success: "✅ تم تحديث العنوان.",
+  },
+
+  // ====== شاشة A5d: تعديل المحتوى (المرحلة 2) ======
+  content_edit: {
+    title: (c: { title: string; subject_name: string }) =>
+      `✏️ *تعديل بيانات المحتوى*\n\n` +
+      `📄 *العنوان الحالي:* ${c.title}\n` +
+      `📚 *المادة:* ${c.subject_name}\n\n` +
+      `اختر الحقل المراد تعديله:`,
+    btn_title: "📝 تعديل العنوان",
+    btn_description: "📌 تعديل الوصف",
+    btn_type: "🏷 تغيير النوع",
+    btn_back: "🔙 تفاصيل المحتوى",
+    prompt_title: "📝 أرسل *العنوان الجديد* للمحتوى:",
+    prompt_description: (current?: string) =>
+      `📌 أرسل *الوصف الجديد* (اختياري — أرسل '-' لمسح الوصف الحالي):\n\n` +
+      (current ? `_الوصف الحالي:_ ${current}` : "_لا يوجد وصف حالياً_"),
+    select_type: "🏷 اختر *النوع الجديد* للمحتوى:",
+    success: (field: string) => `✅ تم تحديث *${field}* بنجاح.\n\n📝 آخر تعديل بواسطتك.`,
+    canceled: "✅ تم إلغاء التعديل.",
+  },
+
+  // ====== شاشة A5e: نقل المحتوى (المرحلة 2) ======
+  content_move: {
+    title: (currentSubjectName: string) =>
+      `📂 *نقل المحتوى*\n\n` +
+      `📚 *المادة الحالية:* ${currentSubjectName}\n\n` +
+      `اختر الكلية الوجهة:`,
+    select_specialty: (collegeName: string) =>
+      `📂 *نقل المحتوى*\n\n🏛 ${collegeName}\n\nاختر التخصص الوجهة:`,
+    select_level: (specName: string) =>
+      `📂 *نقل المحتوى*\n\n📚 ${specName}\n\nاختر المستوى الوجهة:`,
+    select_subject: (specName: string, level: number) =>
+      `📂 *نقل المحتوى*\n\n📊 ${specName} — المستوى ${level}\n\nاختر المادة الوجهة:`,
+    confirm: (currentSubjectName: string, newSubjectName: string) =>
+      `⚠️ *تأكيد النقل*\n\n` +
+      `📚 من: ${currentSubjectName}\n` +
+      `📚 إلى: ${newSubjectName}\n\n` +
+      `سيتم تحديث المادة المرتبطة بالمحتوى.\n` +
+      `ملاحظة: الملف في قناة التخزين لن يتأثر.\n\n` +
+      `هل أنت متأكد؟`,
+    btn_confirm: "✅ نعم، انقل",
+    btn_cancel: "❌ إلغاء",
+    success: (newSubjectName: string) =>
+      `✅ *تم نقل المحتوى بنجاح!*\n\n📚 المادة الجديدة: ${newSubjectName}`,
+    canceled: "✅ تم إلغاء النقل.",
+  },
+
+  // ====== شاشة A5f: نسخ المحتوى (المرحلة 2) ======
+  content_copy: {
+    title: (sourceSubjectName: string) =>
+      `📋 *نسخ المحتوى*\n\n` +
+      `📚 *المادة المصدر:* ${sourceSubjectName}\n\n` +
+      `اختر الكلية الوجهة (حيث سيُنسخ المحتوى):`,
+    select_specialty: (collegeName: string) =>
+      `📋 *نسخ المحتوى*\n\n🏛 ${collegeName}\n\nاختر التخصص الوجهة:`,
+    select_level: (specName: string) =>
+      `📋 *نسخ المحتوى*\n\n📚 ${specName}\n\nاختر المستوى الوجهة:`,
+    select_subject: (specName: string, level: number) =>
+      `📋 *نسخ المحتوى*\n\n📊 ${specName} — المستوى ${level}\n\nاختر المادة الوجهة:`,
+    confirm: (sourceSubjectName: string, targetSubjectName: string) =>
+      `⚠️ *تأكيد النسخ*\n\n` +
+      `📚 من: ${sourceSubjectName}\n` +
+      `📚 إلى: ${targetSubjectName}\n\n` +
+      `سيتم إنشاء نسخة جديدة من المحتوى في المادة الوجهة.\n` +
+      `الملف الأصلي سيُشارك عبر file_id (لا حاجة لإعادة الرفع).\n\n` +
+      `هل أنت متأكد؟`,
+    btn_confirm: "✅ نعم، انسخ",
+    btn_cancel: "❌ إلغاء",
+    success: (targetSubjectName: string) =>
+      `✅ *تم نسخ المحتوى بنجاح!*\n\n📚 المادة الوجهة: ${targetSubjectName}`,
+    canceled: "✅ تم إلغاء النسخ.",
+  },
+
+  // ====== شاشة A5g: استيراد متتابع (المرحلة 3) ======
+  content_import: {
+    title: "📥 *الاستيراد المتتابع*\n\nارفع عدة ملفات لمادة واحدة بسرعة.\n\nاختر الكلية:",
+    select_specialty: (collegeName: string) =>
+      `📥 *الاستيراد المتتابع*\n\n🏛 ${collegeName}\n\nاختر التخصص:`,
+    select_level: (specName: string) =>
+      `📥 *الاستيراد المتتابع*\n\n📚 ${specName}\n\nاختر المستوى:`,
+    select_subject: (specName: string, level: number) =>
+      `📥 *الاستيراد المتتابع*\n\n📊 ${specName} — المستوى ${level}\n\nاختر المادة:`,
+    select_type: "📥 *الاستيراد المتتابع*\n\nاختر نوع المحتوى (سيُطبّق على كل الملفات):",
+    prompt_first_file: (typeName: string, subjectName: string) =>
+      `📥 *الاستيراد المتتابع*\n\n🏷 النوع: ${typeName}\n📚 المادة: ${subjectName}\n\n` +
+      `أرسل *الملف الأول* الآن:`,
+    prompt_next_file: (count: number) =>
+      `✅ *تم استيراد ${count} ملف حتى الآن.*\n\nأرسل *الملف التالي* أو اختر:`,
+    prompt_title: (fileName: string, count: number) =>
+      `📥 *الملف #${count + 1}*\n\n📄 *الاسم:* ${fileName}\n\nأرسل *عنواناً* لهذا الملف:`,
+    file_uploaded: (title: string, count: number) =>
+      `✅ *تم استيراد:* ${title}\n📊 الإجمالي: ${count} ملف`,
+    summary: (count: number, subjectName: string) =>
+      `✅ *اكتمل الاستيراد المتتابع*\n\n📊 عدد الملفات: ${count}\n📚 المادة: ${subjectName}\n\nجميع الملفات متاحة للطلاب الآن.`,
+    btn_skip: "⏭ تخطي هذا الملف",
+    btn_finish: "✅ إنهاء الاستيراد",
+    btn_cancel: "❌ إلغاء",
+    canceled: "✅ تم إلغاء الاستيراد. ما تم استيراده محفوظ.",
+    skipped: "⏭ تم تخطي الملف.",
+    invalid_file: "❌ نوع الملف غير مقبول. أرسل ملفاً بالامتداد الصحيح.",
+  },
+
+  // ====== شاشة A5h: سجل العمليات (المرحلة 3) ======
+  content_audit_log: {
+    title: (count: number) =>
+      `📝 *سجل عمليات المحتوى (${count})*\n\nاختر فلتراً:`,
+    btn_filter_all: "📋 الكل",
+    btn_filter_create: "➕ الإضافات",
+    btn_filter_update: "✏️ التعديلات",
+    btn_filter_move: "📂 النقل",
+    btn_filter_copy: "📋 النسخ",
+    btn_filter_delete: "🗑 الحذف",
+    btn_filter_import: "📥 الاستيراد",
+    entries_title: (filterLabel: string, count: number) =>
+      `📝 *السجل (${filterLabel})* — ${count} عملية\n\n`,
+    entry: (e: {
+      action_icon: string;
+      action_label: string;
+      content_title: string;
+      performer_name: string;
+      position_title: string;
+      timestamp: string;
+    }) =>
+      `${e.action_icon} *${e.action_label}* — ${e.content_title}\n` +
+      `   👤 ${e.performer_name} (${e.position_title})\n` +
+      `   🕐 ${e.timestamp}\n\n`,
+    empty: "📝 لا توجد عمليات مطابقة للفلتر.",
+    page_info: (page: number, totalPages: number) => `📄 صفحة ${page}/${totalPages}`,
+    btn_next_page: "▶️ التالي",
+    btn_prev_page: "◀️ السابق",
+    btn_back_to_filters: "🔙 الفلاتر",
+  },
+
+  // ====== شاشة A5i: بحث المحتوى (المرحلة 4) ======
+  content_search: {
+    prompt: "🔍 *البحث عن محتوى*\n\nأرسل *اسم المادة* أو *عنوان المحتوى* أو *كلمة مفتاحية*:\n\n_أمثلة:_\n• `قواعد البيانات`\n• `ملخص الوحدة`\n• `فلاتر`",
+    no_results: "🔍 لم يتم العثور على نتائج. جرب كلمة أخرى.",
+    results_header: (count: number) =>
+      `🔍 *نتائج البحث (${count})*\n\nاختر عنصراً للإدارة:`,
+    btn_new_search: "🔍 بحث جديد",
+    canceled: "✅ تم إلغاء البحث.",
+  },
+
+  // ====== شاشة A5j: إحصائيات المحتوى (المرحلة 4) ======
+  content_stats: {
+    title: (scopeLabel: string) =>
+      `📊 *إحصائيات المحتوى*\n📍 ${scopeLabel}\n\n`,
+    summary: (s: {
+      total_content: number;
+      total_downloads: number;
+      subjects_with_content: number;
+      total_subjects: number;
+    }) =>
+      `📁 *إجمالي المحتويات:* ${s.total_content}\n` +
+      `⬇️ *إجمالي التحميلات:* ${s.total_downloads.toLocaleString()}\n` +
+      `📖 *مواد تحتوي على محتوى:* ${s.subjects_with_content}/${s.total_subjects}\n\n`,
+    by_type_header: "🏷 *توزيع المحتوى حسب النوع:*\n",
+    by_type_entry: (emoji: string, label: string, count: number, percentage: number) =>
+      `${emoji} ${label}: ${count} (${percentage}٪)\n`,
+    top_downloaded_header: (limit: number) => `\n🏆 *أكثر ${limit} ملفات تحميلاً:*\n`,
+    top_downloaded_entry: (rank: number, title: string, downloads: number, subjectName: string) =>
+      `${rank}. 📄 *${title}*\n   📚 ${subjectName} • ⬇️ ${downloads}\n`,
+    empty: "📊 لا توجد إحصائيات متاحة ضمن نطاقك.",
+    btn_refresh: "🔄 تحديث",
   },
 
   // ====== شاشة A8: Positions Management (إدارة المسؤولين — هرمي) ======

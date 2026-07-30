@@ -42,9 +42,38 @@ export interface AdminSession {
   awaiting_honor_new_data?: { student_id?: number; title?: string };
   // فلتر استعراض المحتوى
   content_filter?: { college_id?: number; specialty_id?: number; subject_id?: number; content_type?: string };
+  // سياق تعديل المحتوى (المرحلة 2)
+  awaiting_content_edit_field?: "title" | "description" | "type";
+  awaiting_content_edit_id?: number; // content_id قيد التعديل
+  // سياق نقل المحتوى (المرحلة 2)
+  awaiting_content_move_id?: number; // content_id المراد نقله
+  awaiting_content_move_step?: "college" | "specialty" | "level" | "subject";
+  // سياق نسخ المحتوى (المرحلة 2)
+  awaiting_content_copy_id?: number; // content_id المراد نسخه
+  awaiting_content_copy_step?: "college" | "specialty" | "level" | "subject";
+  // سياق الاستيراد المتتابع (المرحلة 3)
+  awaiting_import_step?: "college" | "specialty" | "level" | "subject" | "type" | "file" | "title";
+  import_context?: {
+    college_id?: number;
+    specialty_id?: number;
+    level?: number;
+    subject_id?: number;
+    content_type?: string;
+    import_count?: number; // عدد الملفات المستوردة حتى الآن
+    // بيانات الملف الحالي قيد المعالجة (تُمسح بعد كل ملف)
+    current_file_id?: string;
+    current_file_name?: string;
+    current_file_size?: number;
+    current_file_mime?: string;
+  };
   // فلتر + ترقيم سجل التعيينات
   audit_log_filter?: "all" | "assign" | "revoke";
   audit_log_page?: number;
+  // فلتر + ترقيم سجل عمليات المحتوى (المرحلة 3)
+  content_audit_filter?: "all" | "create" | "update" | "move" | "copy" | "delete" | "import";
+  content_audit_page?: number;
+  // سياق البحث عن محتوى (المرحلة 4)
+  awaiting_content_search?: boolean;
   // سياق التعميم الحالي
   broadcast_context?: { scope_type: string; scope_college_id?: number; scope_specialty_id?: number; scope_level?: number; scope_label: string; count: number };
   // نص التعميم المؤقت
@@ -96,7 +125,15 @@ export function resetSessionAwaitingStates(session: AdminSession): void {
   session.awaiting_upload_step = undefined;
   session.upload_context = undefined;
   session.awaiting_content_edit = undefined;
-  session.awaiting_content_delete = undefined;
+  session.awaiting_content_edit_field = undefined;
+  session.awaiting_content_edit_id = undefined;
+  session.awaiting_content_move_id = undefined;
+  session.awaiting_content_move_step = undefined;
+  session.awaiting_content_copy_id = undefined;
+  session.awaiting_content_copy_step = undefined;
+  session.awaiting_import_step = undefined;
+  session.import_context = undefined;
+  session.awaiting_content_search = false;
   session.awaiting_position_assign = undefined;
   session.awaiting_position_revoke = undefined;
   session.awaiting_channel_edit = undefined;
