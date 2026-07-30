@@ -140,35 +140,96 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
         assign.telegram_id = tid;
         assign.step = "verify";
 
-        // التحقق من وجود المستخدم في admin_users
-        const adminUser = await getAdminUser(supabase, tid);
-        if (!adminUser) {
-          // غير موجود — ألغِ العملية
-          await ctx.reply(ADMIN_TEXTS.positions.assign_step2_not_found(tid), {
-            reply_markup: new InlineKeyboard()
-              .text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins")
-              .row()
-              .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
-            parse_mode: "Markdown",
+        // التحقق من وجود المستخدم — نتحقق من students أولاً ثم admin_users
+        let existingUser: any = null;
+        let isStudent = false;
+
+        // 1. تحقق من جدول students
+        try {
+          const studentResult = await supabase.select("students", {
+            columns: "telegram_id,first_name,username",
+            filter: `telegram_id=eq.${tid}`,
+            single: true,
           });
-          session.awaiting_position_assign = undefined;
-          await saveSession(session);
-          return;
+          existingUser = Array.isArray(studentResult) ? studentResult[0] : studentResult;
+          if (existingUser) isStudent = true;
+        } catch {}
+
+        // 2. لو ليس طالباً، تحقق من admin_users
+        if (!existingUser) {
+          existingUser = await getAdminUser(supabase, tid);
         }
 
-        // موجود — انتقل لخطوة custom_name
+        // 3. لو غير موجود في أي جدول — سجّله تلقائياً كمسؤول
+        if (!existingUser) {
+          try {
+            await supabase.insert("admin_users", {
+              telegram_id: tid,
+              first_name: `مسؤول ${tid}`,
+              is_active: true,
+            });
+            existingUser = { telegram_id: tid, first_name: `مسؤول ${tid}` };
+            await ctx.reply(
+              `ℹ️ *تم تسجيل المستخدم تلقائياً*\n\nالمستخدم \`${tid}\` غير مسجّل في النظام. تم تسجيله كمسؤول جديد.\n\nيمكنك الآن متابعة التعيين.`,
+              { parse_mode: "Markdown" }
+            );
+          } catch (e) {
+            console.error("Failed to auto-register admin:", e);
+            await ctx.reply(
+              `⚠️ تعذّر تسجيل المستخدم \`${tid}\`. تأكد من صحة المعرّف.`,
+              {
+                reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_assign"),
+                parse_mode: "Markdown",
+              }
+            );
+            return;
+          }
+        }
+
+        // موجود — انتقل لخطوة custom_name (مع عرض اسمه الحالي)
         assign.step = "custom_name";
         await saveSession(session);
-        await ctx.reply(ADMIN_TEXTS.positions.assign_step3_prompt(tid), {
-          reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_assign"),
-          parse_mode: "Markdown",
-        });
+
+        const currentName = existingUser.first_name || "غير محدد";
+        const userStatus = isStudent ? "طالب مسجّل" : "مسؤول حالي";
+        await ctx.reply(
+          `✅ *تم العثور على المستخدم*\n\n` +
+          `👤 *الاسم:* ${currentName}\n` +
+          `📊 *الحالة:* ${userStatus}\n` +
+          `🆔 *المعرّف:* \`${tid}\`\n\n` +
+          `أرسل الاسم الذي سيظهر داخل النظام (أو أرسل "-" لاستخدام الاسم الحالي):`,
+          {
+            reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_assign"),
+            parse_mode: "Markdown",
+          }
+        );
         return;
       }
 
       // ---- الخطوة 3: استقبال الاسم المخصص ----
       if (assign.step === "custom_name") {
-        const customName = ctx.message.text.trim();
+        let customName = ctx.message.text.trim();
+        // لو أرسل "-" استخدم الاسم الحالي للمستخدم
+        if (customName === "-") {
+          // اقرأ الاسم الحالي من students أو admin_users
+          let currentName = `مسؤول ${assign.telegram_id}`;
+          try {
+            const studentResult = await supabase.select("students", {
+              columns: "first_name",
+              filter: `telegram_id=eq.${assign.telegram_id}`,
+              single: true,
+            });
+            const student = Array.isArray(studentResult) ? studentResult[0] : studentResult;
+            if (student?.first_name) {
+              currentName = student.first_name;
+            } else {
+              const adminUser = await getAdminUser(supabase, assign.telegram_id!);
+              if (adminUser?.first_name) currentName = adminUser.first_name;
+            }
+          } catch {}
+          customName = currentName;
+        }
+
         if (!customName || customName.length > 100) {
           await ctx.reply("⚠️ الاسم غير صالح (1-100 حرف). أعد المحاولة:", {
             reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_assign"),
