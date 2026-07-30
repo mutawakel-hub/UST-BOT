@@ -61,7 +61,7 @@ export function registerNavigationHandlers(bot: Bot, supabase: SupabaseClient): 
   });
 
   // اختيار كلية → قائمة التخصصات
-  bot.callbackQuery(/col_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^col_(\d+)$/, async (ctx) => {
     const collegeId = parseInt(ctx.match[1]);
     const college = getCollegeById(collegeId);
     await ctx.answerCallbackQuery();
@@ -94,7 +94,7 @@ export function registerNavigationHandlers(bot: Bot, supabase: SupabaseClient): 
   });
 
   // اختيار تخصص → قائمة المستويات
-  bot.callbackQuery(/major_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^major_(\d+)$/, async (ctx) => {
     const specId = parseInt(ctx.match[1]);
     const spec = getSpecialtyById(specId);
     await ctx.answerCallbackQuery();
@@ -218,7 +218,7 @@ export function registerNavigationHandlers(bot: Bot, supabase: SupabaseClient): 
   });
 
   // S7: اختيار مادة → قائمة المادة
-  bot.callbackQuery(/subj_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^subj_(\d+)$/, async (ctx) => {
     const subjectId = parseInt(ctx.match[1]);
     const subject = getSubjectByIdWithFallback(subjectId);
     await ctx.answerCallbackQuery();

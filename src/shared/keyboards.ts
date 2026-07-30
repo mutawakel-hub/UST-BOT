@@ -203,17 +203,28 @@ export function subjectMenuKeyboard(
   // عدّاد الملفات لكل تصنيف
   const theoryCount = getFileCountForCategory(subjectId, "book_theory");
   const practicalCount = getFileCountForCategory(subjectId, "book_practical");
-  const examsCount = getFileCountForCategory(subjectId, "exam");
   const summariesCount = getFileCountForCategory(subjectId, "summary");
+  const examsCount = getFileCountForCategory(subjectId, "exam");
+  const videoCount = getFileCountForCategory(subjectId, "video");
+  const referenceCount = getFileCountForCategory(subjectId, "reference");
+  const scheduleCount = getFileCountForCategory(subjectId, "schedule");
 
-  kb.text(TEXTS.subject_menu.btn_book_theory(theoryCount), `type_book_theory_${subjectId}`);
+  // صف 1: نظري + عملي
+  kb.text(`📘 المقرر (نظري) — ${theoryCount}`, `type_book_theory_${subjectId}`);
   if (hasPractical) {
-    kb.text(TEXTS.subject_menu.btn_book_practical(practicalCount), `type_book_practical_${subjectId}`);
+    kb.text(`📗 المقرر (عملي) — ${practicalCount}`, `type_book_practical_${subjectId}`);
   }
   kb.row();
-  kb.text(TEXTS.subject_menu.btn_exams(examsCount), `type_exams_${subjectId}`);
-  kb.text(TEXTS.subject_menu.btn_summaries(summariesCount), `type_summaries_${subjectId}`);
+  // صف 2: ملخصات + اختبارات
+  kb.text(`📄 ملخصات — ${summariesCount}`, `type_summaries_${subjectId}`);
+  kb.text(`📝 نماذج اختبارات — ${examsCount}`, `type_exams_${subjectId}`);
   kb.row();
+  // صف 3: مرئيات + مراجع
+  kb.text(`🎥 مرئيات وصوتيات — ${videoCount}`, `type_video_${subjectId}`);
+  kb.text(`📖 مراجع — ${referenceCount}`, `type_reference_${subjectId}`);
+  kb.row();
+  // صف 4: جداول + إحسان
+  kb.text(`📅 جداول دراسية — ${scheduleCount}`, `type_schedule_${subjectId}`);
   kb.text(TEXTS.subject_menu.btn_contribute, `contribute_${subjectId}`);
   kb.row();
   kb.text(TEXTS.navigation.back_to_subjects, `back_to_subjects_from_${subjectId}`);

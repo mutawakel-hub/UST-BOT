@@ -119,6 +119,18 @@ export function registerFileHandlers(bot: Bot, supabase: SupabaseClient): void {
     await showFilesList(supabase, ctx, parseInt(ctx.match[1]), "summary");
   });
 
+  bot.callbackQuery(/type_video_(\d+)/, async (ctx) => {
+    await showFilesList(supabase, ctx, parseInt(ctx.match[1]), "video");
+  });
+
+  bot.callbackQuery(/type_reference_(\d+)/, async (ctx) => {
+    await showFilesList(supabase, ctx, parseInt(ctx.match[1]), "reference");
+  });
+
+  bot.callbackQuery(/type_schedule_(\d+)/, async (ctx) => {
+    await showFilesList(supabase, ctx, parseInt(ctx.match[1]), "schedule");
+  });
+
   // S8b: شاشة معاينة الملف
   bot.callbackQuery(/preview_(.+)/, async (ctx) => {
     const fileId = ctx.match[1];
