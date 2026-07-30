@@ -155,43 +155,42 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
           if (existingUser) isStudent = true;
         } catch {}
 
-        // 2. لو ليس طالباً، تحقق من admin_users
-        if (!existingUser) {
-          existingUser = await getAdminUser(supabase, tid);
-        }
+        // 2. تحقق من admin_users (مهم لـ FK constraint في position_holders)
+        let adminUser = await getAdminUser(supabase, tid);
 
-        // 3. لو غير موجود في أي جدول — سجّله تلقائياً كمسؤول
-        if (!existingUser) {
+        // 3. لو غير موجود في admin_users — سجّله تلقائياً (حتى لو كان طالباً)
+        if (!adminUser) {
+          const nameToUse = existingUser?.first_name || `مسؤول ${tid}`;
           try {
             await supabase.insert("admin_users", {
               telegram_id: tid,
-              first_name: `مسؤول ${tid}`,
+              first_name: nameToUse,
+              username: existingUser?.username || null,
               is_active: true,
             });
-            existingUser = { telegram_id: tid, first_name: `مسؤول ${tid}` };
-            await ctx.reply(
-              `ℹ️ *تم تسجيل المستخدم تلقائياً*\n\nالمستخدم \`${tid}\` غير مسجّل في النظام. تم تسجيله كمسؤول جديد.\n\nيمكنك الآن متابعة التعيين.`,
-              { parse_mode: "Markdown" }
-            );
-          } catch (e) {
-            console.error("Failed to auto-register admin:", e);
-            await ctx.reply(
-              `⚠️ تعذّر تسجيل المستخدم \`${tid}\`. تأكد من صحة المعرّف.`,
-              {
-                reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_assign"),
-                parse_mode: "Markdown",
-              }
-            );
-            return;
+            console.log(`✅ Auto-registered user ${tid} in admin_users (was ${isStudent ? "student" : "not found"})`);
+          } catch (e: any) {
+            // لو الخطأ "duplicate key" — يعني أنه موجود بالفعل (safe to ignore)
+            if (!String(e?.message || "").includes("duplicate")) {
+              console.error("Failed to auto-register admin:", e);
+              await ctx.reply(
+                `⚠️ تعذّر تسجيل المستخدم \`${tid}\`. تأكد من صحة المعرّف.`,
+                {
+                  reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_assign"),
+                  parse_mode: "Markdown",
+                }
+              );
+              return;
+            }
           }
         }
 
-        // موجود — انتقل لخطوة custom_name (مع عرض اسمه الحالي)
+        // 4. اعرض المعلومات وانتقل لخطوة custom_name
         assign.step = "custom_name";
         await saveSession(session);
 
-        const currentName = existingUser.first_name || "غير محدد";
-        const userStatus = isStudent ? "طالب مسجّل" : "مسؤول حالي";
+        const currentName = existingUser?.first_name || adminUser?.first_name || `مسؤول ${tid}`;
+        const userStatus = isStudent ? "طالب مسجّل" : adminUser ? "مسؤول حالي" : "مسجّل جديد";
         await ctx.reply(
           `✅ *تم العثور على المستخدم*\n\n` +
           `👤 *الاسم:* ${currentName}\n` +
