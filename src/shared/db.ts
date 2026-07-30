@@ -447,12 +447,55 @@ export async function getTopContributorsFromDB(
   limit = 10
 ): Promise<any[]> {
   const result = await client.select("students", {
-    columns: "telegram_id,first_name,total_points,accepted_contributions,current_college_id,current_specialty_id",
-    filter: "is_blocked=eq.false",
-    order: "total_points.desc",
+    columns: "telegram_id,first_name,total_points_current_cycle,accepted_contributions,current_college_id,current_specialty_id,current_level",
+    filter: "is_blocked=eq.false&total_points_current_cycle=gt.0",
+    order: "total_points_current_cycle.desc",
     limit,
   });
   return Array.isArray(result) ? result : [];
+}
+
+// أعلى المحسنين في تخصص + مستوى محدد
+// يستعلم من جدول students مع فلترة current_specialty_id + current_level
+// (ملاحظة: دالة RPC get_top_contributors_specialty لا تدعم فلترة المستوى)
+// ============================================
+export async function getTopContributorsForLevel(
+  client: SupabaseClient,
+  specialtyId: number,
+  level: number,
+  limit = 3
+): Promise<any[]> {
+  const result = await client.select("students", {
+    columns: "telegram_id,first_name,total_points_current_cycle,accepted_contributions",
+    filter: `is_blocked=eq.false&current_specialty_id=eq.${specialtyId}&current_level=eq.${level}&total_points_current_cycle=gt.0`,
+    order: "total_points_current_cycle.desc",
+    limit,
+  });
+  return Array.isArray(result) ? result : [];
+}
+
+// ترتيب الطالب في مستواه (عدد الطلاب بنفس التخصص+المستوى ونقاط أكثر + 1)
+// يُرجع 0 لو الطالب لا يملك نقاطاً (غير مُصنّف)
+// ============================================
+export async function getStudentRankInLevel(
+  client: SupabaseClient,
+  telegramId: number,
+  specialtyId: number,
+  level: number,
+  currentPoints: number
+): Promise<number> {
+  if (!currentPoints || currentPoints <= 0) return 0;
+  try {
+    const result = await client.select<{ telegram_id: number }>("students", {
+      columns: "telegram_id",
+      filter: `is_blocked=eq.false&current_specialty_id=eq.${specialtyId}&current_level=eq.${level}&total_points_current_cycle=gt.${currentPoints}`,
+    });
+    const ahead = Array.isArray(result) ? result.length : 0;
+    return ahead + 1;
+  } catch (e) {
+    console.error("getStudentRankInLevel error:", e);
+    return 0;
+  }
 }
 
 // ============================================
@@ -464,7 +507,7 @@ export async function getStudentContributions(
   telegramId: number
 ): Promise<any[]> {
   const result = await client.select("contributions", {
-    columns: "id,file_name,description,status,reject_reason,created_at,subject_id,content_type_id",
+    columns: "id,title,description,file_name,subject_id,content_type_id,status,is_starred,points_awarded,reject_reason,created_at,reviewed_at",
     filter: `user_telegram_id=eq.${telegramId}`,
     order: "created_at.desc",
     limit: 20,

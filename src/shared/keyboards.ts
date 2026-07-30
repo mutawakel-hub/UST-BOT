@@ -294,17 +294,15 @@ export function searchResultsKeyboard(
 }
 
 // ============================================
-// S11: لوحة الشرف
+// S11: لوحة الشرف — روّاد الإحسان
 // ============================================
 export function leaderboardKeyboard(): InlineKeyboard {
-  const kb = new InlineKeyboard();
-  kb.text(TEXTS.leaderboard.filter_college, "leader_colleges");
-  kb.text(TEXTS.leaderboard.filter_specialty, "leader_majors");
-  kb.row();
-  kb.text(TEXTS.leaderboard.show_all, "leader_all");
-  kb.text(TEXTS.leaderboard.refresh, "leader_refresh").row();
-  kb.text(TEXTS.navigation.back_to_main, "back_to_main");
-  return kb;
+  return new InlineKeyboard()
+    .text(TEXTS.leaderboard.btn_current, "leader_current")
+    .row()
+    .text(TEXTS.leaderboard.btn_archive, "leader_archive")
+    .row()
+    .text(TEXTS.navigation.back_to_main, "back_to_main");
 }
 
 // ============================================
@@ -313,7 +311,6 @@ export function leaderboardKeyboard(): InlineKeyboard {
 export function profileKeyboard(unreadNotifications = 0): InlineKeyboard {
   const kb = new InlineKeyboard();
   kb.text(TEXTS.profile.btn_my_contributions, "my_contributions");
-  kb.text(TEXTS.profile.btn_my_downloads, "my_downloads");
   kb.row();
   if (unreadNotifications > 0) {
     kb.text(`🔔 الإشعارات (${unreadNotifications})`, "my_notifications").row();

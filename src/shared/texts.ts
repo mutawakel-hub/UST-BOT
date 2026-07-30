@@ -223,26 +223,35 @@ export const TEXTS = {
     new_search: "🔍 بحث جديد",
   },
 
-  // ====== شاشة S11: Leaderboard ======
+  // ====== شاشة S11: Leaderboard — روّاد الإحسان ======
   leaderboard: {
-    title: "🏆 *روّاد الإحسان*\n\nأبرز الطلاب المحسنين هذا الفصل:",
-    filter_college: "🏛 تصفية بالكلية",
-    filter_specialty: "📚 تصفية بالتخصص",
-    refresh: "🔄 تحديث",
-    show_all: "🌍 عرض الكل",
-    empty_filtered: "📊 لا توجد بيانات في هذا النطاق.\nجرّب نطاقاً آخر أو اعرض الكل.",
+    title: "🏆 *روّاد الإحسان*\n\nأبرز المحسنين هذا الفصل الدراسي:",
+    btn_current: "🌍 الترتيب الحالي",
+    btn_archive: "📜 أرشيف الدورات السابقة",
+    archive_message:
+      "📜 *أرشيف الدورات السابقة*\n\n" +
+      "يمكنك مشاهدة ترتيب روّاد الإحسان في الدورات السابقة عبر قناة الأرشيف:\n\n" +
+      "🔗 @ust_ihsan_archive",
+    select_college: "🏛 *روّاد الإحسان — اختر الكلية:*",
+    select_specialty: (collegeName: string) => `📚 *روّاد الإحسان — ${collegeName}*\n\nاختر التخصص:`,
+    select_level: (specName: string) => `📊 *روّاد الإحسان — ${specName}*\n\nاختر المستوى:`,
+    empty_level: "لا يوجد محسنون في هذا المستوى بعد.",
+    header_level: (specName: string, level: number) =>
+      `🏆 *روّاد الإحسان*\n\n📚 ${specName} — 📊 المستوى ${level}\n\n`,
     entry: (e: {
       badge?: string;
       rank: number;
       name: string;
       points: number;
-      contributions: number;
+      contributions?: number;
       specialty?: string;
     }) => {
       const icon = e.badge || ` ${e.rank}.`;
-      let line = `${icon} *${e.name}* — ${e.points} نقطة\n`;
-      line += `     📥 ${e.contributions} إحسان`;
-      if (e.specialty) line += ` • 📚 ${e.specialty}`;
+      let line = `${icon} *${e.name}* — ${e.points} ⭐\n`;
+      if (e.contributions !== undefined) {
+        line += `     📥 ${e.contributions} إحسان`;
+        if (e.specialty) line += ` • 📚 ${e.specialty}`;
+      }
       return line;
     },
   },
@@ -254,11 +263,15 @@ export const TEXTS = {
       total_downloads: number;
       accepted_contributions: number;
       pending_contributions: number;
+      total_points?: number;
+      rank?: number;
       current_college?: string;
       current_specialty?: string;
       current_level?: number;
     }) => {
       let msg = "📊 *إحصائياتي:*\n";
+      msg += `• ⭐ نقاطك: ${stats.total_points ?? 0}\n`;
+      msg += `• 🏆 ترتيبك: ${stats.rank && stats.rank > 0 ? `#${stats.rank} في مستواك` : "غير مصنّف بعد"}\n`;
       msg += `• 📥 إجمالي التحميلات: ${stats.total_downloads}\n`;
       msg += `• ✅ الإحسانات المقبولة: ${stats.accepted_contributions}\n`;
       msg += `• ⏳ الإحسانات المعلقة: ${stats.pending_contributions}\n\n`;
@@ -268,12 +281,57 @@ export const TEXTS = {
       msg += `• 📊 المستوى: ${stats.current_level || "غير محدد"}`;
       return msg;
     },
-    btn_my_contributions: "📋 إحساناتي",
-    btn_my_downloads: "📥 آخر تحميلاتي",
+    btn_my_contributions: "🌟 إحساناتي",
     btn_change_major: "🔄 تغيير التخصص",
     btn_back: "🔙 رجوع",
-    no_contributions: "📚 لا توجد إحسانات بعد.\nابدأ الإحسان من قائمة أي مادة!",
-    no_downloads: "📥 لا توجد تحميلات بعد.\nابدأ التصفّح من القائمة الرئيسية!",
+    no_contributions: "🌟 لا توجد إحسانات بعد.\nابدأ الإحسان من قائمة أي مادة!",
+  },
+
+  // ====== شاشة إحساناتي (تفاصيل) ======
+  ihsanati: {
+    title: (total: number) => `🌟 *إحساناتي (${total})*\n\n`,
+    summary: (s: {
+      total_points: number;
+      rank?: number;
+      approved: number;
+      approved_starred: number;
+      pending: number;
+      rejected: number;
+    }) => {
+      let msg = "";
+      msg += `📊 نقاطك: ${s.total_points} ⭐\n`;
+      msg += `🏆 ترتيبك: ${s.rank && s.rank > 0 ? `#${s.rank} في مستواك` : "غير مصنّف بعد"}\n\n`;
+      msg += `✅ معتمد: ${s.approved}`;
+      if (s.approved_starred > 0) msg += ` (⭐ ${s.approved_starred} مميّز)`;
+      msg += `\n`;
+      msg += `🟡 قيد المراجعة: ${s.pending}\n`;
+      msg += `❌ مرفوض: ${s.rejected}\n`;
+      return msg;
+    },
+    btn_details: "📋 عرض التفاصيل",
+    btn_back_to_summary: "🔙 العودة للملخص",
+    details_title: "🌟 *إحساناتي — التفاصيل*\n\n",
+    entry: (c: {
+      status_icon: string;
+      title: string;
+      subject_name: string;
+      type_label: string;
+      points?: number;
+      status_label: string;
+      is_starred?: boolean;
+      reject_reason?: string;
+      pending_since?: string;
+    }) => {
+      let line = `${c.status_icon} ${c.title} — ${c.subject_name}\n`;
+      line += `   ${c.type_label}`;
+      if (c.points && c.points > 0) line += ` | ${c.points} نقطة`;
+      line += ` | ${c.status_label}`;
+      if (c.is_starred) line += " ⭐";
+      line += `\n`;
+      if (c.reject_reason) line += `   ❓ ${c.reject_reason}\n`;
+      if (c.pending_since) line += `   ⏱ ${c.pending_since}\n`;
+      return line;
+    },
   },
 
   // ====== أزرار التنقل العامة ======
