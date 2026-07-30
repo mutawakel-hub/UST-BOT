@@ -3,10 +3,7 @@
 // ============================================
 // هذا الملف يحتوي على:
 //   - menu_leaderboard   (الشاشة الرئيسية: الترتيب الحالي / أرشيف الدورات)
-//   - leader_current     (اختر الكلية)
-//   - leader_college_{id} (اختر التخصص)
-//   - leader_spec_{id}   (اختر المستوى)
-//   - leader_level_{specId}_{level}  (أعلى 3 محسنين)
+//   - leader_current     (رسالة واحدة بكل الكليات والتخصصات والمستويات)
 //   - leader_archive     (رابط قناة الأرشيف)
 // ============================================
 
@@ -25,60 +22,6 @@ import { leaderboardKeyboard } from "../../shared/keyboards";
 // قناة أرشيف الدورات السابقة
 const ARCHIVE_CHANNEL_URL = "https://t.me/ust_ihsan_archive";
 
-// ============================================
-// مساعد: بناء لوحة الكليات (للترتيب الحالي)
-// ============================================
-function leaderboardCollegesKeyboard(): InlineKeyboard {
-  const kb = new InlineKeyboard();
-  // عرض كليتين في كل صف (نفس نمط collegesKeyboard)
-  for (let i = 0; i < COLLEGES.length; i += 2) {
-    const c1 = COLLEGES[i];
-    const c2 = COLLEGES[i + 1];
-    kb.text(`${c1.emoji} ${c1.short_name}`, `leader_college_${c1.id}`);
-    if (c2) {
-      kb.text(`${c2.emoji} ${c2.short_name}`, `leader_college_${c2.id}`);
-    }
-    kb.row();
-  }
-  kb.text(TEXTS.navigation.back_to_main, "menu_leaderboard");
-  return kb;
-}
-
-// ============================================
-// مساعد: بناء لوحة التخصصات لكلية
-// ============================================
-function leaderboardSpecialtiesKeyboard(collegeId: number): InlineKeyboard {
-  const specialties = getSpecialtiesByCollege(collegeId);
-  const kb = new InlineKeyboard();
-  // تخصص في كل صف
-  for (const s of specialties) {
-    kb.text(s.short_name, `leader_spec_${s.id}`).row();
-  }
-  kb.text("🔙 الكليات", "leader_current");
-  return kb;
-}
-
-// ============================================
-// مساعد: بناء لوحة المستويات للتخصص
-// ============================================
-function leaderboardLevelsKeyboard(specialtyId: number): InlineKeyboard {
-  const levels = getLevelsForSpecialty(specialtyId);
-  const kb = new InlineKeyboard();
-  // 3 مستويات في كل صف
-  for (let i = 0; i < levels.length; i += 3) {
-    for (let j = 0; j < 3 && i + j < levels.length; j++) {
-      kb.text(`المستوى ${levels[i + j]}`, `leader_level_${specialtyId}_${levels[i + j]}`);
-    }
-    kb.row();
-  }
-  // العودة لاختيار الكلية — نحتاج معرفة الكلية من التخصص
-  const spec = getSpecialtyById(specialtyId);
-  if (spec) {
-    kb.text("🔙 التخصصات", `leader_college_${spec.college_id}`);
-  }
-  return kb;
-}
-
 export function registerLeaderboardHandlers(bot: Bot, supabase: SupabaseClient): void {
   // الشاشة الرئيسية: روّاد الإحسان
   bot.callbackQuery("menu_leaderboard", async (ctx) => {
@@ -89,88 +32,90 @@ export function registerLeaderboardHandlers(bot: Bot, supabase: SupabaseClient):
     });
   });
 
-  // 🌍 الترتيب الحالي → اختيار الكلية
+  // 🌍 الترتيب الحالي → رسالة واحدة بكل الترتيب
   bot.callbackQuery("leader_current", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(TEXTS.leaderboard.select_college, {
-      reply_markup: leaderboardCollegesKeyboard(),
-      parse_mode: "Markdown",
-    });
-  });
 
-  // اختيار كلية → اختيار التخصص
-  bot.callbackQuery(/leader_college_(\d+)/, async (ctx) => {
-    const collegeId = parseInt(ctx.match[1]);
-    const college = getCollegeById(collegeId);
-    await ctx.answerCallbackQuery();
-    if (!college) {
-      await ctx.reply("⚠️ الكلية غير موجودة.");
-      return;
-    }
-    const specialties = getSpecialtiesByCollege(collegeId);
-    if (specialties.length === 0) {
-      await ctx.reply("⚠️ لا توجد تخصصات في هذه الكلية.");
-      return;
-    }
-    await ctx.editMessageText(TEXTS.leaderboard.select_specialty(college.name), {
-      reply_markup: leaderboardSpecialtiesKeyboard(collegeId),
-      parse_mode: "Markdown",
-    });
-  });
+    let msg = "🏆 *روّاد الإحسان — الفصل الحالي*\n\n";
 
-  // اختيار تخصص → اختيار المستوى
-  bot.callbackQuery(/leader_spec_(\d+)/, async (ctx) => {
-    const specId = parseInt(ctx.match[1]);
-    const spec = getSpecialtyById(specId);
-    await ctx.answerCallbackQuery();
-    if (!spec) {
-      await ctx.reply("⚠️ التخصص غير موجود.");
-      return;
-    }
-    await ctx.editMessageText(TEXTS.leaderboard.select_level(spec.name), {
-      reply_markup: leaderboardLevelsKeyboard(specId),
-      parse_mode: "Markdown",
-    });
-  });
-
-  // اختيار مستوى → عرض أعلى 3 محسنين
-  bot.callbackQuery(/leader_level_(\d+)_(\d+)/, async (ctx) => {
-    const specId = parseInt(ctx.match[1]);
-    const level = parseInt(ctx.match[2]);
-    const spec = getSpecialtyById(specId);
-    await ctx.answerCallbackQuery();
-    if (!spec) return;
-
-    let entries: any[] = [];
+    // اقرأ كل الطلاب بالنقاط دفعة واحدة
+    let allStudents: any[] = [];
     try {
-      entries = await getTopContributorsForLevel(supabase, specId, level, 3);
+      const result = await supabase.select("students", {
+        columns: "telegram_id,first_name,total_points_current_cycle,accepted_contributions,current_college_id,current_specialty_id,current_level",
+        filter: "total_points_current_cycle=gt.0&is_blocked=eq.false",
+        order: "total_points_current_cycle.desc",
+        limit: 200,
+      });
+      allStudents = Array.isArray(result) ? result : [];
     } catch (e) {
-      console.error("getTopContributorsForLevel error:", e);
+      console.error("Leaderboard query error:", e);
     }
 
-    let msg = TEXTS.leaderboard.header_level(spec.name, level);
-    if (entries.length === 0) {
-      msg += TEXTS.leaderboard.empty_level;
-    } else {
-      const badges = ["🥇", "🥈", "🥉"];
-      entries.forEach((e, idx) => {
-        const rank = idx + 1;
-        msg += TEXTS.leaderboard.entry({
-          badge: badges[idx],
-          rank,
-          name: e.first_name || "طالب",
-          points: Number(e.total_points_current_cycle) || 0,
-          contributions: Number(e.accepted_contributions) || 0,
-        });
-        msg += "\n";
+    if (allStudents.length === 0) {
+      msg += "📭 لا يوجد محسنون بعد.\nكن أنت أول من يُحسن! 🌟";
+      await ctx.editMessageText(msg, {
+        reply_markup: new InlineKeyboard().text(TEXTS.navigation.back_to_main, "menu_leaderboard"),
+        parse_mode: "Markdown",
       });
+      return;
+    }
+
+    // جمّع الطلاب حسب (college → specialty → level)
+    const byScope: Record<string, any[]> = {};
+    for (const s of allStudents) {
+      const key = `${s.current_college_id || 0}-${s.current_specialty_id || 0}-${s.current_level || 0}`;
+      if (!byScope[key]) byScope[key] = [];
+      byScope[key].push(s);
+    }
+
+    const badges = ["🥇", "🥈", "🥉"];
+
+    // مرّ على كل كلية → تخصص → مستوى
+    for (const college of COLLEGES) {
+      const specialties = getSpecialtiesByCollege(college.id);
+      let hasCollegeContent = false;
+      let collegeSection = `${college.emoji} *${college.short_name}*\n`;
+
+      for (const spec of specialties) {
+        const levels = getLevelsForSpecialty(spec.id);
+        let hasSpecContent = false;
+        let specSection = `  📚 ${spec.short_name}\n`;
+
+        for (const level of levels) {
+          const key = `${college.id}-${spec.id}-${level}`;
+          const students = (byScope[key] || []).slice(0, 3);
+
+          if (students.length === 0) continue; // تخطّى المستويات الفارغة
+
+          hasSpecContent = true;
+          hasCollegeContent = true;
+          specSection += `    📊 م${level}: `;
+
+          students.forEach((s, i) => {
+            specSection += `${badges[i]} ${s.first_name} (${s.total_points_current_cycle}⭐) `;
+          });
+          specSection += "\n";
+        }
+
+        if (hasSpecContent) {
+          collegeSection += specSection;
+        }
+      }
+
+      if (hasCollegeContent) {
+        msg += collegeSection + "\n";
+      }
+    }
+
+    // لو الرسالة طويلة جداً (حد تلغرام 4096 حرف)
+    if (msg.length > 4000) {
+      // اعرض أول 3950 حرف + نقاط متقطعة
+      msg = msg.substring(0, 3950) + "\n\n... (عرض جزئي)";
     }
 
     await ctx.editMessageText(msg, {
-      reply_markup: new InlineKeyboard()
-        .text("🔙 المستويات", `leader_spec_${specId}`)
-        .row()
-        .text(TEXTS.navigation.back_to_main, "menu_leaderboard"),
+      reply_markup: new InlineKeyboard().text(TEXTS.navigation.back_to_main, "menu_leaderboard"),
       parse_mode: "Markdown",
     });
   });
