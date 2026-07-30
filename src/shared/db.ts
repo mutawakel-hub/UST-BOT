@@ -270,6 +270,11 @@ export async function getStudent(
 }
 
 // الحصول على مستلمي التعميم
+// ============================================
+// يستخدم RPC function `get_broadcast_recipients` أولاً
+// لو فشل (أو أرجع 0)، يستخدم SELECT مباشر كـ fallback
+// هذا يضمن عمل التعميم حتى لو كان هناك مشكلة في الـ RPC
+// ============================================
 export async function getBroadcastRecipients(
   client: SupabaseClient,
   scopeType: string,
@@ -277,16 +282,86 @@ export async function getBroadcastRecipients(
   specialtyId?: number,
   level?: number
 ): Promise<number[]> {
-  const result = await client.rpc("get_broadcast_recipients", {
-    p_scope_type: scopeType,
-    p_college_id: collegeId || null,
-    p_specialty_id: specialtyId || null,
-    p_level: level || null,
-  });
-  // النتيجة: array of { telegram_id: number }
-  if (Array.isArray(result)) {
-    return result.map((r: any) => r.telegram_id);
+  // === محاولة 1: RPC function ===
+  try {
+    const result = await client.rpc("get_broadcast_recipients", {
+      p_scope_type: scopeType,
+      p_college_id: collegeId || null,
+      p_specialty_id: specialtyId || null,
+      p_level: level || null,
+    });
+
+    // PostgREST قد يُرجع:
+    //   - array مباشرة: [{telegram_id: 123}, ...]
+    //   - object ملتف: {data: [...]}
+    //   - string عند الخطأ
+    let arr: any[] = [];
+    if (Array.isArray(result)) {
+      arr = result;
+    } else if (result && Array.isArray((result as any).data)) {
+      arr = (result as any).data;
+    } else if (result && typeof result === "object") {
+      // لو object واحد (وليس array)، حوله لـ array
+      arr = [result];
+    }
+
+    const ids = arr
+      .map((r: any) => r?.telegram_id || r?.id)
+      .filter((id: any) => id != null);
+    
+    if (ids.length > 0) {
+      return ids;
+    }
+    // لو 0 نتائج، نحاول fallback للتأكد
+  } catch (e) {
+    console.warn("⚠️ [getBroadcastRecipients] RPC failed, trying fallback:", e);
   }
+
+  // === محاولة 2: SELECT مباشر (fallback) ===
+  try {
+    if (scopeType === "all") {
+      // كل الطلاب غير المحظورين
+      const result = await client.select<{ telegram_id: number }>("students", {
+        columns: "telegram_id",
+        filter: "is_blocked=eq.false",
+        limit: 10000,
+      });
+      if (Array.isArray(result)) {
+        return result.map((r: any) => r.telegram_id);
+      }
+    } else if (scopeType === "college" && collegeId) {
+      // عبر student_subscriptions
+      const result = await client.select<{ student_telegram_id: number }>("student_subscriptions", {
+        columns: "student_telegram_id",
+        filter: `scope_college_id=eq.${collegeId}&is_active=eq.true`,
+        limit: 10000,
+      });
+      if (Array.isArray(result)) {
+        return result.map((r: any) => r.student_telegram_id);
+      }
+    } else if (scopeType === "specialty" && collegeId && specialtyId) {
+      const result = await client.select<{ student_telegram_id: number }>("student_subscriptions", {
+        columns: "student_telegram_id",
+        filter: `scope_college_id=eq.${collegeId}&scope_specialty_id=eq.${specialtyId}&is_active=eq.true`,
+        limit: 10000,
+      });
+      if (Array.isArray(result)) {
+        return result.map((r: any) => r.student_telegram_id);
+      }
+    } else if (scopeType === "level" && collegeId && specialtyId && level) {
+      const result = await client.select<{ student_telegram_id: number }>("student_subscriptions", {
+        columns: "student_telegram_id",
+        filter: `scope_college_id=eq.${collegeId}&scope_specialty_id=eq.${specialtyId}&scope_level=eq.${level}&is_active=eq.true`,
+        limit: 10000,
+      });
+      if (Array.isArray(result)) {
+        return result.map((r: any) => r.student_telegram_id);
+      }
+    }
+  } catch (e) {
+    console.error("❌ [getBroadcastRecipients] Fallback also failed:", e);
+  }
+
   return [];
 }
 

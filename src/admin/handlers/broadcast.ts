@@ -71,7 +71,12 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     await ctx.answerCallbackQuery();
     const kb = new InlineKeyboard();
     for (const c of COLLEGES) {
-      const count = await getStudentCountByScope(supabase, { scope_type: "college", scope_college_id: c.id });
+      let count = 0;
+      try {
+        count = await getStudentCountByScope(supabase, { scope_type: "college", scope_college_id: c.id });
+      } catch (e) {
+        console.warn(`Failed to count students for college ${c.id}:`, e);
+      }
       kb.text(`${c.emoji} ${c.short_name} (${count})`, `broadcast_scope_college_${c.id}`).row();
     }
     kb.text("🔙 التعميم", "broadcast");
@@ -95,7 +100,7 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     });
   });
 
-  bot.callbackQuery(/broadcast_spec_select_college_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^broadcast_spec_select_college_(\d+)$/, async (ctx) => {
     const collegeId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
     const college = getCollegeById(collegeId);
@@ -150,7 +155,7 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     });
   });
 
-  bot.callbackQuery(/broadcast_lvl_select_college_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^broadcast_lvl_select_college_(\d+)$/, async (ctx) => {
     const collegeId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
     const college = getCollegeById(collegeId);
@@ -166,7 +171,7 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     });
   });
 
-  bot.callbackQuery(/broadcast_lvl_select_spec_(\d+)_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^broadcast_lvl_select_spec_(\d+)_(\d+)$/, async (ctx) => {
     const collegeId = parseInt(ctx.match[1]);
     const specId = parseInt(ctx.match[2]);
     await ctx.answerCallbackQuery();
@@ -212,7 +217,7 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
   });
 
   // عند اختيار النطاق النهائي → طلب نص/صورة/ملف التعميم
-  bot.callbackQuery(/broadcast_scope_all/, async (ctx) => {
+  bot.callbackQuery("broadcast_scope_all", async (ctx) => {
     await ctx.answerCallbackQuery();
     const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
     const count = await getStudentCountByScope(supabase, { scope_type: "all" });
@@ -229,7 +234,7 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     );
   });
 
-  bot.callbackQuery(/broadcast_scope_college_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^broadcast_scope_college_(\d+)$/, async (ctx) => {
     const collegeId = parseInt(ctx.match[1]);
     await ctx.answerCallbackQuery();
     const college = getCollegeById(collegeId);
@@ -248,7 +253,7 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     );
   });
 
-  bot.callbackQuery(/broadcast_scope_specialty_(\d+)_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^broadcast_scope_specialty_(\d+)_(\d+)$/, async (ctx) => {
     const collegeId = parseInt(ctx.match[1]);
     const specId = parseInt(ctx.match[2]);
     await ctx.answerCallbackQuery();
@@ -268,7 +273,7 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     );
   });
 
-  bot.callbackQuery(/broadcast_scope_level_(\d+)_(\d+)_(\d+)/, async (ctx) => {
+  bot.callbackQuery(/^broadcast_scope_level_(\d+)_(\d+)_(\d+)$/, async (ctx) => {
     const collegeId = parseInt(ctx.match[1]);
     const specId = parseInt(ctx.match[2]);
     const level = parseInt(ctx.match[3]);
