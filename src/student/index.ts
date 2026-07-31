@@ -394,21 +394,47 @@ export default {
           debug.students_db_error = e?.message?.substring(0, 200);
         }
 
-        // 3. حاول إرسال رسالة اختبار
+        // 3. حاول إرسال رسالة اختبار (نفس تنسيق التعميم الفعلي)
         if (targetId > 0) {
+          // رسالة بنفس تنسيق التعميم (HTML + رموز خاصة)
+          const testMessageHtml =
+            `📢 <b>تعميم جديد</b>\n\n` +
+            `📍 📊 تقنية معلومات (IT) - مستوى 4\n` +
+            `👤 من: Mutawakel\n` +
+            `📅 ${new Date().toLocaleString("ar")}\n\n` +
+            `━━━━━━━━━━━━━━━\n\n` +
+            `مرحبا\n\n` +
+            `━━━━━━━━━━━━━━━`;
+
+          // محاولة 1: HTML
           try {
-            await botInstance!.api.sendMessage(
-              targetId,
-              "🔧 رسالة اختبار من endpoint التشخيص",
-              { parse_mode: "Markdown" }
-            );
-            debug.test_send = { ok: true, delivered: true };
+            await botInstance!.api.sendMessage(targetId, testMessageHtml, { parse_mode: "HTML" });
+            debug.test_send_html = { ok: true, delivered: true };
           } catch (e: any) {
-            debug.test_send = {
+            debug.test_send_html = {
               ok: false,
-              error: String(e?.message || "").substring(0, 300),
+              error: String(e?.message || "").substring(0, 400),
               error_code: (e as any)?.error_code || null,
-              status: (e as any)?.status || null,
+            };
+          }
+
+          // محاولة 2: نص عادي (fallback)
+          const testMessagePlain =
+            `📢 تعميم جديد\n\n` +
+            `📍 📊 تقنية معلومات (IT) - مستوى 4\n` +
+            `👤 من: Mutawakel\n` +
+            `📅 ${new Date().toLocaleString("ar")}\n\n` +
+            `━━━━━━━━━━━━━━━\n\n` +
+            `مرحبا\n\n` +
+            `━━━━━━━━━━━━━━━`;
+          try {
+            await botInstance!.api.sendMessage(targetId, testMessagePlain);
+            debug.test_send_plain = { ok: true, delivered: true };
+          } catch (e: any) {
+            debug.test_send_plain = {
+              ok: false,
+              error: String(e?.message || "").substring(0, 400),
+              error_code: (e as any)?.error_code || null,
             };
           }
         }
