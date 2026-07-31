@@ -36,6 +36,7 @@ import {
   writeSubjectAuditLog,
   normalizeSubjectName,
 } from "../../shared/db";
+import { invalidateSubjectCache } from "../../shared/data/subjects";
 
 // ============================================
 // Helpers داخلية
@@ -672,6 +673,9 @@ export function registerSubjectHandlers(bot: Bot, supabase: SupabaseClient): voi
       console.error("writeSubjectAuditLog (create) error:", e);
     }
 
+    // إبطال cache ليعكس البيانات الجديدة
+    invalidateSubjectCache();
+
     // إعادة ضبط الجلسة
     session.awaiting_subject_add = undefined;
     session.awaiting_subject_add_step = undefined;
@@ -963,6 +967,7 @@ export function registerSubjectHandlers(bot: Bot, supabase: SupabaseClient): voi
         updated_by_position_id: positionId,
         updated_by_telegram_id: ctx.from.id,
       });
+      if (ok) invalidateSubjectCache();
     } catch (e) {
       console.error("confirm_move_sem: updateSubject error:", e);
     }
@@ -1089,6 +1094,7 @@ export function registerSubjectHandlers(bot: Bot, supabase: SupabaseClient): voi
         updated_by_position_id: positionId,
         updated_by_telegram_id: ctx.from.id,
       });
+      if (ok) invalidateSubjectCache();
     } catch (e) {
       console.error("confirm_move_lvl: updateSubject error:", e);
     }
@@ -1160,6 +1166,7 @@ export function registerSubjectHandlers(bot: Bot, supabase: SupabaseClient): voi
     let ok = false;
     try {
       ok = await swapSubjectSortOrder(supabase, subjectId, "up");
+      if (ok) invalidateSubjectCache();
     } catch (e) {
       console.error("subj_up: swapSubjectSortOrder error:", e);
     }
@@ -1227,6 +1234,7 @@ export function registerSubjectHandlers(bot: Bot, supabase: SupabaseClient): voi
     let ok = false;
     try {
       ok = await swapSubjectSortOrder(supabase, subjectId, "down");
+      if (ok) invalidateSubjectCache();
     } catch (e) {
       console.error("subj_down: swapSubjectSortOrder error:", e);
     }
@@ -1339,6 +1347,7 @@ export function registerSubjectHandlers(bot: Bot, supabase: SupabaseClient): voi
     let ok = false;
     try {
       ok = await deleteSubject(supabase, subjectId);
+      if (ok) invalidateSubjectCache();
     } catch (e) {
       console.error("confirm_delete_subject: deleteSubject error:", e);
     }

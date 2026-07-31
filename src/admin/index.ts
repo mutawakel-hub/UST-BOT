@@ -28,6 +28,7 @@ import { SupabaseClient } from "../shared/db";
 import { initRbac } from "../shared/rbac";
 import { initCallbackSigning } from "../shared/callback-signing";
 import { initSessionStore } from "./state";
+import { initSubjectCache, invalidateSubjectCache } from "../shared/data/subjects";
 
 // Handler registrations
 import { registerDashboardHandlers } from "./handlers/dashboard";
@@ -62,6 +63,7 @@ export function createAdminBot(
   // تهيئة الـ stores
   initSessionStore(sessionsKv);
   initRbac(supabase, cacheKv);
+  initSubjectCache(supabase);
   if (callbackSecret) {
     initCallbackSigning(callbackSecret);
   }

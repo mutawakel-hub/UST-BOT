@@ -25,6 +25,7 @@ import { Bot, webhookCallback } from "grammy";
 import { SupabaseClient } from "../shared/db";
 import { initCallbackSigning } from "../shared/callback-signing";
 import { initSessionStore } from "./state";
+import { initSubjectCache } from "../shared/data/subjects";
 
 // Handler registrations
 import { registerStartHandlers } from "./handlers/start";
@@ -49,6 +50,7 @@ export function createStudentBot(
 ): Bot {
   // تهيئة SessionStore و callback signing
   initSessionStore(sessionsKv);
+  initSubjectCache(supabase);
   if (callbackSecret) {
     initCallbackSigning(callbackSecret);
   }

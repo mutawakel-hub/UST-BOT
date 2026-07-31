@@ -41,6 +41,7 @@ import {
   getContentTypeEmoji,
 } from "../../shared/data/admins";
 import { getSubjectById } from "../../shared/data/subjects";
+import { invalidateSubjectCache } from "../../shared/data/subjects";
 import { formatContentCard } from "../../shared/texts";
 import { validateUploadedFile } from "../../shared/storage";
 import { importSingleFile, importLoopKeyboard } from "./content_import";
@@ -407,6 +408,10 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
         updated_by_position_id: positionId,
         updated_by_telegram_id: ctx.from.id,
       });
+
+      if (success) {
+        invalidateSubjectCache();
+      }
 
       if (success) {
         await writeSubjectAuditLog(supabase, {
