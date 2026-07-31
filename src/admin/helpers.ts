@@ -31,9 +31,15 @@ export function buildDynamicDashboard(perms: UserPermissions, pendingCount: numb
   }
   kb.row();
 
-  // صف 3: المواد + التعميم
-  if (p.has("manage_subjects")) {
-    kb.text("📖 إدارة المواد", "subjects_mgmt");
+  // صف 3: النظام الأكاديمي + التعميم
+  // زر "النظام الأكاديمي" يظهر لمن يملك أي صلاحية إدارة أكاديمية
+  const hasAcademicPerms =
+    p.has("manage_subjects") ||
+    p.has("manage_committee_channels") ||
+    p.has("manage_colleges") ||
+    p.has("manage_specialties");
+  if (hasAcademicPerms) {
+    kb.text("🏛 النظام الأكاديمي", "academic_mgmt");
   }
   if (p.has("central_broadcast") || p.has("college_broadcast") || p.has("level_broadcast")) {
     kb.text("📢 تعميم", "broadcast");
@@ -49,16 +55,11 @@ export function buildDynamicDashboard(perms: UserPermissions, pendingCount: numb
   }
   kb.row();
 
-  // صف 5: المناصب + اللجان
+  // صف 5: المناصب
   if (p.has("manage_admins") || p.has("manage_level_reps")) {
     kb.text("👥 إدارة المناصب", "manage_admins");
   }
-  if (p.has("manage_committee_channels")) {
-    kb.text("📢 قنوات اللجان", "manage_channels");
-  }
   kb.row();
-
-  // صف 6: (فارغ — تم نقل كل شيء لإدارة الإحسان)
 
   return kb;
 }

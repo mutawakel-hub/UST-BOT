@@ -682,12 +682,31 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
     // استقبال رابط قناة جديد
     if (session.awaiting_channel_edit) {
       const channelId = session.awaiting_channel_edit;
-      const channel = await getChannelById(supabase, channelId);
-      if (channel) {
-        channel.channel_url = ctx.message.text;
-        channel.updated_at = new Date().toISOString().substring(0, 10);
-      }
+      const newUrl = ctx.message.text.trim();
       session.awaiting_channel_edit = undefined;
+      await saveSession(session);
+
+      // اكتب التحديث في DB (الـ bug القديم كان يعدّل الكائن في الذاكرة فقط)
+      try {
+        const positionId = await getAdminPrimaryPositionId(supabase, ctx.from.id);
+        await supabase.update("committee_channels", {
+          channel_url: newUrl,
+          updated_by_position_id: positionId,
+          updated_at: new Date().toISOString(),
+        }, `id=eq.${channelId}`);
+        console.log(`✅ [channels] Updated channel #${channelId} URL`);
+      } catch (e: any) {
+        console.error(`❌ [channels] Failed to update channel #${channelId}:`, e?.message?.substring(0, 150));
+        await ctx.reply(
+          "⚠️ *فشل تحديث الرابط.*\n\nحاول مرة أخرى لاحقاً.",
+          {
+            reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.channels.btn_back_to_channels, "manage_channels"),
+            parse_mode: "Markdown",
+          }
+        );
+        return;
+      }
+
       await ctx.reply(ADMIN_TEXTS.channels.edit_success, {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.channels.btn_back_to_channels, "manage_channels"),
         parse_mode: "Markdown",

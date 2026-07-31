@@ -24,7 +24,7 @@ export function registerChannelHandlers(bot: Bot, supabase: SupabaseClient): voi
       await ctx.editMessageText(
         "❌ *ليست لديك صلاحية إدارة قنوات اللجان.*",
         {
-          reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+          reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_academic, "academic_mgmt"),
           parse_mode: "Markdown",
         }
       );
@@ -41,7 +41,7 @@ export function registerChannelHandlers(bot: Bot, supabase: SupabaseClient): voi
           .row()
           .text(ADMIN_TEXTS.channels.btn_levels, "channels_levels")
           .row()
-          .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+          .text(ADMIN_TEXTS.navigation.back_to_academic, "academic_mgmt"),
         parse_mode: "Markdown",
       }
     );

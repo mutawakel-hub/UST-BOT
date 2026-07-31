@@ -607,6 +607,19 @@ export const ADMIN_TEXTS = {
     back_to_content_mgmt: "🔙 إدارة المحتوى",
     back_to_positions: "🔙 المناصب",
     back_to_channels: "🔙 قنوات اللجان",
+    back_to_academic: "🔙 النظام الأكاديمي",
+  },
+
+  // ====== شاشة: إدارة النظام الأكاديمي ======
+  academic_mgmt: {
+    title: "🏛 *إدارة النظام الأكاديمي*\n\nاختر القسم:",
+    btn_subjects: "📚 إدارة المواد",
+    btn_channels: "🔗 روابط اللجان العلمية",
+    btn_colleges: "🏛 إدارة الكليات",
+    btn_specialties: "🎓 إدارة التخصصات",
+    btn_study_systems: "🧩 أنظمة الدراسة",
+    btn_academic_plans: "🗂 الخطط الاسترشادية",
+    coming_soon: "🚧 _هذا القسم قيد التطوير وسيكون متاحاً قريباً._",
   },
 
   // ====== شاشة A5: Content Management (جديدة) ======
