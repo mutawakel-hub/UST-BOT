@@ -23,6 +23,14 @@ import {
   writeContentAuditLog,
 } from "../helpers";
 import {
+  getSubjectByIdFromDB,
+  updateSubject,
+  writeSubjectAuditLog,
+  normalizeSubjectName,
+  updateCommitteeChannel,
+} from "../../shared/db";
+import { getCollegeById, getSpecialtyById } from "../../shared/data/colleges";
+import {
   uploadFileToStorageChannel,
   formatFileSize,
   bytesToMb,
@@ -33,7 +41,6 @@ import {
   getContentTypeEmoji,
 } from "../../shared/data/admins";
 import { getSubjectById } from "../../shared/data/subjects";
-import { getSpecialtyById, getCollegeById } from "../../shared/data/colleges";
 import { formatContentCard } from "../../shared/texts";
 import { validateUploadedFile } from "../../shared/storage";
 import { importSingleFile, importLoopKeyboard } from "./content_import";
@@ -288,12 +295,156 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
     }
 
     // استقبال اسم مادة جديدة
+    // =====================================================
+    // استقبال بيانات إضافة مادة (subjects CRUD)
+    // =====================================================
+    if (session.awaiting_subject_add_step && session.awaiting_subject_add_context) {
+      const step = session.awaiting_subject_add_step;
+      const ctx2 = session.awaiting_subject_add_context;
+      const text = ctx.message.text.trim();
+
+      if (step === "name") {
+        if (!text) {
+          await ctx.reply("⚠️ الاسم لا يمكن أن يكون فارغاً.");
+          return;
+        }
+        ctx2.name = text;
+        session.awaiting_subject_add_step = "code";
+        await saveSession(session);
+        await ctx.reply(ADMIN_TEXTS.subjects_mgmt.add_prompt_code, {
+          reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_add_subject"),
+          parse_mode: "Markdown",
+        });
+        return;
+      }
+
+      if (step === "code") {
+        ctx2.code = (text && text !== "-") ? text : null;
+        session.awaiting_subject_add_step = "credits";
+        await saveSession(session);
+        await ctx.reply(ADMIN_TEXTS.subjects_mgmt.add_prompt_credits, {
+          reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_add_subject"),
+          parse_mode: "Markdown",
+        });
+        return;
+      }
+
+      if (step === "credits") {
+        if (text && text !== "-") {
+          const credits = parseInt(text);
+          if (isNaN(credits) || credits < 0) {
+            await ctx.reply("⚠️ الساعات يجب أن تكون رقماً صحيحاً.");
+            return;
+          }
+          ctx2.credits = credits;
+        } else {
+          ctx2.credits = null;
+        }
+        session.awaiting_subject_add_step = "has_theory";
+        await saveSession(session);
+        await ctx.reply(ADMIN_TEXTS.subjects_mgmt.add_prompt_theory, {
+          reply_markup: new InlineKeyboard()
+            .text("✅ نعم", "subj_add_theory_yes")
+            .text("❌ لا", "subj_add_theory_no")
+            .row()
+            .text("❌ إلغاء", "cancel_add_subject"),
+          parse_mode: "Markdown",
+        });
+        return;
+      }
+    }
+
+    // =====================================================
+    // استقبال تعديل حقل مادة (name/code/credits)
+    // =====================================================
+    if (session.awaiting_subject_edit_id && session.awaiting_subject_edit_field) {
+      const subjectId = session.awaiting_subject_edit_id;
+      const field = session.awaiting_subject_edit_field;
+      const text = ctx.message.text.trim();
+
+      session.awaiting_subject_edit_id = undefined;
+      session.awaiting_subject_edit_field = undefined;
+      await saveSession(session);
+
+      let patch: any = {};
+      let fieldLabel = "";
+
+      if (field === "name") {
+        if (!text) {
+          await ctx.reply("⚠️ الاسم لا يمكن أن يكون فارغاً.");
+          return;
+        }
+        patch.name = text;
+        patch.name_normalized = normalizeSubjectName(text);
+        fieldLabel = "الاسم";
+      } else if (field === "code") {
+        patch.code = (text && text !== "-") ? text : null;
+        fieldLabel = "الكود";
+      } else if (field === "credits") {
+        if (text && text !== "-") {
+          const credits = parseInt(text);
+          if (isNaN(credits) || credits < 0) {
+            await ctx.reply("⚠️ الساعات يجب أن تكون رقماً صحيحاً.");
+            return;
+          }
+          patch.credits = credits;
+        } else {
+          patch.credits = null;
+        }
+        fieldLabel = "الساعات";
+      }
+
+      // اقرأ القديم للتدقيق
+      let oldData: any = null;
+      try {
+        oldData = await getSubjectByIdFromDB(supabase, subjectId);
+      } catch {}
+
+      // حدّث
+      const positionId = await getAdminPrimaryPositionId(supabase, ctx.from.id);
+      const success = await updateSubject(supabase, subjectId, {
+        ...patch,
+        updated_by_position_id: positionId,
+        updated_by_telegram_id: ctx.from.id,
+      });
+
+      if (success) {
+        await writeSubjectAuditLog(supabase, {
+          subject_id: subjectId,
+          action: "update",
+          old_data: oldData ? { [field]: oldData[field] } : null,
+          new_data: patch,
+          performed_by_position_id: positionId,
+          performed_by_telegram_id: ctx.from.id,
+        });
+
+        await ctx.reply(ADMIN_TEXTS.subjects_mgmt.edit_success(fieldLabel), {
+          reply_markup: new InlineKeyboard()
+            .text("📖 تفاصيل المادة", `subj_detail_${subjectId}`)
+            .row()
+            .text(ADMIN_TEXTS.navigation.back_to_academic, "academic_mgmt"),
+          parse_mode: "Markdown",
+        });
+      } else {
+        await ctx.reply("⚠️ فشل تحديث المادة. حاول مرة أخرى.");
+      }
+      return;
+    }
+
+    // استقبال اسم مادة جديدة (قديم — محذوف)
     if (session.awaiting_subject_add) {
       session.awaiting_subject_add = false;
-      await ctx.reply(ADMIN_TEXTS.subjects_mgmt.add_done(ctx.message.text), {
-        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
-        parse_mode: "Markdown",
-      });
+      await saveSession(session);
+      await ctx.reply(
+        "⚠️ تم إلغاء الإضافة القديمة. استخدم زر ➕ إضافة مادة من جديد.",
+        {
+          reply_markup: new InlineKeyboard().text(
+            ADMIN_TEXTS.navigation.back_to_academic,
+            "academic_mgmt"
+          ),
+          parse_mode: "Markdown",
+        }
+      );
       return;
     }
 
@@ -679,31 +830,127 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
       }
     }
 
-    // استقبال رابط قناة جديد
-    if (session.awaiting_channel_edit) {
+    // =====================================================
+    // استقبال بيانات إضافة/تعديل قناة لجنة (channels CRUD)
+    // =====================================================
+
+    // إضافة قناة — استقبال URL
+    if (session.awaiting_channel_add_step === "url" && session.awaiting_channel_add_context) {
+      const url = ctx.message.text.trim();
+      if (!url || !url.match(/^https?:\/\//)) {
+        await ctx.reply("⚠️ الرابط غير صالح. يجب أن يبدأ بـ http:// أو https://");
+        return;
+      }
+      session.awaiting_channel_add_context.url = url;
+      session.awaiting_channel_add_step = "display_name";
+      await saveSession(session);
+      await ctx.reply(
+        "📝 أرسل *اسم العرض* للقناة (مثلاً: لجنة كلية الحاسبات):",
+        {
+          reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_add_channel"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    // إضافة قناة — استقبال display_name → تأكيد
+    if (session.awaiting_channel_add_step === "display_name" && session.awaiting_channel_add_context) {
+      const displayName = ctx.message.text.trim();
+      if (!displayName) {
+        await ctx.reply("⚠️ اسم العرض لا يمكن أن يكون فارغاً.");
+        return;
+      }
+      session.awaiting_channel_add_context.display_name = displayName as any;
+      session.awaiting_channel_add_step = "confirm";
+      await saveSession(session);
+
+      // اعرض تأكيد
+      const ctx2 = session.awaiting_channel_add_context;
+      const scopeLabel = ctx2.scope_type === "central" ? "مركزية"
+        : ctx2.scope_type === "college" ? `كلية: ${getCollegeById(ctx2.college_id || 0)?.name || ""}`
+        : `مستوى: ${getSpecialtyById(ctx2.specialty_id || 0)?.name || ""} - مستوى ${ctx2.level_num}`;
+
+      await ctx.reply(
+        `✅ *تأكيد إضافة القناة*\n\n` +
+        `📍 *النطاق:* ${scopeLabel}\n` +
+        `🔗 *الرابط:* ${ctx2.url}\n` +
+        `📝 *الاسم:* ${displayName}\n\n` +
+        `هل تريد الإضافة؟`,
+        {
+          reply_markup: new InlineKeyboard()
+            .text("✅ تأكيد", "confirm_add_channel")
+            .text("❌ إلغاء", "cancel_add_channel"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    // تعديل اسم عرض القناة
+    if (session.awaiting_channel_edit && session.awaiting_channel_edit_field === "display_name") {
+      const channelId = session.awaiting_channel_edit;
+      const newName = ctx.message.text.trim();
+      session.awaiting_channel_edit = undefined;
+      session.awaiting_channel_edit_field = undefined;
+      await saveSession(session);
+
+      if (!newName) {
+        await ctx.reply("⚠️ الاسم لا يمكن أن يكون فارغاً.");
+        return;
+      }
+
+      try {
+        const positionId = await getAdminPrimaryPositionId(supabase, ctx.from.id);
+        await updateCommitteeChannel(supabase, channelId, {
+          display_name: newName,
+          updated_by_position_id: positionId,
+          updated_at: new Date().toISOString(),
+        });
+        console.log(`✅ [channels] Updated channel #${channelId} display_name`);
+      } catch (e: any) {
+        console.error(`❌ [channels] Failed to update channel #${channelId}:`, e?.message?.substring(0, 150));
+        await ctx.reply("⚠️ فشل تحديث الاسم.", {
+          reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.channels.btn_back_to_channels, "manage_channels"),
+          parse_mode: "Markdown",
+        });
+        return;
+      }
+
+      await ctx.reply(ADMIN_TEXTS.channels.edit_success, {
+        reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.channels.btn_back_to_channels, "manage_channels"),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    // استقبال رابط قناة جديد (URL edit — محسّن)
+    if (session.awaiting_channel_edit && (session.awaiting_channel_edit_field === "url" || !session.awaiting_channel_edit_field)) {
       const channelId = session.awaiting_channel_edit;
       const newUrl = ctx.message.text.trim();
       session.awaiting_channel_edit = undefined;
+      session.awaiting_channel_edit_field = undefined;
       await saveSession(session);
 
-      // اكتب التحديث في DB (الـ bug القديم كان يعدّل الكائن في الذاكرة فقط)
+      if (!newUrl || !newUrl.match(/^https?:\/\//)) {
+        await ctx.reply("⚠️ الرابط غير صالح. يجب أن يبدأ بـ http:// أو https://");
+        return;
+      }
+
       try {
         const positionId = await getAdminPrimaryPositionId(supabase, ctx.from.id);
-        await supabase.update("committee_channels", {
+        await updateCommitteeChannel(supabase, channelId, {
           channel_url: newUrl,
           updated_by_position_id: positionId,
           updated_at: new Date().toISOString(),
-        }, `id=eq.${channelId}`);
+        });
         console.log(`✅ [channels] Updated channel #${channelId} URL`);
       } catch (e: any) {
         console.error(`❌ [channels] Failed to update channel #${channelId}:`, e?.message?.substring(0, 150));
-        await ctx.reply(
-          "⚠️ *فشل تحديث الرابط.*\n\nحاول مرة أخرى لاحقاً.",
-          {
-            reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.channels.btn_back_to_channels, "manage_channels"),
-            parse_mode: "Markdown",
-          }
-        );
+        await ctx.reply("⚠️ *فشل تحديث الرابط.*", {
+          reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.channels.btn_back_to_channels, "manage_channels"),
+          parse_mode: "Markdown",
+        });
         return;
       }
 

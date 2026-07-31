@@ -654,3 +654,288 @@ export async function logBroadcast(
     // تجاهل
   }
 }
+
+// ============================================
+// دوال المواد (Subjects CRUD)
+// ============================================
+
+// قراءة مادة بالمعرف
+export async function getSubjectByIdFromDB(
+  client: SupabaseClient,
+  subjectId: number
+): Promise<any | null> {
+  try {
+    const result = await client.select("subjects", {
+      columns: "id,specialty_id,level,semester,name,name_normalized,has_theory,has_practical,is_active,sort_order,code,credits,prerequisites,description,updated_at",
+      filter: `id=eq.${subjectId}`,
+      single: true,
+    });
+    return result || null;
+  } catch (e) {
+    console.error("getSubjectByIdFromDB error:", e);
+    return null;
+  }
+}
+
+// قراءة مواد تخصص/مستوى/فصل
+export async function getSubjectsBySpecLevelSemesterFromDB(
+  client: SupabaseClient,
+  specialtyId: number,
+  level: number,
+  semester: number
+): Promise<any[]> {
+  try {
+    const result = await client.select("subjects", {
+      columns: "id,specialty_id,level,semester,name,has_theory,has_practical,is_active,sort_order,code,credits",
+      filter: `specialty_id=eq.${specialtyId}&level=eq.${level}&semester=eq.${semester}&is_active=eq.true`,
+      order: "sort_order.asc,name.asc",
+    });
+    return Array.isArray(result) ? result : [];
+  } catch (e) {
+    console.error("getSubjectsBySpecLevelSemesterFromDB error:", e);
+    return [];
+  }
+}
+
+// قراءة كل مواد تخصص (كل المستويات والفصول)
+export async function getSubjectsBySpecialtyFromDB(
+  client: SupabaseClient,
+  specialtyId: number
+): Promise<any[]> {
+  try {
+    const result = await client.select("subjects", {
+      columns: "id,specialty_id,level,semester,name,has_theory,has_practical,is_active,sort_order,code,credits",
+      filter: `specialty_id=eq.${specialtyId}&is_active=eq.true`,
+      order: "level.asc,semester.asc,sort_order.asc,name.asc",
+    });
+    return Array.isArray(result) ? result : [];
+  } catch (e) {
+    console.error("getSubjectsBySpecialtyFromDB error:", e);
+    return [];
+  }
+}
+
+// إضافة مادة جديدة
+export async function createSubject(
+  client: SupabaseClient,
+  data: {
+    specialty_id: number;
+    level: number;
+    semester: number;
+    name: string;
+    name_normalized: string;
+    has_theory: boolean;
+    has_practical: boolean;
+    code?: string | null;
+    credits?: number | null;
+    sort_order: number;
+    is_active?: boolean;
+  }
+): Promise<number | null> {
+  try {
+    const result = await client.insert("subjects", {
+      ...data,
+      is_active: data.is_active ?? true,
+    }) as any;
+    return result?.id || null;
+  } catch (e) {
+    console.error("createSubject error:", e);
+    return null;
+  }
+}
+
+// تحديث مادة
+export async function updateSubject(
+  client: SupabaseClient,
+  subjectId: number,
+  patch: any
+): Promise<boolean> {
+  try {
+    await client.update("subjects", patch, `id=eq.${subjectId}`);
+    return true;
+  } catch (e) {
+    console.error("updateSubject error:", e);
+    return false;
+  }
+}
+
+// حذف مادة (soft delete)
+export async function deleteSubject(
+  client: SupabaseClient,
+  subjectId: number
+): Promise<boolean> {
+  try {
+    await client.update("subjects", {
+      is_active: false,
+    }, `id=eq.${subjectId}`);
+    return true;
+  } catch (e) {
+    console.error("deleteSubject error:", e);
+    return false;
+  }
+}
+
+// تبديل ترتيب مادة (RPC)
+export async function swapSubjectSortOrder(
+  client: SupabaseClient,
+  subjectId: number,
+  direction: "up" | "down"
+): Promise<boolean> {
+  try {
+    await client.rpc("swap_subject_sort_order", {
+      p_subject_id: subjectId,
+      p_direction: direction,
+    });
+    return true;
+  } catch (e) {
+    console.error("swapSubjectSortOrder error:", e);
+    return false;
+  }
+}
+
+// عدد المحتوى المرتبط بمادة
+export async function getContentCountForSubject(
+  client: SupabaseClient,
+  subjectId: number
+): Promise<number> {
+  try {
+    const result = await client.select("content", {
+      columns: "id",
+      filter: `subject_id=eq.${subjectId}&is_active=eq.true`,
+      limit: 1000,
+    });
+    return Array.isArray(result) ? result.length : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+// كتابة سجل تدقيق للمادة
+export async function writeSubjectAuditLog(
+  client: SupabaseClient,
+  data: {
+    subject_id: number | null;
+    action: "create" | "update" | "move_semester" | "move_level" | "reorder" | "delete" | "activate" | "deactivate";
+    old_data?: any;
+    new_data?: any;
+    performed_by_position_id: string;
+    performed_by_telegram_id: number;
+  }
+): Promise<void> {
+  try {
+    await client.insert("subject_audit_logs", {
+      subject_id: data.subject_id,
+      action: data.action,
+      old_data: data.old_data || null,
+      new_data: data.new_data || null,
+      performed_by_position_id: data.performed_by_position_id,
+      performed_by_telegram_id: data.performed_by_telegram_id,
+    });
+  } catch (e) {
+    console.error("writeSubjectAuditLog error:", e);
+  }
+}
+
+// ============================================
+// دوال قنوات اللجان (Committee Channels CRUD)
+// ============================================
+
+// إضافة قناة جديدة
+export async function createCommitteeChannel(
+  client: SupabaseClient,
+  data: {
+    scope_type: "central" | "college" | "specialty_level";
+    college_id?: number | null;
+    specialty_id?: number | null;
+    level_num?: number | null;
+    channel_url: string;
+    channel_id?: string | null;
+    display_name: string;
+    is_active?: boolean;
+    updated_by_position_id?: string;
+  }
+): Promise<number | null> {
+  try {
+    const result = await client.insert("committee_channels", {
+      scope_type: data.scope_type,
+      college_id: data.college_id || null,
+      specialty_id: data.specialty_id || null,
+      level_num: data.level_num || null,
+      channel_url: data.channel_url,
+      channel_id: data.channel_id || null,
+      display_name: data.display_name,
+      is_active: data.is_active ?? true,
+      updated_by_position_id: data.updated_by_position_id || null,
+    }) as any;
+    return result?.id || null;
+  } catch (e) {
+    console.error("createCommitteeChannel error:", e);
+    return null;
+  }
+}
+
+// تحديث قناة
+export async function updateCommitteeChannel(
+  client: SupabaseClient,
+  channelId: number,
+  patch: any
+): Promise<boolean> {
+  try {
+    await client.update("committee_channels", patch, `id=eq.${channelId}`);
+    return true;
+  } catch (e) {
+    console.error("updateCommitteeChannel error:", e);
+    return false;
+  }
+}
+
+// حذف قناة (soft delete)
+export async function deleteCommitteeChannel(
+  client: SupabaseClient,
+  channelId: number
+): Promise<boolean> {
+  try {
+    await client.update("committee_channels", {
+      is_active: false,
+    }, `id=eq.${channelId}`);
+    return true;
+  } catch (e) {
+    console.error("deleteCommitteeChannel error:", e);
+    return false;
+  }
+}
+
+// تفعيل/تعطيل قناة
+export async function toggleCommitteeChannel(
+  client: SupabaseClient,
+  channelId: number
+): Promise<boolean> {
+  try {
+    // اقرأ الحالة الحالية
+    const result = await client.select("committee_channels", {
+      columns: "is_active",
+      filter: `id=eq.${channelId}`,
+      single: true,
+    }) as any;
+    const current = Array.isArray(result) ? result[0] : result;
+    const newState = !(current?.is_active ?? true);
+    await client.update("committee_channels", {
+      is_active: newState,
+    }, `id=eq.${channelId}`);
+    return newState;
+  } catch (e) {
+    console.error("toggleCommitteeChannel error:", e);
+    return false;
+  }
+}
+
+// تطبيع اسم المادة (إزالة التشكيل + توحيد الهمزات)
+export function normalizeSubjectName(name: string): string {
+  return name
+    .replace(/[\u064B-\u065F\u0670]/g, "")  // إزالة التشكيل
+    .replace(/[أإآ]/g, "ا")                  // توحيد الهمزات
+    .replace(/ى/g, "ي")                       // توحيد الألف المقصورة
+    .replace(/ة/g, "ه")                       // توحيد التاء المربوطة
+    .trim()
+    .toLowerCase();
+}

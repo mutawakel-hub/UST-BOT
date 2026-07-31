@@ -36,6 +36,33 @@ export interface AdminSession {
   };
   awaiting_position_revoke?: { position_id: string; holder_name?: string; position_title?: string };
   awaiting_channel_edit?: number; // channel_id
+  awaiting_channel_edit_field?: "url" | "display_name"; // أي حقل يُعدَّل (المرحلة 2)
+  // سياق إضافة/تعديل قناة لجنة (المرحلة 2)
+  awaiting_channel_add_step?: "url" | "display_name" | "confirm";
+  awaiting_channel_add_context?: {
+    scope_type: "central" | "college" | "specialty_level";
+    college_id?: number;
+    specialty_id?: number;
+    level_num?: number;
+    url?: string;
+    display_name?: string;
+  };
+  awaiting_channel_delete_id?: number;
+  // سياق إضافة/تعديل مادة (المرحلة 1)
+  awaiting_subject_add_step?: "name" | "code" | "credits" | "has_theory" | "has_practical" | "confirm";
+  awaiting_subject_add_context?: {
+    specialty_id: number;
+    level: number;
+    semester: number;
+    name?: string;
+    code?: string;
+    credits?: number;
+    has_theory?: boolean;
+    has_practical?: boolean;
+  };
+  awaiting_subject_edit_id?: number;
+  awaiting_subject_edit_field?: "name" | "code" | "credits";
+  awaiting_subject_delete_id?: number;
   // تكريم
   awaiting_honor_reject?: number; // honor_id
   awaiting_honor_new_step?: "student_id" | "title" | "bonus";
@@ -137,6 +164,15 @@ export function resetSessionAwaitingStates(session: AdminSession): void {
   session.awaiting_position_assign = undefined;
   session.awaiting_position_revoke = undefined;
   session.awaiting_channel_edit = undefined;
+  session.awaiting_channel_edit_field = undefined;
+  session.awaiting_channel_add_step = undefined;
+  session.awaiting_channel_add_context = undefined;
+  session.awaiting_channel_delete_id = undefined;
+  session.awaiting_subject_add_step = undefined;
+  session.awaiting_subject_add_context = undefined;
+  session.awaiting_subject_edit_id = undefined;
+  session.awaiting_subject_edit_field = undefined;
+  session.awaiting_subject_delete_id = undefined;
   session.awaiting_honor_reject = undefined;
   session.awaiting_honor_new_step = undefined;
   session.awaiting_honor_new_data = undefined;

@@ -459,15 +459,93 @@ export const ADMIN_TEXTS = {
       `📄 *${f.name}*\n   📚 ${f.subject} • ${f.size.toFixed(1)} MB • ⬇️ ${f.downloads}\n`,
   },
 
-  // ====== شاشة A6: SubjectsMgmt ======
+  // ====== شاشة A6: SubjectsMgmt (إدارة المواد الحقيقية) ======
   subjects_mgmt: {
-    title: "📖 *إدارة المواد*\n\nاختر الإجراء:",
+    title: "📚 *إدارة المواد*\n\nاختر الإجراء:",
     btn_add: "➕ إضافة مادة",
-    btn_list: "📋 قائمة المواد",
+    btn_list: "📋 استعراض المواد",
     btn_edit: "✏️ تعديل/حذف مادة",
-    add_prompt: "📝 أرسل اسم المادة الجديدة:",
-    add_done: (name: string) => `✅ تمت إضافة المادة: *${name}* (محاكاة)`,
-    list_header: (count: number) => `📋 *قائمة المواد (${count})*\n\n`,
+    // إضافة
+    add_select_college: "➕ *إضافة مادة*\n\nاختر الكلية:",
+    add_select_specialty: (collegeName: string) => `➕ *إضافة مادة*\n\n🏛 ${collegeName}\n\nاختر التخصص:`,
+    add_select_level: (specName: string) => `➕ *إضافة مادة*\n\n📚 ${specName}\n\nاختر المستوى:`,
+    add_select_semester: (specName: string, level: number) =>
+      `➕ *إضافة مادة*\n\n📊 ${specName} — المستوى ${level}\n\nاختر الفصل:`,
+    add_prompt_name: "📝 أرسل *اسم المادة* الجديدة:",
+    add_prompt_code: "🏷 أرسل *كود المادة* (مثلاً: CS101)\n\nأرسل '-' للتخطي:",
+    add_prompt_credits: "⏱ أرسل *عدد الساعات المعتمدة* (رقم)\n\nأرسل '-' للتخطي:",
+    add_prompt_theory: "📖 هل تحتوي المادة على مقرر نظري؟",
+    add_prompt_practical: "📗 هل تحتوي المادة على مقرر عملي؟",
+    add_confirm: (data: {
+      name: string; code?: string; credits?: number;
+      has_theory: boolean; has_practical: boolean;
+      specName: string; level: number; semester: number;
+    }) =>
+      `✅ *تأكيد إضافة المادة*\n\n` +
+      `📝 *الاسم:* ${data.name}\n` +
+      (data.code ? `🏷 *الكود:* ${data.code}\n` : "") +
+      (data.credits ? `⏱ *الساعات:* ${data.credits}\n` : "") +
+      `📖 *نظري:* ${data.has_theory ? "✅" : "❌"}\n` +
+      `📗 *عملي:* ${data.has_practical ? "✅" : "❌"}\n\n` +
+      `📚 *التخصص:* ${data.specName}\n` +
+      `📊 *المستوى:* ${data.level} | *الفصل:* ${data.semester}\n\n` +
+      `هل تريد الإضافة؟`,
+    add_success: (name: string) => `✅ *تمت إضافة المادة بنجاح!*\n\n📝 ${name}\n\nباتت متاحة للطلاب الآن.`,
+    add_canceled: "✅ تم إلغاء إضافة المادة.",
+    // استعراض
+    list_select_college: "📋 *استعراض المواد*\n\nاختر الكلية:",
+    list_select_specialty: (collegeName: string) => `📋 *استعراض المواد*\n\n🏛 ${collegeName}\n\nاختر التخصص:`,
+    list_select_level: (specName: string) => `📋 *استعراض المواد*\n\n📚 ${specName}\n\nاختر المستوى:`,
+    list_select_semester: (specName: string, level: number) =>
+      `📋 *استعراض المواد*\n\n📊 ${specName} — المستوى ${level}\n\nاختر الفصل:`,
+    list_empty: "📭 لا توجد مواد في هذا القسم.\n💡 أضف مادة من زر ➕ إضافة مادة.",
+    list_subjects_header: (count: number) => `📋 *المواد (${count})*\n\nاختر مادة للإدارة:`,
+    // تفاصيل المادة
+    detail_title: "📖 *تفاصيل المادة*\n\n",
+    detail_fields: (s: {
+      name: string; code?: string; credits?: number;
+      has_theory: boolean; has_practical: boolean;
+      level: number; semester: number; sort_order: number;
+      content_count: number;
+    }) =>
+      `📝 *الاسم:* ${s.name}\n` +
+      (s.code ? `🏷 *الكود:* ${s.code}\n` : "") +
+      (s.credits ? `⏱ *الساعات:* ${s.credits}\n` : "") +
+      `📖 *نظري:* ${s.has_theory ? "✅" : "❌"}\n` +
+      `📗 *عملي:* ${s.has_practical ? "✅" : "❌"}\n` +
+      `📊 *المستوى:* ${s.level} | *الفصل:* ${s.semester} | *الترتيب:* ${s.sort_order}\n` +
+      `📁 *المحتوى المرتبط:* ${s.content_count} ملف\n`,
+    btn_edit_name: "📝 تعديل الاسم",
+    btn_edit_code: "🏷 تعديل الكود",
+    btn_edit_credits: "⏱ تعديل الساعات",
+    btn_move_semester: "🔄 نقل لفصل آخر",
+    btn_move_level: "🔄 نقل لمستوى آخر",
+    btn_reorder_up: "🔺 للأعلى",
+    btn_reorder_down: "🔻 للأسفل",
+    btn_delete: "🗑 حذف المادة",
+    // تعديل
+    edit_prompt_name: "📝 أرسل *الاسم الجديد* للمادة:",
+    edit_prompt_code: "🏷 أرسل *الكود الجديد* (أرسل '-' لمسح الكود):",
+    edit_prompt_credits: "⏱ أرسل *الساعات الجديدة* (أرسل '-' لمسح الساعات):",
+    edit_success: (field: string) => `✅ تم تحديث *${field}* بنجاح.`,
+    // نقل
+    move_sem_select: (currentSem: number) => `🔄 *نقل المادة لفصل آخر*\n\nالفصل الحالي: ${currentSem}\n\nاختر الفصل الجديد:`,
+    move_lvl_select: (currentLevel: number, maxLevel: number) => `🔄 *نقل المادة لمستوى آخر*\n\nالمستوى الحالي: ${currentLevel}\n\nاختر المستوى الجديد:`,
+    move_success: (newLabel: string) => `✅ تم نقل المادة بنجاح إلى ${newLabel}.`,
+    // ترتيب
+    reorder_success_up: "✅ تم تحريك المادة للأعلى.",
+    reorder_success_down: "✅ تم تحريك المادة للأسفل.",
+    reorder_no_change: "⚠️ المادة في الحافة — لا يمكن تحريكها أكثر.",
+    // حذف
+    delete_confirm: (name: string, contentCount: number) =>
+      `⚠️ *تأكيد حذف المادة*\n\n` +
+      `📄 ${name}\n` +
+      (contentCount > 0
+        ? `⚠️ *تحذير:* تحتوي على ${contentCount} ملف محتوى.\n` +
+          `المحتوى سيبقى لكن لن تظهر المادة للطلاب.\n\n`
+        : `لا يوجد محتوى مرتبط بها.\n\n`) +
+      `سيتم تعطيل المادة (حذف ناعم).\n\nهل أنت متأكد؟`,
+    delete_success: "✅ تم حذف المادة بنجاح.\n\nالمادة معطّلة ولن تظهر للطلاب.",
   },
 
   // ====== شاشة A7: Broadcast ======
