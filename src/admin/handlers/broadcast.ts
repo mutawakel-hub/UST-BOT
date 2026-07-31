@@ -384,10 +384,10 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     let pushDelivered = 0;
     let pushBlocked = 0;
     let pushFailed = 0;
+    const debugLogs: string[] = [];  // تجميع logs للعرض في الرسالة
 
     if (studentBotUrl && broadcastInternalToken) {
       // رسالة منسقة جميلة للطالب (HTML بدل Markdown — أكثر تسامحاً)
-      // ملاحظة: نتجنب Markdown لأنه يفشل مع الرموز العربية والـ box-drawing
       const studentMessageHtml =
         `📢 <b>تعميم جديد</b>\n\n` +
         `📍 ${escapeHtml(ctxData.scope_label)}\n` +
@@ -407,9 +407,15 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
         `${text}\n\n` +
         `━━━━━━━━━━━━━━━`;
 
+      debugLogs.push(`URL: ${studentBotUrl}/broadcast-push`);
+      debugLogs.push(`Token set: ${!!broadcastInternalToken}`);
+      debugLogs.push(`Message HTML length: ${studentMessageHtml.length}`);
+      debugLogs.push(`Message plain length: ${studentMessagePlain.length}`);
+
       const pushPromises = recipientIds.map(async (studentId) => {
         try {
           // محاولة 1: HTML parse mode
+          debugLogs.push(`[${studentId}] Attempt 1: HTML...`);
           let resp = await fetch(`${studentBotUrl}/broadcast-push`, {
             method: "POST",
             headers: {
@@ -423,9 +429,14 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
             }),
           });
 
-          // محاولة 2: لو فشل HTML، أعد بالنص العادي (بدون parse_mode)
+          let respBody = "";
+          try { respBody = await resp.text(); } catch {}
+
+          debugLogs.push(`[${studentId}] HTML response: ${resp.status} - ${respBody.substring(0, 200)}`);
+
+          // محاولة 2: لو فشل HTML، أعد بالنص العادي
           if (!resp.ok && resp.status !== 404 && resp.status !== 401) {
-            console.warn(`⚠️ [broadcast] HTML failed for ${studentId} (${resp.status}), retrying with plain text...`);
+            debugLogs.push(`[${studentId}] Attempt 2: Plain text...`);
             resp = await fetch(`${studentBotUrl}/broadcast-push`, {
               method: "POST",
               headers: {
@@ -438,6 +449,9 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
                 parse_mode: "",
               }),
             });
+
+            try { respBody = await resp.text(); } catch {}
+            debugLogs.push(`[${studentId}] Plain response: ${resp.status} - ${respBody.substring(0, 200)}`);
           }
 
           if (resp.ok) {
@@ -445,19 +459,19 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
             console.log(`✅ [broadcast] Push delivered to ${studentId}`);
           } else if (resp.status === 404) {
             pushBlocked++;
-            const errBody = await resp.text().catch(() => "");
-            console.log(`🚫 [broadcast] Push blocked/not started for ${studentId}: ${errBody.substring(0, 200)}`);
+            console.log(`🚫 [broadcast] Push blocked/not started for ${studentId}: ${respBody.substring(0, 200)}`);
           } else if (resp.status === 401) {
             pushFailed++;
-            console.error(`❌ [broadcast] Push 401 Unauthorized for ${studentId} — BROADCAST_INTERNAL_TOKEN mismatch!`);
+            console.error(`❌ [broadcast] Push 401 Unauthorized for ${studentId}`);
           } else {
             pushFailed++;
-            const errBody = await resp.text().catch(() => "");
-            console.error(`❌ [broadcast] Push failed (${resp.status}) for ${studentId}: ${errBody.substring(0, 200)}`);
+            console.error(`❌ [broadcast] Push failed (${resp.status}) for ${studentId}: ${respBody.substring(0, 200)}`);
           }
         } catch (e: any) {
           pushFailed++;
-          console.error(`❌ [broadcast] Push network error for ${studentId}:`, e?.message?.substring(0, 100));
+          const errMsg = e?.message?.substring(0, 150) || "unknown";
+          debugLogs.push(`[${studentId}] Network error: ${errMsg}`);
+          console.error(`❌ [broadcast] Push network error for ${studentId}:`, errMsg);
         }
       });
       await Promise.race([
@@ -466,6 +480,7 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
       ]);
       console.log(`📊 [broadcast] Push summary: delivered=${pushDelivered}, blocked=${pushBlocked}, failed=${pushFailed}`);
     } else {
+      debugLogs.push("⚠️ STUDENT_BOT_URL or BROADCAST_INTERNAL_TOKEN not set!");
       console.warn("⚠️ [broadcast] STUDENT_BOT_URL or BROADCAST_INTERNAL_TOKEN not set — skipping direct push");
     }
 
@@ -489,6 +504,9 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
 
     // 5. اعرض رسالة النجاح
     const pushSuccessRate = deliveredCount > 0 ? Math.round((pushDelivered / deliveredCount) * 100) : 0;
+    const debugSection = pushDelivered === 0 && pushBlocked > 0
+      ? `\n\n📝 <b>سجل التشخيص:</b>\n<code>${escapeHtml(debugLogs.join("\n").substring(0, 800))}</code>`
+      : "";
     await ctx.editMessageText(
       `✅ *تم إرسال التعميم بنجاح!*\n\n` +
       `📍 النطاق: ${ctxData.scope_label}\n` +
@@ -497,7 +515,8 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
       (pushBlocked > 0 ? `🚫 محظور/لم يبدأ: ${pushBlocked}\n` : "") +
       `🔔 إشعار في البوت: ${deliveredCount} (100%)\n` +
       `⏱ وقت الإرسال: ${new Date().toLocaleString("ar")}\n\n` +
-      `_الطلاب سيرون الرسالة فوراً كإشعار Telegram + في بوت الطالب._`,
+      `_الطلاب سيرون الرسالة فوراً كإشعار Telegram + في بوت الطالب._` +
+      debugSection,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
