@@ -46,12 +46,9 @@ export function buildDynamicDashboard(perms: UserPermissions, pendingCount: numb
   }
   kb.row();
 
-  // صف 4: الإحصائيات + التخصيص
+  // صف 4: الإحصائيات
   if (p.has("view_level_stats") || p.has("view_central_stats")) {
     kb.text("📊 إحصائيات", "statistics");
-  }
-  if (p.has("system_settings")) {
-    kb.text("⚙️ تخصيص النصوص", "customize_texts");
   }
   kb.row();
 
