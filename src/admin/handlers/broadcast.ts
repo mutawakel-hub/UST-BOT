@@ -16,30 +16,6 @@ import {
 import { getOrCreateSession, saveSession } from "../state";
 import { getStudentCountByScope, getAdminPrimaryPositionId } from "../helpers";
 
-// ============================================
-// Helper: escape HTML special characters
-// ============================================
-function escapeHtml(text: string): string {
-  if (!text) return "";
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-// ============================================
-// Helper: الحصول على إعدادات بوت الطالب
-// ============================================
-// نحاول globalThis أولاً، ثم fallback للقيمة الافتراضية
-// (المشكلة: globalThis قد لا يتشارك بين isolates في Cloudflare Workers)
-const DEFAULT_STUDENT_BOT_URL = "https://ust-student-bot.atow73768.workers.dev";
-
-function getStudentBotConfig(): { url: string; token: string } {
-  const url = (globalThis as any).__studentBotUrl as string || DEFAULT_STUDENT_BOT_URL;
-  const token = (globalThis as any).__broadcastInternalToken as string || "";
-  return { url, token };
-}
-
 export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): void {
   // ====== A7: التعميم (ديناميكي حسب الصلاحية) ======
   bot.callbackQuery("broadcast", async (ctx) => {
@@ -385,117 +361,10 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
       console.error("Failed to insert notifications:", e);
     }
 
-    // 3. الإرسال المباشر عبر بوت الطالب (push notification فوري)
-    // نستدعي endpoint /broadcast-push في بوت الطالب عبر HTTP
-    // الأمان: header x-internal-token (قيمة ثابتة في wrangler.toml لكلا البوتين)
-    const { url: studentBotUrl, token: broadcastInternalToken } = getStudentBotConfig();
-
-    console.log(`📡 [broadcast] studentBotUrl=${studentBotUrl}, tokenSet=${!!broadcastInternalToken}, recipients=${recipientIds.length}`);
-
-    let pushDelivered = 0;
-    let pushBlocked = 0;
-    let pushFailed = 0;
-    const debugLogs: string[] = [];  // تجميع logs للعرض في الرسالة
-
-    if (studentBotUrl && broadcastInternalToken) {
-      // رسالة منسقة جميلة للطالب (HTML بدل Markdown — أكثر تسامحاً)
-      const studentMessageHtml =
-        `📢 <b>تعميم جديد</b>\n\n` +
-        `📍 ${escapeHtml(ctxData.scope_label)}\n` +
-        `👤 من: ${escapeHtml(ctx.from.first_name || "إدارة")}\n` +
-        `📅 ${new Date().toLocaleString("ar")}\n\n` +
-        `━━━━━━━━━━━━━━━\n\n` +
-        `${escapeHtml(text)}\n\n` +
-        `━━━━━━━━━━━━━━━`;
-
-      // نسخة نص عادي (fallback لو فشل HTML)
-      const studentMessagePlain =
-        `📢 تعميم جديد\n\n` +
-        `📍 ${ctxData.scope_label}\n` +
-        `👤 من: ${ctx.from.first_name || "إدارة"}\n` +
-        `📅 ${new Date().toLocaleString("ar")}\n\n` +
-        `━━━━━━━━━━━━━━━\n\n` +
-        `${text}\n\n` +
-        `━━━━━━━━━━━━━━━`;
-
-      debugLogs.push(`URL: ${studentBotUrl}/broadcast-push`);
-      debugLogs.push(`Token set: ${!!broadcastInternalToken}`);
-      debugLogs.push(`Message HTML length: ${studentMessageHtml.length}`);
-      debugLogs.push(`Message plain length: ${studentMessagePlain.length}`);
-
-      const pushPromises = recipientIds.map(async (studentId) => {
-        try {
-          // محاولة 1: HTML parse mode
-          debugLogs.push(`[${studentId}] Attempt 1: HTML...`);
-          let resp = await fetch(`${studentBotUrl}/broadcast-push`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-internal-token": broadcastInternalToken,
-            },
-            body: JSON.stringify({
-              telegram_id: studentId,
-              text: studentMessageHtml,
-              parse_mode: "HTML",
-            }),
-          });
-
-          let respBody = "";
-          try { respBody = await resp.text(); } catch {}
-
-          debugLogs.push(`[${studentId}] HTML response: ${resp.status} - ${respBody.substring(0, 200)}`);
-
-          // محاولة 2: لو فشل HTML، أعد بالنص العادي
-          if (!resp.ok && resp.status !== 404 && resp.status !== 401) {
-            debugLogs.push(`[${studentId}] Attempt 2: Plain text...`);
-            resp = await fetch(`${studentBotUrl}/broadcast-push`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "x-internal-token": broadcastInternalToken,
-              },
-              body: JSON.stringify({
-                telegram_id: studentId,
-                text: studentMessagePlain,
-                parse_mode: "",
-              }),
-            });
-
-            try { respBody = await resp.text(); } catch {}
-            debugLogs.push(`[${studentId}] Plain response: ${resp.status} - ${respBody.substring(0, 200)}`);
-          }
-
-          if (resp.ok) {
-            pushDelivered++;
-            console.log(`✅ [broadcast] Push delivered to ${studentId}`);
-          } else if (resp.status === 404) {
-            pushBlocked++;
-            console.log(`🚫 [broadcast] Push blocked/not started for ${studentId}: ${respBody.substring(0, 200)}`);
-          } else if (resp.status === 401) {
-            pushFailed++;
-            console.error(`❌ [broadcast] Push 401 Unauthorized for ${studentId}`);
-          } else {
-            pushFailed++;
-            console.error(`❌ [broadcast] Push failed (${resp.status}) for ${studentId}: ${respBody.substring(0, 200)}`);
-          }
-        } catch (e: any) {
-          pushFailed++;
-          const errMsg = e?.message?.substring(0, 150) || "unknown";
-          debugLogs.push(`[${studentId}] Network error: ${errMsg}`);
-          console.error(`❌ [broadcast] Push network error for ${studentId}:`, errMsg);
-        }
-      });
-      await Promise.race([
-        Promise.allSettled(pushPromises),
-        new Promise((resolve) => setTimeout(resolve, 12000)),
-      ]);
-      console.log(`📊 [broadcast] Push summary: delivered=${pushDelivered}, blocked=${pushBlocked}, failed=${pushFailed}`);
-    } else {
-      debugLogs.push("⚠️ STUDENT_BOT_URL or BROADCAST_INTERNAL_TOKEN not set!");
-      console.warn("⚠️ [broadcast] STUDENT_BOT_URL or BROADCAST_INTERNAL_TOKEN not set — skipping direct push");
-    }
-
-    // 4. سجّل التعميم في DB
+    // 3. سجّل التعميم في DB
+    // ملاحظة: الإرسال المباشر عبر HTTP fetch بين البوتين تم تعطيله بسبب قيود
+    // Cloudflare Workers Free Plan (لا يسمح بـ fetch بين Workers على نفس الحساب)
+    // الطلاب سيرون التعميم في واجهة الإشعارات عند فتح بوت الطالب (ضمان 100%)
     const positionId = await getAdminPrimaryPositionId(supabase, ctx.from.id);
     try {
       await logBroadcast(supabase, {
@@ -513,21 +382,14 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
       console.error("Failed to log broadcast:", e);
     }
 
-    // 5. اعرض رسالة النجاح
-    const pushSuccessRate = deliveredCount > 0 ? Math.round((pushDelivered / deliveredCount) * 100) : 0;
-    const debugSection = pushDelivered === 0 && pushBlocked > 0
-      ? `\n\n📝 <b>سجل التشخيص:</b>\n<code>${escapeHtml(debugLogs.join("\n").substring(0, 800))}</code>`
-      : "";
+    // 4. اعرض رسالة النجاح
     await ctx.editMessageText(
       `✅ *تم إرسال التعميم بنجاح!*\n\n` +
       `📍 النطاق: ${ctxData.scope_label}\n` +
       `👥 المستلمون: ${deliveredCount} طالب\n` +
-      `📨 وصل كرسالة مباشرة: ${pushDelivered} (${pushSuccessRate}%)\n` +
-      (pushBlocked > 0 ? `🚫 محظور/لم يبدأ: ${pushBlocked}\n` : "") +
       `🔔 إشعار في البوت: ${deliveredCount} (100%)\n` +
       `⏱ وقت الإرسال: ${new Date().toLocaleString("ar")}\n\n` +
-      `_الطلاب سيرون الرسالة فوراً كإشعار Telegram + في بوت الطالب._` +
-      debugSection,
+      `_الطلاب سيرون التعميم في واجهة الإشعارات عند فتح بوت الطالب._`,
       {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
