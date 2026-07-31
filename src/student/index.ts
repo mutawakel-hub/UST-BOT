@@ -321,6 +321,21 @@ export default {
               headers: { "Content-Type": "application/json" },
             });
           }
+          // تحويل telegram_id لـ number صراحةً (قد يأتي كـ string من JSON)
+          const telegramId = typeof body.telegram_id === "string"
+            ? parseInt(body.telegram_id)
+            : Number(body.telegram_id);
+          if (!Number.isFinite(telegramId) || telegramId <= 0) {
+            return new Response(JSON.stringify({
+              ok: false,
+              error: "invalid telegram_id",
+              received: String(body.telegram_id).substring(0, 50),
+              parsed: telegramId,
+            }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
           // أرسل الرسالة عبر بوت الطالب
           // لو parse_mode فارغ، لا نمرره (نص عادي)
           const sendOptions: any = {};
@@ -330,7 +345,7 @@ export default {
           if (body.disable_notification) {
             sendOptions.disable_notification = true;
           }
-          await botInstance!.api.sendMessage(body.telegram_id, body.text, sendOptions);
+          await botInstance!.api.sendMessage(telegramId, body.text, sendOptions);
           return new Response(JSON.stringify({ ok: true, delivered: true }), {
             headers: { "Content-Type": "application/json" },
           });

@@ -19,13 +19,25 @@ import { getStudentCountByScope, getAdminPrimaryPositionId } from "../helpers";
 // ============================================
 // Helper: escape HTML special characters
 // ============================================
-// ضروري عند استخدام parse_mode: "HTML" لمنع XSS وتلف الرسالة
 function escapeHtml(text: string): string {
   if (!text) return "";
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+// ============================================
+// Helper: الحصول على إعدادات بوت الطالب
+// ============================================
+// نحاول globalThis أولاً، ثم fallback للقيمة الافتراضية
+// (المشكلة: globalThis قد لا يتشارك بين isolates في Cloudflare Workers)
+const DEFAULT_STUDENT_BOT_URL = "https://ust-student-bot.atow73768.workers.dev";
+
+function getStudentBotConfig(): { url: string; token: string } {
+  const url = (globalThis as any).__studentBotUrl as string || DEFAULT_STUDENT_BOT_URL;
+  const token = (globalThis as any).__broadcastInternalToken as string || "";
+  return { url, token };
 }
 
 export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): void {
@@ -376,10 +388,9 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     // 3. الإرسال المباشر عبر بوت الطالب (push notification فوري)
     // نستدعي endpoint /broadcast-push في بوت الطالب عبر HTTP
     // الأمان: header x-internal-token (قيمة ثابتة في wrangler.toml لكلا البوتين)
-    const studentBotUrl = (globalThis as any).__studentBotUrl as string | undefined;
-    const broadcastInternalToken = (globalThis as any).__broadcastInternalToken as string | undefined;
+    const { url: studentBotUrl, token: broadcastInternalToken } = getStudentBotConfig();
 
-    console.log(`📡 [broadcast] studentBotUrl=${studentBotUrl ? "set" : "MISSING"}, internalToken=${broadcastInternalToken ? "set" : "MISSING"}, recipients=${recipientIds.length}`);
+    console.log(`📡 [broadcast] studentBotUrl=${studentBotUrl}, tokenSet=${!!broadcastInternalToken}, recipients=${recipientIds.length}`);
 
     let pushDelivered = 0;
     let pushBlocked = 0;
