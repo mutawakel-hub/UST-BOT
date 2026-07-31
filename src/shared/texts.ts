@@ -1262,22 +1262,24 @@ export function formatContentCard(
   lines.push("");
 
   // ===== معلومات الملف =====
-  let sizeLabel = "غير محدد";
-  if (data.fileSizeBytes && data.fileSizeBytes > 0) {
-    sizeLabel = formatBytesArabic(data.fileSizeBytes);
-  } else if (data.fileSizeMb && data.fileSizeMb > 0) {
-    sizeLabel = `${data.fileSizeMb.toFixed(2)} MB`;
-  }
-  lines.push(`📦 الحجم:     ${sizeLabel}`);
+  // الحجم + المُحسِن + التاريخ تظهر فقط في القناة والإدارة (ليس للطالب)
+  if (context !== "student_preview") {
+    let sizeLabel = "غير محدد";
+    if (data.fileSizeBytes && data.fileSizeBytes > 0) {
+      sizeLabel = formatBytesArabic(data.fileSizeBytes);
+    } else if (data.fileSizeMb && data.fileSizeMb > 0) {
+      sizeLabel = `${data.fileSizeMb.toFixed(2)} MB`;
+    }
+    lines.push(`📦 الحجم:     ${sizeLabel}`);
 
-  // المُحسِن يظهر فقط في القناة والإدارة (ليس للطالب)
-  if (data.contributorName && context !== "student_preview") {
-    lines.push(`👤 المُحسِن:   ${data.contributorName}`);
-  }
+    if (data.contributorName) {
+      lines.push(`👤 المُحسِن:   ${data.contributorName}`);
+    }
 
-  if (data.uploadedAt) {
-    const dateLabel = formatDateArabic(data.uploadedAt);
-    lines.push(`📅 التاريخ:   ${dateLabel}`);
+    if (data.uploadedAt) {
+      const dateLabel = formatDateArabic(data.uploadedAt);
+      lines.push(`📅 التاريخ:   ${dateLabel}`);
+    }
   }
 
   if (context === "admin_review" && data.statusLabel) {
