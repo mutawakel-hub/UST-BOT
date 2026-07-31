@@ -324,21 +324,87 @@ export default {
           // أرسل الرسالة عبر بوت الطالب
           await botInstance!.api.sendMessage(body.telegram_id, body.text, {
             parse_mode: body.parse_mode || "Markdown",
-            // تعطيل الإشعار (notification) لو الطلب صريح
             disable_notification: body.disable_notification || false,
           });
           return new Response(JSON.stringify({ ok: true, delivered: true }), {
             headers: { "Content-Type": "application/json" },
           });
         } catch (e: any) {
-          // لو الطالب لم يبدأ البوت أو حظره → 404 متوقع
+          // أرجع الخطأ الفعلي دائماً — لا نخفيه
           const errMsg = String(e?.message || "");
-          const isIgnorable = errMsg.includes("bot was blocked") || errMsg.includes("chat not found");
+          const isBlocked = errMsg.includes("bot was blocked") || errMsg.includes("chat not found");
           return new Response(
-            JSON.stringify({ ok: false, error: isIgnorable ? "blocked_or_not_started" : errMsg.substring(0, 100) }),
-            { status: isIgnorable ? 404 : 500, headers: { "Content-Type": "application/json" } }
+            JSON.stringify({
+              ok: false,
+              error: isBlocked ? "blocked_or_not_started" : "telegram_error",
+              telegram_error: errMsg.substring(0, 200),
+              error_code: (e as any)?.error_code || null,
+            }),
+            { status: isBlocked ? 404 : 500, headers: { "Content-Type": "application/json" } }
           );
         }
+      }
+
+      // ====== Debug: Broadcast Test endpoint ======
+      // لاختبار إرسال رسالة لطالب محدد + عرض الخطأ الفعلي
+      // GET /debug/broadcast-test?telegram_id=XXX&token=YYY
+      if (url.pathname === "/debug/broadcast-test") {
+        const debugToken = url.searchParams.get("token");
+        if (debugToken !== env.BROADCAST_INTERNAL_TOKEN) {
+          return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
+            status: 401, headers: { "Content-Type": "application/json" },
+          });
+        }
+        const targetId = parseInt(url.searchParams.get("telegram_id") || "0");
+        const debug: any = { timestamp: new Date().toISOString(), target_id: targetId };
+
+        // 1. تحقق من هوية البوت (getMe)
+        try {
+          const me = await botInstance!.api.getMe();
+          debug.bot_identity = {
+            id: me.id,
+            username: me.username,
+            first_name: me.first_name,
+          };
+          debug.expected_username = env.BOT_USERNAME;
+          debug.token_matches = me.username === env.BOT_USERNAME;
+        } catch (e: any) {
+          debug.bot_identity_error = e?.message?.substring(0, 200);
+        }
+
+        // 2. اعرض الطلاب في DB
+        try {
+          const students = await supabaseClient!.select("students", {
+            columns: "telegram_id,first_name,username,current_college_id,current_specialty_id,current_level",
+            limit: 10,
+          });
+          debug.students_in_db = Array.isArray(students) ? students : [];
+        } catch (e: any) {
+          debug.students_db_error = e?.message?.substring(0, 200);
+        }
+
+        // 3. حاول إرسال رسالة اختبار
+        if (targetId > 0) {
+          try {
+            await botInstance!.api.sendMessage(
+              targetId,
+              "🔧 رسالة اختبار من endpoint التشخيص",
+              { parse_mode: "Markdown" }
+            );
+            debug.test_send = { ok: true, delivered: true };
+          } catch (e: any) {
+            debug.test_send = {
+              ok: false,
+              error: String(e?.message || "").substring(0, 300),
+              error_code: (e as any)?.error_code || null,
+              status: (e as any)?.status || null,
+            };
+          }
+        }
+
+        return new Response(JSON.stringify(debug, null, 2), {
+          headers: { "Content-Type": "application/json" },
+        });
       }
 
       // ====== Webhook endpoint ======

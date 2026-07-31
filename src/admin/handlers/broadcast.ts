@@ -403,14 +403,15 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
             console.log(`✅ [broadcast] Push delivered to ${studentId}`);
           } else if (resp.status === 404) {
             pushBlocked++;
-            console.log(`🚫 [broadcast] Push blocked/not started for ${studentId}`);
+            const errBody = await resp.text().catch(() => "");
+            console.log(`🚫 [broadcast] Push blocked/not started for ${studentId}: ${errBody.substring(0, 150)}`);
           } else if (resp.status === 401) {
             pushFailed++;
             console.error(`❌ [broadcast] Push 401 Unauthorized for ${studentId} — BROADCAST_INTERNAL_TOKEN mismatch between bots!`);
           } else {
             pushFailed++;
             const errBody = await resp.text().catch(() => "");
-            console.error(`❌ [broadcast] Push failed (${resp.status}) for ${studentId}: ${errBody.substring(0, 100)}`);
+            console.error(`❌ [broadcast] Push failed (${resp.status}) for ${studentId}: ${errBody.substring(0, 200)}`);
           }
         } catch (e: any) {
           pushFailed++;
