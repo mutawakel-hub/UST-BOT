@@ -45,6 +45,10 @@ export function initSubjectCache(supabase: SupabaseClient): void {
   supabaseRef = supabase;
 }
 
+export async function ensureSubjectCacheLoaded(): Promise<void> {
+  await ensureCacheLoaded();
+}
+
 export function invalidateSubjectCache(): void {
   cacheLoaded = false;
   subjectCache.clear();

@@ -28,7 +28,7 @@ import { SupabaseClient } from "../shared/db";
 import { initRbac } from "../shared/rbac";
 import { initCallbackSigning } from "../shared/callback-signing";
 import { initSessionStore } from "./state";
-import { initSubjectCache, invalidateSubjectCache } from "../shared/data/subjects";
+import { initSubjectCache, invalidateSubjectCache, ensureSubjectCacheLoaded } from "../shared/data/subjects";
 
 // Handler registrations
 import { registerDashboardHandlers } from "./handlers/dashboard";
@@ -226,6 +226,8 @@ export default {
       // ====== Webhook endpoint ======
       if (url.pathname === "/webhook") {
         try {
+          // Pre-load subject cache before processing
+          await ensureSubjectCacheLoaded();
           const callback = webhookCallback(botInstance, "cloudflare-mod");
           return await callback(request);
         } catch (err) {

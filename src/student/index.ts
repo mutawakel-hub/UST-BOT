@@ -25,7 +25,7 @@ import { Bot, webhookCallback } from "grammy";
 import { SupabaseClient } from "../shared/db";
 import { initCallbackSigning } from "../shared/callback-signing";
 import { initSessionStore } from "./state";
-import { initSubjectCache } from "../shared/data/subjects";
+import { initSubjectCache, ensureSubjectCacheLoaded } from "../shared/data/subjects";
 
 // Handler registrations
 import { registerStartHandlers } from "./handlers/start";
@@ -304,6 +304,8 @@ export default {
       // ====== Webhook endpoint ======
       if (url.pathname === "/webhook") {
         try {
+          // Pre-load subject cache before processing (يضمن أن الدوال المتزامنة تجد بيانات)
+          await ensureSubjectCacheLoaded();
           const callback = webhookCallback(botInstance, "cloudflare-mod");
           return await callback(request);
         } catch (err) {

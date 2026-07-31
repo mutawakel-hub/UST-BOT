@@ -236,28 +236,59 @@ async function requireManageSubjects(ctx: any): Promise<UserPermissions | null> 
  */
 async function showAddConfirmation(ctx: any, session: any): Promise<void> {
   const data = session.awaiting_subject_add_context;
-  if (!data) return;
+  if (!data) {
+    console.warn("⚠️ [subjects] showAddConfirmation: no context in session");
+    await ctx.reply("⚠️ انتهت الجلسة. ابدأ من جديد من ➕ إضافة مادة.");
+    return;
+  }
   const spec = getSpecialtyById(data.specialty_id);
-  await ctx.editMessageText(
-    ADMIN_TEXTS.subjects_mgmt.add_confirm({
-      name: data.name,
-      code: data.code || undefined,
-      credits: data.credits ?? undefined,
-      has_theory: !!data.has_theory,
-      has_practical: !!data.has_practical,
-      specName: spec?.name || `تخصص ${data.specialty_id}`,
-      level: data.level,
-      semester: data.semester,
-    }),
-    {
-      reply_markup: new InlineKeyboard()
-        .text("✅ تأكيد", "confirm_add_subject")
-        .text("❌ إلغاء", "cancel_add_subject")
-        .row()
-        .text(ADMIN_TEXTS.navigation.back_to_subjects_mgmt, "subjects_mgmt"),
-      parse_mode: "Markdown",
+  try {
+    await ctx.editMessageText(
+      ADMIN_TEXTS.subjects_mgmt.add_confirm({
+        name: data.name || "بدون اسم",
+        code: data.code || undefined,
+        credits: data.credits ?? undefined,
+        has_theory: !!data.has_theory,
+        has_practical: !!data.has_practical,
+        specName: spec?.name || `تخصص ${data.specialty_id}`,
+        level: data.level,
+        semester: data.semester,
+      }),
+      {
+        reply_markup: new InlineKeyboard()
+          .text("✅ تأكيد", "confirm_add_subject")
+          .text("❌ إلغاء", "cancel_add_subject")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_subjects_mgmt, "subjects_mgmt"),
+        parse_mode: "Markdown",
+      }
+    );
+  } catch (e: any) {
+    console.error("❌ [subjects] showAddConfirmation error:", e?.message?.substring(0, 200));
+    // لو فشل editMessageText (مثلاً الرسالة قديمة)، أرسل كرسالة جديدة
+    try {
+      await ctx.reply(
+        ADMIN_TEXTS.subjects_mgmt.add_confirm({
+          name: data.name || "بدون اسم",
+          code: data.code || undefined,
+          credits: data.credits ?? undefined,
+          has_theory: !!data.has_theory,
+          has_practical: !!data.has_practical,
+          specName: spec?.name || `تخصص ${data.specialty_id}`,
+          level: data.level,
+          semester: data.semester,
+        }),
+        {
+          reply_markup: new InlineKeyboard()
+            .text("✅ تأكيد", "confirm_add_subject")
+            .text("❌ إلغاء", "cancel_add_subject"),
+          parse_mode: "Markdown",
+        }
+      );
+    } catch (e2) {
+      console.error("❌ [subjects] showAddConfirmation reply also failed:", e2);
     }
-  );
+  }
 }
 
 /**
@@ -544,25 +575,35 @@ export function registerSubjectHandlers(bot: Bot, supabase: SupabaseClient): voi
   // has_practical: ✅ نعم → اضبط true وانتقل للتأكيد
   bot.callbackQuery("subj_add_practical_yes", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (session.awaiting_subject_add_context) {
-      session.awaiting_subject_add_context.has_practical = true;
+    try {
+      const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+      if (session.awaiting_subject_add_context) {
+        session.awaiting_subject_add_context.has_practical = true;
+      }
+      session.awaiting_subject_add_step = "confirm";
+      await saveSession(session);
+      await showAddConfirmation(ctx, session);
+    } catch (e: any) {
+      console.error("❌ [subjects] subj_add_practical_yes error:", e?.message?.substring(0, 200));
+      await ctx.reply("⚠️ حدث خطأ. حاول مرة أخرى من ➕ إضافة مادة.");
     }
-    session.awaiting_subject_add_step = "confirm";
-    await saveSession(session);
-    await showAddConfirmation(ctx, session);
   });
 
   // has_practical: ❌ لا → اضبط false وانتقل للتأكيد
   bot.callbackQuery("subj_add_practical_no", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
-    if (session.awaiting_subject_add_context) {
-      session.awaiting_subject_add_context.has_practical = false;
+    try {
+      const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+      if (session.awaiting_subject_add_context) {
+        session.awaiting_subject_add_context.has_practical = false;
+      }
+      session.awaiting_subject_add_step = "confirm";
+      await saveSession(session);
+      await showAddConfirmation(ctx, session);
+    } catch (e: any) {
+      console.error("❌ [subjects] subj_add_practical_no error:", e?.message?.substring(0, 200));
+      await ctx.reply("⚠️ حدث خطأ. حاول مرة أخرى من ➕ إضافة مادة.");
     }
-    session.awaiting_subject_add_step = "confirm";
-    await saveSession(session);
-    await showAddConfirmation(ctx, session);
   });
 
   // confirm_add_subject → INSERT في DB + audit log + إعادة ضبط الجلسة
