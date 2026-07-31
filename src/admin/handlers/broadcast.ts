@@ -16,6 +16,18 @@ import {
 import { getOrCreateSession, saveSession } from "../state";
 import { getStudentCountByScope, getAdminPrimaryPositionId } from "../helpers";
 
+// ============================================
+// Helper: escape HTML special characters
+// ============================================
+// ضروري عند استخدام parse_mode: "HTML" لمنع XSS وتلف الرسالة
+function escapeHtml(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): void {
   // ====== A7: التعميم (ديناميكي حسب الصلاحية) ======
   bot.callbackQuery("broadcast", async (ctx) => {
@@ -374,9 +386,20 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
     let pushFailed = 0;
 
     if (studentBotUrl && broadcastInternalToken) {
-      // رسالة منسقة جميلة للطالب
-      const studentMessage =
-        `📢 *تعميم جديد*\n\n` +
+      // رسالة منسقة جميلة للطالب (HTML بدل Markdown — أكثر تسامحاً)
+      // ملاحظة: نتجنب Markdown لأنه يفشل مع الرموز العربية والـ box-drawing
+      const studentMessageHtml =
+        `📢 <b>تعميم جديد</b>\n\n` +
+        `📍 ${escapeHtml(ctxData.scope_label)}\n` +
+        `👤 من: ${escapeHtml(ctx.from.first_name || "إدارة")}\n` +
+        `📅 ${new Date().toLocaleString("ar")}\n\n` +
+        `━━━━━━━━━━━━━━━\n\n` +
+        `${escapeHtml(text)}\n\n` +
+        `━━━━━━━━━━━━━━━`;
+
+      // نسخة نص عادي (fallback لو فشل HTML)
+      const studentMessagePlain =
+        `📢 تعميم جديد\n\n` +
         `📍 ${ctxData.scope_label}\n` +
         `👤 من: ${ctx.from.first_name || "إدارة"}\n` +
         `📅 ${new Date().toLocaleString("ar")}\n\n` +
@@ -386,7 +409,8 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
 
       const pushPromises = recipientIds.map(async (studentId) => {
         try {
-          const resp = await fetch(`${studentBotUrl}/broadcast-push`, {
+          // محاولة 1: HTML parse mode
+          let resp = await fetch(`${studentBotUrl}/broadcast-push`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -394,20 +418,38 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
             },
             body: JSON.stringify({
               telegram_id: studentId,
-              text: studentMessage,
-              parse_mode: "Markdown",
+              text: studentMessageHtml,
+              parse_mode: "HTML",
             }),
           });
+
+          // محاولة 2: لو فشل HTML، أعد بالنص العادي (بدون parse_mode)
+          if (!resp.ok && resp.status !== 404 && resp.status !== 401) {
+            console.warn(`⚠️ [broadcast] HTML failed for ${studentId} (${resp.status}), retrying with plain text...`);
+            resp = await fetch(`${studentBotUrl}/broadcast-push`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-internal-token": broadcastInternalToken,
+              },
+              body: JSON.stringify({
+                telegram_id: studentId,
+                text: studentMessagePlain,
+                parse_mode: "",
+              }),
+            });
+          }
+
           if (resp.ok) {
             pushDelivered++;
             console.log(`✅ [broadcast] Push delivered to ${studentId}`);
           } else if (resp.status === 404) {
             pushBlocked++;
             const errBody = await resp.text().catch(() => "");
-            console.log(`🚫 [broadcast] Push blocked/not started for ${studentId}: ${errBody.substring(0, 150)}`);
+            console.log(`🚫 [broadcast] Push blocked/not started for ${studentId}: ${errBody.substring(0, 200)}`);
           } else if (resp.status === 401) {
             pushFailed++;
-            console.error(`❌ [broadcast] Push 401 Unauthorized for ${studentId} — BROADCAST_INTERNAL_TOKEN mismatch between bots!`);
+            console.error(`❌ [broadcast] Push 401 Unauthorized for ${studentId} — BROADCAST_INTERNAL_TOKEN mismatch!`);
           } else {
             pushFailed++;
             const errBody = await resp.text().catch(() => "");
@@ -418,7 +460,6 @@ export function registerBroadcastHandlers(bot: Bot, supabase: SupabaseClient): v
           console.error(`❌ [broadcast] Push network error for ${studentId}:`, e?.message?.substring(0, 100));
         }
       });
-      // مهلة 12 ثانية (أطول قليلاً من سابقتها لأن الـ fetch يأخذ وقتاً)
       await Promise.race([
         Promise.allSettled(pushPromises),
         new Promise((resolve) => setTimeout(resolve, 12000)),

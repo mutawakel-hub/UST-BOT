@@ -322,22 +322,33 @@ export default {
             });
           }
           // أرسل الرسالة عبر بوت الطالب
-          await botInstance!.api.sendMessage(body.telegram_id, body.text, {
-            parse_mode: body.parse_mode || "Markdown",
-            disable_notification: body.disable_notification || false,
-          });
+          // لو parse_mode فارغ، لا نمرره (نص عادي)
+          const sendOptions: any = {};
+          if (body.parse_mode && body.parse_mode !== "") {
+            sendOptions.parse_mode = body.parse_mode;
+          }
+          if (body.disable_notification) {
+            sendOptions.disable_notification = true;
+          }
+          await botInstance!.api.sendMessage(body.telegram_id, body.text, sendOptions);
           return new Response(JSON.stringify({ ok: true, delivered: true }), {
             headers: { "Content-Type": "application/json" },
           });
         } catch (e: any) {
           // أرجع الخطأ الفعلي دائماً — لا نخفيه
           const errMsg = String(e?.message || "");
+          // صنّف الخطأ بدقة:
+          // - blocked_or_not_started: الطالب حظر البوت أو لم يبدأ المحادثة
+          // - parse_error: فشل في parsing الرسالة (Markdown/HTML غير صالح)
+          // - telegram_error: أي خطأ آخر من Telegram
           const isBlocked = errMsg.includes("bot was blocked") || errMsg.includes("chat not found");
+          const isParseError = errMsg.includes("can't parse entities") || errMsg.includes("can't parse");
+          const errorType = isBlocked ? "blocked_or_not_started" : isParseError ? "parse_error" : "telegram_error";
           return new Response(
             JSON.stringify({
               ok: false,
-              error: isBlocked ? "blocked_or_not_started" : "telegram_error",
-              telegram_error: errMsg.substring(0, 200),
+              error: errorType,
+              telegram_error: errMsg.substring(0, 300),
               error_code: (e as any)?.error_code || null,
             }),
             { status: isBlocked ? 404 : 500, headers: { "Content-Type": "application/json" } }
