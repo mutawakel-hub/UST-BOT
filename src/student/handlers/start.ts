@@ -25,7 +25,6 @@ import {
 } from "../../shared/db";
 import {
   mainMenuKeyboard,
-  replyMainMenuKeyboard,
   collegesKeyboard,
   majorsKeyboard,
   levelsKeyboard,
@@ -77,14 +76,9 @@ export function registerStartHandlers(bot: Bot, supabase: SupabaseClient): void 
       specialty?.name || "غير محدد",
       level || 0
     ));
-    // Reply Keyboard في الأسفل + Inline Keyboard في الرسالة
     await ctx.reply(welcomeText, {
-      reply_markup: replyMainMenuKeyboard(),
-      parse_mode: "Markdown",
-    });
-    // رسالة ثانية بـ Inline Keyboard للإجراءات السريعة
-    await ctx.reply("اختر الخدمة المطلوبة:", {
       reply_markup: mainMenuKeyboard(),
+      parse_mode: "Markdown",
     });
   });
 

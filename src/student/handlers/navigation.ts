@@ -269,8 +269,7 @@ export function registerNavigationHandlers(bot: Bot, supabase: SupabaseClient): 
   bot.callbackQuery("back_to_main", async (ctx) => {
     await ctx.answerCallbackQuery();
     const welcomeText = resolveTextSync("main_menu", "welcome", TEXTS.main_menu.welcome);
-    // إرسال رسالة جديدة بـ Inline Keyboard (Reply Keyboard يبقى في الأسفل)
-    await ctx.reply(welcomeText, {
+    await ctx.editMessageText(welcomeText, {
       reply_markup: mainMenuKeyboard(),
       parse_mode: "Markdown",
     });

@@ -3,7 +3,7 @@
 // دعم: breadcrumb + عدّاد ملفات + pagination + تأكيدات
 // ============================================
 
-import { InlineKeyboard, Keyboard } from "grammy";
+import { InlineKeyboard } from "grammy";
 import {
   COLLEGES,
   getSpecialtiesByCollege,
@@ -54,33 +54,6 @@ export function mainMenuKeyboard(): InlineKeyboard {
     .row()
     .text(btnCommittee, "menu_committee")
     .text(btnContact, "menu_contact");
-}
-
-// ============================================
-// S1-Reply: Reply Keyboard للقائمة الرئيسية
-// ============================================
-// زر واحد فقط: /start
-// قابل للإخفاء (resized) — لا يأخذ مساحة إلا عند الضغط على زر القائمة في تلغرام
-// ============================================
-export function replyMainMenuKeyboard(): Keyboard {
-  return new Keyboard()
-    .text("/start")
-    .resized();
-}
-
-// ============================================
-// دالة مساعدة: الحصول على نصوص أزرار القائمة الرئيسية
-// (للمطابقة في bot.on(":text"))
-// ============================================
-export function getMainMenuButtonTexts(): string[] {
-  return [
-    resolveTextSync("main_menu", "btn_colleges", TEXTS.main_menu.btn_colleges),
-    resolveTextSync("main_menu", "btn_search", TEXTS.main_menu.btn_search),
-    resolveTextSync("main_menu", "btn_leaderboard", TEXTS.main_menu.btn_leaderboard),
-    resolveTextSync("main_menu", "btn_profile", TEXTS.main_menu.btn_profile),
-    resolveTextSync("main_menu", "btn_contribute", TEXTS.main_menu.btn_contribute),
-    resolveTextSync("main_menu", "btn_contact", TEXTS.main_menu.btn_contact),
-  ];
 }
 
 // ============================================
