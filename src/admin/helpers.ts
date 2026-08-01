@@ -113,30 +113,38 @@ export async function getAdminUser(supabase: SupabaseClient, telegramId: number)
 
 export async function getStatistics(supabase: SupabaseClient): Promise<any> {
   try {
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    const [students, content, contributions, downloads, allContributions, broadcasts, admins, newStudents] = await Promise.all([
-      supabase.select("students", { columns: "id" }),
-      supabase.select("content", { columns: "id", filter: "is_active=eq.true" }),
-      supabase.select("contributions", { columns: "id", filter: "status=eq.pending" }),
-      supabase.select("downloads", { columns: "id" }),
-      supabase.select("contributions", { columns: "id" }),
-      supabase.select("broadcasts", { columns: "id" }),
-      supabase.select("position_holders", { columns: "id", filter: "is_active=eq.true" }),
-      supabase.select("students", { columns: "id", filter: `created_at=gte.${weekAgo}` }),
+    // نستخدم allSettled بدل all — لو فشل استعلام واحد، لا تُصفّر الباقي
+    // limit: 10000 كافٍ للعدّ (لا نحتاج البيانات الفعلية، فقط count)
+    const results = await Promise.allSettled([
+      supabase.select("students", { columns: "id", limit: 10000 }),
+      supabase.select("content", { columns: "id", filter: "is_active=eq.true", limit: 10000 }),
+      supabase.select("contributions", { columns: "id", filter: "status=eq.pending", limit: 10000 }),
+      supabase.select("downloads", { columns: "id", limit: 10000 }),
+      supabase.select("contributions", { columns: "id", limit: 10000 }),
+      supabase.select("broadcasts", { columns: "id", limit: 10000 }),
+      supabase.select("position_holders", { columns: "id", filter: "is_active=eq.true", limit: 10000 }),
+      supabase.select("students", { columns: "id", filter: `created_at=gte.${weekAgo}`, limit: 10000 }),
     ]);
+
+    // دالة مساعدة: استخرج length من نتيجة allSettled
+    const count = (r: PromiseSettledResult<any>): number => {
+      if (r.status !== "fulfilled") return 0;
+      const val = r.value;
+      return Array.isArray(val) ? val.length : 0;
+    };
+
     return {
-      total_users: Array.isArray(students) ? students.length : 0,
-      total_files: Array.isArray(content) ? content.length : 0,
-      pending_contributions: Array.isArray(contributions) ? contributions.length : 0,
-      total_downloads: Array.isArray(downloads) ? downloads.length : 0,
-      total_contributions: Array.isArray(allContributions) ? allContributions.length : 0,
-      total_broadcasts: Array.isArray(broadcasts) ? broadcasts.length : 0,
-      total_admins: Array.isArray(admins) ? admins.length : 0,
-      new_this_week: Array.isArray(newStudents) ? newStudents.length : 0,
-      active_today: 0, // يتطلب last_activity >= today — نضيفه كاستعلام منفصل
+      total_users: count(results[0]),
+      total_files: count(results[1]),
+      pending_contributions: count(results[2]),
+      total_downloads: count(results[3]),
+      total_contributions: count(results[4]),
+      total_broadcasts: count(results[5]),
+      total_admins: count(results[6]),
+      new_this_week: count(results[7]),
+      active_today: 0,
     };
   } catch (e) {
     console.error("getStatistics error:", e);
