@@ -22,6 +22,7 @@ import {
   getSubjectsBySpecialtyLevelSemester,
 } from "../../shared/data/subjects";
 import { TEXTS } from "../../shared/texts";
+import { resolveTextSync } from "../../shared/text-resolver";
 import { SupabaseClient } from "../../shared/db";
 import {
   mainMenuKeyboard,
@@ -267,7 +268,8 @@ export function registerNavigationHandlers(bot: Bot, supabase: SupabaseClient): 
   // ====== أزرار الرجوع ======
   bot.callbackQuery("back_to_main", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(TEXTS.main_menu.welcome, {
+    const welcomeText = resolveTextSync("main_menu", "welcome", TEXTS.main_menu.welcome);
+    await ctx.editMessageText(welcomeText, {
       reply_markup: mainMenuKeyboard(),
       parse_mode: "Markdown",
     });

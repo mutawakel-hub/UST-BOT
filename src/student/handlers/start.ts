@@ -16,6 +16,7 @@ import {
   getSpecialtyById,
 } from "../../shared/data/colleges";
 import { TEXTS } from "../../shared/texts";
+import { resolveTextSync } from "../../shared/text-resolver";
 import {
   SupabaseClient,
   registerStudent,
@@ -68,18 +69,17 @@ export function registerStartHandlers(bot: Bot, supabase: SupabaseClient): void 
 
     const college = getCollegeById(collegeId || 0);
     const specialty = getSpecialtyById(specialtyId || 0);
-    await ctx.reply(
-      TEXTS.main_menu.welcome_registered(
-        userState.first_name || "طالب",
-        college?.name || "غير محدد",
-        specialty?.name || "غير محدد",
-        level || 0
-      ),
-      {
-        reply_markup: mainMenuKeyboard(),
-        parse_mode: "Markdown",
-    }
-    );
+    // استخدم التخصيص إن وُجد
+    const welcomeText = resolveTextSync("main_menu", "welcome_registered", TEXTS.main_menu.welcome_registered(
+      userState.first_name || "طالب",
+      college?.name || "غير محدد",
+      specialty?.name || "غير محدد",
+      level || 0
+    ));
+    await ctx.reply(welcomeText, {
+      reply_markup: mainMenuKeyboard(),
+      parse_mode: "Markdown",
+    });
   });
 
   // ====== شاشة التسجيل الإلزامي ======

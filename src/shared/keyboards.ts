@@ -17,6 +17,7 @@ import {
   type Subject,
 } from "./data/subjects";
 import { TEXTS, ADMIN_TEXTS } from "./texts";
+import { resolveTextSync } from "./text-resolver";
 
 // الحد الأقصى للأزرار في الصفحة الواحدة
 const PAGE_SIZE = 6;
@@ -31,18 +32,28 @@ export function breadcrumb(...parts: string[]): string {
 // ============================================
 // S1: قائمة الطالب الرئيسية (مع زر المساهمة)
 // ============================================
+// يستخدم resolveTextSync لقراءة التخصيصات من DB
+// لو لم يوجد تخصيص، يرجع القيمة الافتراضية من TEXTS
 export function mainMenuKeyboard(): InlineKeyboard {
+  const btnColleges = resolveTextSync("main_menu", "btn_colleges", TEXTS.main_menu.btn_colleges);
+  const btnSearch = resolveTextSync("main_menu", "btn_search", TEXTS.main_menu.btn_search);
+  const btnLeaderboard = resolveTextSync("main_menu", "btn_leaderboard", TEXTS.main_menu.btn_leaderboard);
+  const btnProfile = resolveTextSync("main_menu", "btn_profile", TEXTS.main_menu.btn_profile);
+  const btnContribute = resolveTextSync("main_menu", "btn_contribute", TEXTS.main_menu.btn_contribute);
+  const btnCommittee = resolveTextSync("main_menu", "btn_committee", TEXTS.main_menu.btn_committee);
+  const btnContact = resolveTextSync("main_menu", "btn_contact", TEXTS.main_menu.btn_contact);
+
   return new InlineKeyboard()
-    .text(TEXTS.main_menu.btn_colleges, "menu_colleges")
-    .text(TEXTS.main_menu.btn_search, "menu_search")
+    .text(btnColleges, "menu_colleges")
+    .text(btnSearch, "menu_search")
     .row()
-    .text(TEXTS.main_menu.btn_leaderboard, "menu_leaderboard")
-    .text(TEXTS.main_menu.btn_profile, "menu_profile")
+    .text(btnLeaderboard, "menu_leaderboard")
+    .text(btnProfile, "menu_profile")
     .row()
-    .text(TEXTS.main_menu.btn_contribute, "menu_contribute_main")
+    .text(btnContribute, "menu_contribute_main")
     .row()
-    .text(TEXTS.main_menu.btn_committee, "menu_committee")
-    .text(TEXTS.main_menu.btn_contact, "menu_contact");
+    .text(btnCommittee, "menu_committee")
+    .text(btnContact, "menu_contact");
 }
 
 // ============================================
