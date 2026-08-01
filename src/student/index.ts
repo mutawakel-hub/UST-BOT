@@ -26,6 +26,7 @@ import { SupabaseClient } from "../shared/db";
 import { initCallbackSigning } from "../shared/callback-signing";
 import { initSessionStore } from "./state";
 import { initSubjectCache, ensureSubjectCacheLoaded } from "../shared/data/subjects";
+import { initTextResolver, ensureTextCacheLoaded } from "../shared/text-resolver";
 import { BOT_VERSION } from "../shared/version";
 
 // Handler registrations
@@ -52,6 +53,7 @@ export function createStudentBot(
   // تهيئة SessionStore و callback signing
   initSessionStore(sessionsKv);
   initSubjectCache(supabase);
+  initTextResolver(supabase);
   if (callbackSecret) {
     initCallbackSigning(callbackSecret);
   }
@@ -305,8 +307,9 @@ export default {
       // ====== Webhook endpoint ======
       if (url.pathname === "/webhook") {
         try {
-          // Pre-load subject cache before processing (يضمن أن الدوال المتزامنة تجد بيانات)
+          // Pre-load subject cache + text cache before processing
           await ensureSubjectCacheLoaded();
+          await ensureTextCacheLoaded();
           const callback = webhookCallback(botInstance, "cloudflare-mod");
           return await callback(request);
         } catch (err) {

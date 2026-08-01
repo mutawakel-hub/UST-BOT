@@ -42,6 +42,7 @@ import {
 } from "../../shared/data/admins";
 import { getSubjectById } from "../../shared/data/subjects";
 import { invalidateSubjectCache } from "../../shared/data/subjects";
+import { saveCustomText, resetCustomText } from "../../shared/text-resolver";
 import { formatContentCard } from "../../shared/texts";
 import { validateUploadedFile } from "../../shared/storage";
 import { importSingleFile, importLoopKeyboard } from "./content_import";
@@ -454,11 +455,83 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
     }
 
     // استقبال نص مخصص جديد
-    if (session.awaiting_text_value) {
-      const screenKey = session.awaiting_text_edit!;
+    // =====================================================
+    // استقبال نص مخصص (أزرار + رسائل) — إعدادات النظام
+    // =====================================================
+    if (session.awaiting_text_value && session.awaiting_text_edit) {
+      const editKey = session.awaiting_text_edit;
+      const newText = ctx.message.text.trim();
+
       session.awaiting_text_value = false;
       session.awaiting_text_edit = undefined;
-      customTexts.set(screenKey, ctx.message.text);
+      await saveSession(session);
+
+      // حدد نوع التعديل: btn:IDX أو msg:IDX
+      if (editKey.startsWith("btn:") || editKey.startsWith("msg:")) {
+        const [type, idxStr] = editKey.split(":");
+        const idx = parseInt(idxStr);
+
+        // استورد القوائم من system_settings
+        const { EDITABLE_BUTTONS, EDITABLE_MESSAGES } = await import("./system_settings");
+        const item = type === "btn"
+          ? EDITABLE_BUTTONS[idx]
+          : EDITABLE_MESSAGES[idx];
+
+        if (!item) {
+          await ctx.reply("⚠️ عنصر غير موجود.");
+          return;
+        }
+
+        // استعادة الافتراضي
+        if (newText === "-") {
+          const ok = await resetCustomText(supabase, item.screen_key, item.text_key);
+          if (ok) {
+            await ctx.reply(
+              `✅ *تم استعادة النص الافتراضي.*\n\n📝 ${item.label}\n📄 \`${item.default}\``,
+              {
+                reply_markup: new InlineKeyboard().text(
+                  type === "btn" ? "🔙 إدارة الأزرار" : "🔙 إدارة الرسائل",
+                  type === "btn" ? "settings_buttons" : "settings_messages"
+                ),
+                parse_mode: "Markdown",
+              }
+            );
+          } else {
+            await ctx.reply("⚠️ فشل استعادة الافتراضي.");
+          }
+          return;
+        }
+
+        // حفظ التخصيص الجديد
+        const positionId = await getAdminPrimaryPositionId(supabase, ctx.from.id);
+        const ok = await saveCustomText(supabase, {
+          screen_key: item.screen_key,
+          text_key: item.text_key,
+          default_value: item.default,
+          custom_value: newText,
+          updated_by_position_id: positionId,
+        });
+
+        if (ok) {
+          await ctx.reply(
+            `✅ *تم حفظ التخصيص بنجاح!*\n\n📝 ${item.label}\n📄 \`${newText}\`\n\n` +
+            `_سيظهر للطلاب في الطلبات القادمة._`,
+            {
+              reply_markup: new InlineKeyboard().text(
+                type === "btn" ? "🔙 إدارة الأزرار" : "🔙 إدارة الرسائل",
+                type === "btn" ? "settings_buttons" : "settings_messages"
+              ),
+              parse_mode: "Markdown",
+            }
+          );
+        } else {
+          await ctx.reply("⚠️ فشل حفظ التخصيص.");
+        }
+        return;
+      }
+
+      // النمط القديم (customTexts Map — deprecated)
+      customTexts.set(editKey, ctx.message.text);
       await ctx.reply(ADMIN_TEXTS.customize.saved(ctx.message.text), {
         reply_markup: new InlineKeyboard().text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
         parse_mode: "Markdown",
