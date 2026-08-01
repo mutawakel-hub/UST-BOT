@@ -26,7 +26,6 @@ import { resolveTextSync } from "../../shared/text-resolver";
 import { SupabaseClient } from "../../shared/db";
 import {
   mainMenuKeyboard,
-  replyMainMenuKeyboard,
   collegesKeyboard,
   majorsKeyboard,
   levelsKeyboard,
@@ -34,7 +33,6 @@ import {
   subjectsKeyboard,
   subjectMenuKeyboard,
   breadcrumb,
-  getMainMenuButtonTexts,
 } from "../../shared/keyboards";
 import { getUserState } from "../state";
 import { showFilesList } from "./files";
@@ -43,118 +41,6 @@ import { showFilesList } from "./files";
 const FALLBACK_PDF_URL = "https://ust-pdf-server.atow73768.workers.dev/sample.pdf";
 
 export function registerNavigationHandlers(bot: Bot, supabase: SupabaseClient): void {
-  // ====== Reply Keyboard: التقاط أزرار القائمة الرئيسية ======
-  // عند ضغط زر Reply Keyboard، يُرسل نص الزر كرسالة
-  // نطابقه مع نصوص الأزرار المخصصة (من text-resolver)
-  bot.on(":text", async (ctx, next) => {
-    const text = ctx.message.text?.trim();
-    if (!text) return next();
-
-    const [btnColleges, btnSearch, btnLeaderboard, btnProfile, btnContribute, btnContact] =
-      getMainMenuButtonTexts();
-
-    // 🔍 بحث
-    if (text === btnSearch) {
-      const userState = await getUserState(ctx.from.id, ctx.from.first_name);
-      userState.awaiting_search = true;
-      const searchIntro = resolveTextSync("search", "intro", TEXTS.search.intro);
-      await ctx.reply(searchIntro, {
-        reply_markup: new InlineKeyboard().text(
-          resolveTextSync("navigation", "back_to_main", TEXTS.navigation.back_to_main),
-          "back_to_main"
-        ),
-        parse_mode: "Markdown",
-      });
-      return;
-    }
-
-    // 🌟 إحسان علمي
-    if (text === btnContribute) {
-      // توجيه لنفس callback الموجود
-      await ctx.reply(TEXTS.contribution_main.intro, {
-        reply_markup: new InlineKeyboard()
-          .text("➕ قدم إحسانًا", "contribute_main_start")
-          .row()
-          .text(TEXTS.navigation.back_to_main, "back_to_main"),
-        parse_mode: "Markdown",
-      });
-      return;
-    }
-
-    // 🏆 روّاد الإحسان
-    if (text === btnLeaderboard) {
-      await ctx.reply(TEXTS.leaderboard.title, {
-        reply_markup: new InlineKeyboard()
-          .text(TEXTS.leaderboard.btn_current, "leader_current")
-          .text(TEXTS.leaderboard.btn_archive, "leader_archive")
-          .row()
-          .text(TEXTS.navigation.back_to_main, "back_to_main"),
-        parse_mode: "Markdown",
-      });
-      return;
-    }
-
-    // 👤 حسابي
-    if (text === btnProfile) {
-      // محاكاة callback menu_profile
-      const userState = await getUserState(ctx.from.id, ctx.from.first_name);
-      // عرض ملف شخصي مبسّط
-      const name = userState.first_name || "طالب";
-      const stats = {
-        total_downloads: userState.total_downloads || 0,
-        accepted_contributions: userState.accepted_contributions || 0,
-        pending_contributions: 0,
-        total_points: 0,
-        rank: 0,
-        current_college: "",
-        current_specialty: "",
-        current_level: 0,
-      };
-      await ctx.reply(
-        TEXTS.profile.title(name) + TEXTS.profile.stats(stats),
-        {
-          reply_markup: new InlineKeyboard()
-            .text(TEXTS.profile.btn_my_contributions, "my_contributions")
-            .text(TEXTS.profile.btn_change_major, "change_major")
-            .row()
-            .text(TEXTS.profile.btn_back, "back_to_main"),
-          parse_mode: "Markdown",
-        }
-      );
-      return;
-    }
-
-    // 📞 تواصل معنا
-    if (text === btnContact) {
-      await ctx.reply(
-        "📞 *تواصل معنا*\n\n" +
-        "📧 البريد: support@ust.edu.ye\n" +
-        "💬 تيليجرام: @ust_support\n\n" +
-        "_نحن هنا لمساعدتك!_",
-        {
-          reply_markup: new InlineKeyboard().text(
-            TEXTS.navigation.back_to_main, "back_to_main"
-          ),
-          parse_mode: "Markdown",
-        }
-      );
-      return;
-    }
-
-    // 🏛 الكليات
-    if (text === btnColleges) {
-      const bc = breadcrumb("🏛 الكليات");
-      await ctx.reply(`${bc}\n\n${TEXTS.choose_college.title}${TEXTS.choose_college.footer}`, {
-        reply_markup: collegesKeyboard(0),
-        parse_mode: "Markdown",
-      });
-      return;
-    }
-
-    // لو لم يطابق أي زر → مرّر للـ handlers التالية
-    return next();
-  });
-
   // ====== S2: اختيار الكلية (Inline Keyboard) ======
   bot.callbackQuery("menu_colleges", async (ctx) => {
     await ctx.answerCallbackQuery();

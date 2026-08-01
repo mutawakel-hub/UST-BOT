@@ -59,22 +59,12 @@ export function mainMenuKeyboard(): InlineKeyboard {
 // ============================================
 // S1-Reply: Reply Keyboard للقائمة الرئيسية
 // ============================================
-// يظهر في أسفل الشاشة عند /start فقط
-// الأزرار تستخدم النص المخصص (من text-resolver) أو الافتراضي
-// عند الضغط على زر، يُرسل نص الزر كرسالة → bot.hears() يلتقطه
+// زر واحد فقط: /start
+// قابل للإخفاء (resized) — لا يأخذ مساحة إلا عند الضغط على زر القائمة في تلغرام
 // ============================================
 export function replyMainMenuKeyboard(): Keyboard {
-  const btnColleges = resolveTextSync("main_menu", "btn_colleges", TEXTS.main_menu.btn_colleges);
-  const btnSearch = resolveTextSync("main_menu", "btn_search", TEXTS.main_menu.btn_search);
-  const btnLeaderboard = resolveTextSync("main_menu", "btn_leaderboard", TEXTS.main_menu.btn_leaderboard);
-  const btnProfile = resolveTextSync("main_menu", "btn_profile", TEXTS.main_menu.btn_profile);
-  const btnContribute = resolveTextSync("main_menu", "btn_contribute", TEXTS.main_menu.btn_contribute);
-  const btnContact = resolveTextSync("main_menu", "btn_contact", TEXTS.main_menu.btn_contact);
-
   return new Keyboard()
-    .text(btnColleges).text(btnSearch).row()
-    .text(btnLeaderboard).text(btnProfile).row()
-    .text(btnContribute).text(btnContact)
+    .text("/start")
     .resized();
 }
 
