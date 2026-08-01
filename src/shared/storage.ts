@@ -92,17 +92,42 @@ export async function uploadFileToStorageChannel(
 }
 
 // ============================================
-// إرسال ملف لمستخدم عبر forwardMessage (الأسرع)
+// نسخ ملف لمستخدم عبر copyMessage (بدون "Forwarded from")
 // ============================================
-// forwardMessage ينسخ الرسالة من قناة التخزين للمستخدم
+// copyMessage ينسخ الرسالة من قناة التخزين للمستخدم
 // المزايا:
-//   - لا يستهلك bandwidth من البوت
-//   - سريع جداً
-//   - يحافظ على caption الأصلي
+//   - لا يُظهر "Forwarded from" (عكس forwardMessage)
+//   - يسمح بتعيين caption جديد (نظيف بدون معلومات القناة)
+//   - سريع (لا يستهلك bandwidth)
 //
 // العيوب:
 //   - يحتاج message_id صالح
 //   - لو حُذفت الرسالة من القناة، يفشل
+// ============================================
+export async function copyFileToUser(
+  bot: Bot,
+  chatId: number,
+  fromChatId: string,
+  messageId: number,
+  caption?: string,
+  parseMode?: "Markdown" | "HTML"
+): Promise<void> {
+  const options: any = {};
+  if (caption) {
+    options.caption = caption;
+    if (parseMode) {
+      options.parse_mode = parseMode;
+    }
+  }
+  await bot.api.copyMessage(chatId, fromChatId, messageId, options);
+}
+
+// ============================================
+// إرسال ملف لمستخدم عبر forwardMessage (الأقل تفضيلاً)
+// ============================================
+// forwardMessage ينسخ الرسالة من قناة التخزين للمستخدم
+// ⚠️ يُظهر "Forwarded from" + يحافظ على caption الأصلي (غير مرغوب)
+// يُستخدم فقط كـ fallback أخير
 // ============================================
 export async function forwardFileToUser(
   bot: Bot,
@@ -146,11 +171,12 @@ export async function sendFileToUser(
 // إرسال ملف للمستخدم مع fallback تلقائي
 // ============================================
 // نمط الاستخدام:
-//   1. sendDocument بـ file_id (الأفضل — يرسل الملف كملف جديد بدون إشارة للقناة)
-//   2. لو فشل، جرّب forwardMessage (fallback — قد يظهر "Forwarded from")
-//   3. لو فشل الاثنان، أبلغ المستخدم بوجود خطأ
+//   1. sendDocument بـ file_id (يرسل كملف جديد بدون إشارة للقناة)
+//   2. copyMessage (ينسخ بدون "Forwarded from" + caption نظيف)
+//   3. forwardMessage (fallback أخير — قد يظهر "Forwarded from")
+//   4. لو فشل الكل، أبلغ المستخدم بوجود خطأ
 //
-// ملاحظة: نتجنب forwardMessage أولاً لأنه ينسخ caption القناة الأصلي
+// ملاحظة: نتجنب forwardMessage لأنه ينسخ caption القناة الأصلي
 // (الذي يحوي المُحسِن + التاريخ + الحجم) ويظهر "Forwarded from" للطالب
 // ============================================
 export async function deliverFileToUser(
@@ -167,19 +193,33 @@ export async function deliverFileToUser(
     parseMode?: "Markdown" | "HTML";
     errorMessage?: string;
   }
-): Promise<{ delivered: boolean; method: "forward" | "sendDocument" | "failed"; error?: string }> {
+): Promise<{ delivered: boolean; method: "copy" | "sendDocument" | "forward" | "failed"; error?: string }> {
   // محاولة 1: sendDocument بـ file_id (يرسل كملف جديد بدون إشارة للقناة)
   if (file.fileId) {
     try {
       await sendFileToUser(bot, chatId, file.fileId, options?.caption, options?.parseMode);
       return { delivered: true, method: "sendDocument" };
     } catch (e) {
-      console.error("sendDocument failed, trying forwardMessage:", e);
+      console.error("sendDocument failed, trying copyMessage:", e);
       // استمر للمحاولة الثانية
     }
   }
 
-  // محاولة 2: forwardMessage (fallback — قد يظهر "Forwarded from")
+  // محاولة 2: copyMessage (ينسخ بدون "Forwarded from" + caption نظيف)
+  if (file.storageChannelId && file.messageId) {
+    try {
+      await copyFileToUser(
+        bot, chatId, file.storageChannelId, file.messageId,
+        options?.caption, options?.parseMode
+      );
+      return { delivered: true, method: "copy" };
+    } catch (e) {
+      console.error("copyMessage failed, trying forwardMessage:", e);
+      // استمر للمحاولة الثالثة
+    }
+  }
+
+  // محاولة 3: forwardMessage (fallback أخير — قد يظهر "Forwarded from")
   if (file.storageChannelId && file.messageId) {
     try {
       await forwardFileToUser(bot, chatId, file.storageChannelId, file.messageId);
@@ -190,7 +230,7 @@ export async function deliverFileToUser(
     }
   }
 
-  // فشل كلا المحاولتين
+  // فشل كل المحاولات
   return {
     delivered: false,
     method: "failed",
