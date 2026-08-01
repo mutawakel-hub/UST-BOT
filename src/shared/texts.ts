@@ -354,7 +354,7 @@ export const TEXTS = {
     error: "⚠️ حدث خطأ. حاول مرة أخرى لاحقاً.",
     file_sent: "✅ تم إرسال الملف بنجاح!",
     file_sent_with_caption:
-      "✅ *تم التحميل!*\n\n📄 {fileName}\n📚 {subjectName}\n\nشكراً لاستخدامك البوت. إن أعجبك المحتوى، شاركه مع زملائك!",
+      "✅ *تم التحميل!*\n\n📄 {fileName}\n📚 {subjectName}",
     mockup_pdf_caption:
       "📄 *ملف تجريبي (Mockup)*\n\nفي الإنتاج سيصلك الملف الفعلي من قناة التخزين الخاصة بالكلية.",
   },

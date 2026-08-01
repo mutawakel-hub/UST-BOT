@@ -145,10 +145,13 @@ export async function sendFileToUser(
 // ============================================
 // إرسال ملف للمستخدم مع fallback تلقائي
 // ============================================
-// نمط الاستخدام الموصى به:
-//   1. جرّب forwardMessage (الأسرع)
-//   2. لو فشل، جرّب sendDocument بـ file_id
+// نمط الاستخدام:
+//   1. sendDocument بـ file_id (الأفضل — يرسل الملف كملف جديد بدون إشارة للقناة)
+//   2. لو فشل، جرّب forwardMessage (fallback — قد يظهر "Forwarded from")
 //   3. لو فشل الاثنان، أبلغ المستخدم بوجود خطأ
+//
+// ملاحظة: نتجنب forwardMessage أولاً لأنه ينسخ caption القناة الأصلي
+// (الذي يحوي المُحسِن + التاريخ + الحجم) ويظهر "Forwarded from" للطالب
 // ============================================
 export async function deliverFileToUser(
   bot: Bot,
@@ -165,24 +168,24 @@ export async function deliverFileToUser(
     errorMessage?: string;
   }
 ): Promise<{ delivered: boolean; method: "forward" | "sendDocument" | "failed"; error?: string }> {
-  // محاولة 1: forwardMessage
-  if (file.storageChannelId && file.messageId) {
-    try {
-      await forwardFileToUser(bot, chatId, file.storageChannelId, file.messageId);
-      return { delivered: true, method: "forward" };
-    } catch (e) {
-      console.error("forwardMessage failed, falling back to sendDocument:", e);
-      // استمر للمحاولة الثانية
-    }
-  }
-
-  // محاولة 2: sendDocument بـ file_id
+  // محاولة 1: sendDocument بـ file_id (يرسل كملف جديد بدون إشارة للقناة)
   if (file.fileId) {
     try {
       await sendFileToUser(bot, chatId, file.fileId, options?.caption, options?.parseMode);
       return { delivered: true, method: "sendDocument" };
     } catch (e) {
-      console.error("sendDocument also failed:", e);
+      console.error("sendDocument failed, trying forwardMessage:", e);
+      // استمر للمحاولة الثانية
+    }
+  }
+
+  // محاولة 2: forwardMessage (fallback — قد يظهر "Forwarded from")
+  if (file.storageChannelId && file.messageId) {
+    try {
+      await forwardFileToUser(bot, chatId, file.storageChannelId, file.messageId);
+      return { delivered: true, method: "forward" };
+    } catch (e) {
+      console.error("forwardMessage also failed:", e);
       // استمر للفشل
     }
   }
