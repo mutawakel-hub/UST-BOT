@@ -29,6 +29,7 @@ import { initRbac } from "../shared/rbac";
 import { initCallbackSigning } from "../shared/callback-signing";
 import { initSessionStore } from "./state";
 import { initSubjectCache, invalidateSubjectCache, ensureSubjectCacheLoaded } from "../shared/data/subjects";
+import { BOT_VERSION } from "../shared/version";
 
 // Handler registrations
 import { registerDashboardHandlers } from "./handlers/dashboard";
@@ -49,6 +50,7 @@ import { registerHonorHandlers } from "./handlers/honors";
 import { registerMessageHandlers } from "./handlers/messages";
 import { runEscalationCheck, getAdminPerformanceReport, registerEscalationHandlers } from "./handlers/escalation";
 import { registerIhsanManagementHandlers } from "./handlers/ihsan_management";
+import { registerSystemSettingsHandlers } from "./handlers/system_settings";
 
 // ============================================
 // إنشاء البوت
@@ -90,6 +92,7 @@ export function createAdminBot(
   registerMessageHandlers(bot, supabase);
   registerEscalationHandlers(bot, supabase);
   registerIhsanManagementHandlers(bot, supabase);
+  registerSystemSettingsHandlers(bot, supabase);
 
   // معالجة الأخطاء الشاملة
   bot.catch(async (err) => {
@@ -164,7 +167,7 @@ export default {
             status: "ok",
             bot: env.BOT_USERNAME,
             environment: env.ENVIRONMENT,
-            version: "3.3",
+            version: BOT_VERSION,
             supabase: supabaseClient ? "connected" : "missing",
             kv_sessions: env.SESSIONS ? "bound" : "missing",
             kv_cache: env.CACHE ? "bound" : "missing",

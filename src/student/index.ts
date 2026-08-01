@@ -26,6 +26,7 @@ import { SupabaseClient } from "../shared/db";
 import { initCallbackSigning } from "../shared/callback-signing";
 import { initSessionStore } from "./state";
 import { initSubjectCache, ensureSubjectCacheLoaded } from "../shared/data/subjects";
+import { BOT_VERSION } from "../shared/version";
 
 // Handler registrations
 import { registerStartHandlers } from "./handlers/start";
@@ -154,7 +155,7 @@ export default {
             status: "ok",
             bot: env.BOT_USERNAME,
             environment: env.ENVIRONMENT,
-            version: "3.0",
+            version: BOT_VERSION,
             supabase: "connected",
             kv_sessions: env.SESSIONS ? "bound" : "missing",
             kv_cache: env.CACHE ? "bound" : "missing",

@@ -686,6 +686,46 @@ export const ADMIN_TEXTS = {
     back_to_positions: "🔙 المناصب",
     back_to_channels: "🔙 قنوات اللجان",
     back_to_academic: "🔙 النظام الأكاديمي",
+    back_to_settings: "🔙 إعدادات النظام",
+  },
+
+  // ====== شاشة: إعدادات النظام ======
+  system_settings: {
+    title: "⚙️ *إعدادات النظام*\n\nاختر القسم:",
+    btn_interface: "📝 إدارة واجهة البوت",
+    btn_system_info: "ℹ️ معلومات النظام",
+    coming_soon: "🚧 _هذا القسم قيد التطوير وسيكون متاحاً قريباً._",
+    // معلومات النظام
+    info_title: "ℹ️ *معلومات النظام*\n\n",
+    info_content: (s: {
+      version: string;
+      version_date: string;
+      total_students: number;
+      total_admins: number;
+      total_content: number;
+      total_downloads: number;
+      total_contributions: number;
+      total_broadcasts: number;
+      pending_contributions: number;
+      new_this_week: number;
+      db_size: string;
+      last_update: string;
+      status: string;
+    }) =>
+      `📌 *إصدار البوت:* ${s.version}\n` +
+      `📅 *تاريخ الإصدار:* ${s.version_date}\n\n` +
+      `👨‍🎓 *عدد الطلاب:* ${s.total_students}\n` +
+      `👨‍💼 *عدد المسؤولين:* ${s.total_admins}\n` +
+      `📚 *عدد المحتويات:* ${s.total_content}\n` +
+      `📥 *عدد التحميلات:* ${s.total_downloads}\n` +
+      `🌟 *إجمالي الإحسانات:* ${s.total_contributions}\n` +
+      `📢 *إجمالي التعميمات:* ${s.total_broadcasts}\n` +
+      `⏳ *إحسانات معلقة:* ${s.pending_contributions}\n` +
+      `🆕 *طلاب جدد هذا الأسبوع:* ${s.new_this_week}\n\n` +
+      `🗄 *حجم قاعدة البيانات:* ${s.db_size}\n` +
+      `🕒 *آخر تحديث:* ${s.last_update}\n` +
+      `🟢 *حالة النظام:* ${s.status}`,
+    btn_refresh: "🔄 تحديث",
   },
 
   // ====== شاشة: إدارة النظام الأكاديمي ======
