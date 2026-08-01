@@ -466,16 +466,14 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
       session.awaiting_text_edit = undefined;
       await saveSession(session);
 
-      // حدد نوع التعديل: btn:IDX أو msg:IDX
-      if (editKey.startsWith("btn:") || editKey.startsWith("msg:")) {
+      // حدد نوع التعديل: item:IDX (موحّد) أو btn:IDX/msg:IDX (قديم)
+      if (editKey.startsWith("item:") || editKey.startsWith("btn:") || editKey.startsWith("msg:")) {
         const [type, idxStr] = editKey.split(":");
         const idx = parseInt(idxStr);
 
         // استورد القوائم من system_settings
-        const { EDITABLE_BUTTONS, EDITABLE_MESSAGES } = await import("./system_settings");
-        const item = type === "btn"
-          ? EDITABLE_BUTTONS[idx]
-          : EDITABLE_MESSAGES[idx];
+        const { ALL_EDITABLE_ITEMS } = await import("./system_settings");
+        const item = ALL_EDITABLE_ITEMS[idx];
 
         if (!item) {
           await ctx.reply("⚠️ عنصر غير موجود.");
@@ -487,12 +485,9 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
           const ok = await resetCustomText(supabase, item.screen_key, item.text_key);
           if (ok) {
             await ctx.reply(
-              `✅ *تم استعادة النص الافتراضي.*\n\n📝 ${item.label}\n📄 \`${item.default}\``,
+              `✅ *تم استعادة النص الافتراضي.*\n\n📝 ${item.label}\n📄 \`${item.default.substring(0, 50)}\``,
               {
-                reply_markup: new InlineKeyboard().text(
-                  type === "btn" ? "🔙 إدارة الأزرار" : "🔙 إدارة الرسائل",
-                  type === "btn" ? "settings_buttons" : "settings_messages"
-                ),
+                reply_markup: new InlineKeyboard().text("🔙 إدارة الواجهة", "settings_interface"),
                 parse_mode: "Markdown",
               }
             );
@@ -514,13 +509,10 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
 
         if (ok) {
           await ctx.reply(
-            `✅ *تم حفظ التخصيص بنجاح!*\n\n📝 ${item.label}\n📄 \`${newText}\`\n\n` +
+            `✅ *تم حفظ التخصيص بنجاح!*\n\n📝 ${item.label}\n📄 \`${newText.substring(0, 50)}\`\n\n` +
             `_سيظهر للطلاب في الطلبات القادمة._`,
             {
-              reply_markup: new InlineKeyboard().text(
-                type === "btn" ? "🔙 إدارة الأزرار" : "🔙 إدارة الرسائل",
-                type === "btn" ? "settings_buttons" : "settings_messages"
-              ),
+              reply_markup: new InlineKeyboard().text("🔙 إدارة الواجهة", "settings_interface"),
               parse_mode: "Markdown",
             }
           );
