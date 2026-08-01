@@ -939,3 +939,126 @@ export function normalizeSubjectName(name: string): string {
     .trim()
     .toLowerCase();
 }
+
+// ============================================
+// دوال دعوات المسؤولين (Admin Invitations)
+// ============================================
+
+// توليد token عشوائي آمن
+export function generateInviteToken(): string {
+  const chars = "0123456789abcdef";
+  let token = "";
+  for (let i = 0; i < 32; i++) {
+    token += chars[Math.floor(Math.random() * 16)];
+  }
+  return token;
+}
+
+// إنشاء دعوة جديدة
+export async function createInvitation(
+  client: SupabaseClient,
+  data: {
+    token: string;
+    role: "central" | "college" | "level";
+    custom_name?: string | null;
+    college_id?: number | null;
+    specialty_id?: number | null;
+    level_num?: number | null;
+    position_id?: string | null;
+    invited_by_telegram_id: number;
+    invited_by_position_id?: string | null;
+  }
+): Promise<number | null> {
+  try {
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const result = await client.insert("admin_invitations", {
+      token: data.token,
+      role: data.role,
+      custom_name: data.custom_name || null,
+      college_id: data.college_id || null,
+      specialty_id: data.specialty_id || null,
+      level_num: data.level_num || null,
+      position_id: data.position_id || null,
+      invited_by_telegram_id: data.invited_by_telegram_id,
+      invited_by_position_id: data.invited_by_position_id || null,
+      status: "pending",
+      expires_at: expiresAt,
+    }) as any;
+    return result?.id || null;
+  } catch (e) {
+    console.error("createInvitation error:", e);
+    return null;
+  }
+}
+
+// قراءة دعوة بالـ token
+export async function getInvitationByToken(
+  client: SupabaseClient,
+  token: string
+): Promise<any | null> {
+  try {
+    const result = await client.select("admin_invitations", {
+      columns: "id,token,role,custom_name,college_id,specialty_id,level_num,position_id,invited_by_telegram_id,invited_by_position_id,status,accepted_by_telegram_id,accepted_at,expires_at,created_at",
+      filter: `token=eq.${token}`,
+      single: true,
+    });
+    const inv = Array.isArray(result) ? result[0] : result;
+    return inv || null;
+  } catch (e) {
+    console.error("getInvitationByToken error:", e);
+    return null;
+  }
+}
+
+// قبول دعوة
+export async function acceptInvitation(
+  client: SupabaseClient,
+  invitationId: number,
+  acceptedByTelegramId: number
+): Promise<boolean> {
+  try {
+    await client.update("admin_invitations", {
+      status: "accepted",
+      accepted_by_telegram_id: acceptedByTelegramId,
+      accepted_at: new Date().toISOString(),
+    }, `id=eq.${invitationId}`);
+    return true;
+  } catch (e) {
+    console.error("acceptInvitation error:", e);
+    return false;
+  }
+}
+
+// إلغاء دعوة (revoke)
+export async function revokeInvitation(
+  client: SupabaseClient,
+  invitationId: number
+): Promise<boolean> {
+  try {
+    await client.update("admin_invitations", {
+      status: "revoked",
+    }, `id=eq.${invitationId}`);
+    return true;
+  } catch (e) {
+    console.error("revokeInvitation error:", e);
+    return false;
+  }
+}
+
+// قائمة الدعوات المعلّقة
+export async function getPendingInvitations(
+  client: SupabaseClient
+): Promise<any[]> {
+  try {
+    const result = await client.select("admin_invitations", {
+      columns: "id,token,role,custom_name,college_id,specialty_id,level_num,position_id,status,expires_at,created_at",
+      filter: "status=eq.pending",
+      order: "created_at.desc",
+      limit: 20,
+    });
+    return Array.isArray(result) ? result : [];
+  } catch (e) {
+    console.error("getPendingInvitations error:", e);
+    return [];
+  }
+}

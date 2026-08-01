@@ -23,7 +23,7 @@
 //   handlers/messages.ts        — :text, :document, :photo
 // ============================================
 
-import { Bot, webhookCallback } from "grammy";
+import { Bot, webhookCallback, InlineKeyboard } from "grammy";
 import { SupabaseClient } from "../shared/db";
 import { initRbac } from "../shared/rbac";
 import { initCallbackSigning } from "../shared/callback-signing";
@@ -95,6 +95,254 @@ export function createAdminBot(
   registerEscalationHandlers(bot, supabase);
   registerIhsanManagementHandlers(bot, supabase);
   registerSystemSettingsHandlers(bot, supabase);
+
+  // ============================================
+  // التقاط دعوات المسؤولين عبر deep linking
+  // /start invite_TOKEN → يعرض شاشة قبول الدعوة
+  // ============================================
+  bot.command("start", async (ctx) => {
+    const args = ctx.match as string || "";
+    if (args.startsWith("invite_")) {
+      const token = args.substring(7); // إزالة "invite_"
+      const { getInvitationByToken, acceptInvitation } = await import("../shared/db");
+      const { ensureLevelRepPosition } = await import("./helpers");
+      const { getCollegeById, getSpecialtyById } = await import("../shared/data/colleges");
+      const { invalidateUserPermissions } = await import("../shared/rbac");
+
+      let invitation: any = null;
+      try {
+        invitation = await getInvitationByToken(supabase, token);
+      } catch (e) {
+        console.error("Failed to fetch invitation:", e);
+      }
+
+      if (!invitation) {
+        await ctx.reply("⚠️ *الدعوة غير موجودة* أو تم استخدامها بالفعل.", { parse_mode: "Markdown" });
+        return;
+      }
+
+      if (invitation.status !== "pending") {
+        const statusLabel = invitation.status === "accepted" ? "مقبولة" :
+                            invitation.status === "revoked" ? "ملغاة" : "منتهية";
+        await ctx.reply(`⚠️ هذه الدعوة *${statusLabel}* ولا يمكن استخدامها.`, { parse_mode: "Markdown" });
+        return;
+      }
+
+      // تحقق من انتهاء الصلاحية
+      if (new Date(invitation.expires_at) < new Date()) {
+        await ctx.reply("⚠️ انتهت صلاحية هذه الدعوة (أكثر من 7 أيام).", { parse_mode: "Markdown" });
+        return;
+      }
+
+      // عرض تفاصيل الدعوة + زر القبول/الرفض
+      const roleLabel = invitation.role === "central" ? "🛡 مسؤول مركزي" :
+                        invitation.role === "college" ? "🏛 مسؤول كلية" :
+                        "📊 مندوب مستوى";
+
+      let scopeLabel = "";
+      if (invitation.role === "college" && invitation.college_id) {
+        scopeLabel = `\n🏛 الكلية: ${getCollegeById(invitation.college_id)?.name || ""}`;
+      } else if (invitation.role === "level" && invitation.specialty_id) {
+        const spec = getSpecialtyById(invitation.specialty_id);
+        scopeLabel = `\n📚 التخصص: ${spec?.name || ""}\n📊 المستوى: ${invitation.level_num}`;
+      }
+
+      const inviteName = invitation.custom_name ? `\n👤 الاسم: ${invitation.custom_name}` : "";
+
+      await ctx.reply(
+        `🎉 *لديك دعوة لتصبح مسؤولاً!*\n\n` +
+        `🎭 الدور: ${roleLabel}${inviteName}${scopeLabel}\n\n` +
+        `هل تقبل الدعوة؟`,
+        {
+          reply_markup: new InlineKeyboard()
+            .text("✅ قبول", `accept_invite_${invitation.id}`)
+            .text("❌ رفض", `reject_invite_${invitation.id}`),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    // /start عادي → عرض لوحة الإدارة
+    const { getUserPermissions } = await import("../shared/rbac");
+    const { buildDynamicDashboard, getPendingCount, getRoleLabel } = await import("./helpers");
+    const { getOrCreateSession } = await import("./state");
+
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.positions.length && !perms.is_central) {
+      await ctx.reply(
+        "⚠️ *ليست لديك صلاحية الوصول لبوت الإدارة.*\n\n" +
+        "لو تمت دعوتك كمسؤول، اضغط رابط الدعوة الذي وصلك.",
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
+
+    const pendingCount = await getPendingCount(supabase);
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const roleLabel = getRoleLabel(perms);
+
+    await ctx.reply(
+      `🛡 *لوحة الإدارة*\n\n👤 *${ctx.from.first_name || "مسؤول"}*\n🎭 ${roleLabel}\n\n📥 الإحسانات المعلقة: *${pendingCount}*\n\nاختر الإجراء المطلوب:`,
+      {
+        reply_markup: buildDynamicDashboard(perms, pendingCount),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // ============================================
+  // قبول الدعوة
+  // ============================================
+  bot.callbackQuery(/^accept_invite_(\d+)$/, async (ctx) => {
+    const invitationId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery({ text: "✅ جارٍ القبول..." });
+
+    const { getInvitationByToken, acceptInvitation } = await import("../shared/db");
+    const { ensureLevelRepPosition, writePositionAuditLog, notifyNewAdmin } = await import("./helpers");
+    const { getCollegeById, getSpecialtyById } = await import("../shared/data/colleges");
+    const { invalidateUserPermissions } = await import("../shared/rbac");
+
+    // اقرأ الدعوة
+    let invitation: any = null;
+    try {
+      const result = await supabase.select("admin_invitations", {
+        filter: `id=eq.${invitationId}`,
+        single: true,
+      });
+      invitation = Array.isArray(result) ? result[0] : result;
+    } catch (e) {
+      console.error("Failed to fetch invitation:", e);
+    }
+
+    if (!invitation || invitation.status !== "pending") {
+      await ctx.editMessageText("⚠️ الدعوة غير صالحة أو تم استخدامها.");
+      return;
+    }
+
+    // تحقق من انتهاء الصلاحية
+    if (new Date(invitation.expires_at) < new Date()) {
+      await ctx.editMessageText("⚠️ انتهت صلاحية هذه الدعوة.");
+      return;
+    }
+
+    // سجّل المستخدم في admin_users
+    try {
+      await supabase.insert("admin_users", {
+        telegram_id: ctx.from.id,
+        first_name: ctx.from.first_name || invitation.custom_name || "مسؤول",
+        username: ctx.from.username || null,
+        display_name: invitation.custom_name || ctx.from.first_name || "مسؤول",
+      });
+    } catch (e: any) {
+      // قد يكون موجوداً مسبقاً — تجاهل خطأ duplicate
+      const msg = String(e?.message || "");
+      if (!msg.includes("duplicate") && !msg.includes("23505")) {
+        console.warn("Failed to register admin_user:", msg.substring(0, 100));
+      }
+    }
+
+    // حدّد position_id
+    let positionId = invitation.position_id;
+
+    if (invitation.role === "central") {
+      positionId = "central_chair";
+    } else if (invitation.role === "college" && invitation.college_id) {
+      positionId = `college_admin_${invitation.college_id}`;
+      // تأكد من وجود المنصب
+      try {
+        await supabase.insert("positions", {
+          id: positionId,
+          level: "college",
+          title: `🏛 مسؤول ${getCollegeById(invitation.college_id)?.short_name || ""}`,
+          description: `مسؤول كلية ${getCollegeById(invitation.college_id)?.name || ""}`,
+          college_id: invitation.college_id,
+          is_central: false,
+        });
+      } catch (e: any) {
+        const msg = String(e?.message || "");
+        if (!msg.includes("duplicate") && !msg.includes("23505")) {
+          console.warn("Failed to create college position:", msg.substring(0, 100));
+        }
+      }
+    } else if (invitation.role === "level" && invitation.specialty_id && invitation.level_num) {
+      positionId = await ensureLevelRepPosition(
+        supabase,
+        invitation.college_id || 0,
+        invitation.specialty_id,
+        invitation.level_num
+      );
+    }
+
+    if (!positionId) {
+      await ctx.editMessageText("⚠️ فشل تحديد المنصب. تواصل مع المسؤول المركزي.");
+      return;
+    }
+
+    // عيّن المستخدم في position_holders
+    try {
+      await supabase.insert("position_holders", {
+        position_id: positionId,
+        user_telegram_id: ctx.from.id,
+        assigned_by: invitation.invited_by_telegram_id,
+        is_active: true,
+      });
+    } catch (e: any) {
+      const msg = String(e?.message || "");
+      if (msg.includes("duplicate") || msg.includes("23505")) {
+        // المستخدم مسجّل في هذا المنصب مسبقاً — فعّله
+        await supabase.update("position_holders", {
+          is_active: true,
+        }, `position_id=eq.${positionId}&user_telegram_id=eq.${ctx.from.id}`);
+      } else {
+        console.error("Failed to assign position:", msg.substring(0, 200));
+        await ctx.editMessageText("⚠️ فشل تعيين المنصب. حاول مرة أخرى.");
+        return;
+      }
+    }
+
+    // قبول الدعوة في DB
+    await acceptInvitation(supabase, invitationId, ctx.from.id);
+
+    // سجل العملية
+    const positionTitle = invitation.role === "central" ? "🛡 مسؤول مركزي" :
+      invitation.role === "college" ? `🏛 مسؤول ${getCollegeById(invitation.college_id)?.short_name || ""}` :
+      `📊 مندوب ${getSpecialtyById(invitation.specialty_id)?.short_name || ""} - مستوى ${invitation.level_num}`;
+
+    await writePositionAuditLog(supabase, {
+      position_id: positionId,
+      action: "assign",
+      old_holder_id: null,
+      new_holder_id: ctx.from.id,
+      performed_by: invitation.invited_by_telegram_id,
+    });
+
+    // إبطال cache الصلاحيات
+    await invalidateUserPermissions(ctx.from.id);
+
+    // رسالة نجاح
+    await ctx.editMessageText(
+      `✅ *تم قبول الدعوة بنجاح!*\n\n` +
+      `🎭 المنصب: ${positionTitle}\n` +
+      `👤 الاسم: ${invitation.custom_name || ctx.from.first_name}\n\n` +
+      `يمكنك الآن استخدام بوت الإدارة. أرسل /start لفتح اللوحة.`,
+      { parse_mode: "Markdown" }
+    );
+
+    // أرسل /start تلقائياً
+    await ctx.reply("👆 اضغط /start لفتح لوحة الإدارة.");
+  });
+
+  // ============================================
+  // رفض الدعوة
+  // ============================================
+  bot.callbackQuery(/^reject_invite_(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(
+      "❌ تم رفض الدعوة.\n\nلو غيّرت رأيك، يمكنك استخدام رابط الدعوة مرة أخرى.",
+      { parse_mode: "Markdown" }
+    );
+  });
 
   // معالجة الأخطاء الشاملة
   bot.catch(async (err) => {

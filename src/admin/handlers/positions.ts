@@ -39,7 +39,13 @@
 
 import { Bot, InlineKeyboard } from "grammy";
 import { ADMIN_TEXTS } from "../../shared/texts";
-import { SupabaseClient } from "../../shared/db";
+import {
+  SupabaseClient,
+  generateInviteToken,
+  createInvitation,
+  getPendingInvitations,
+  revokeInvitation,
+} from "../../shared/db";
 import {
   getUserPermissions,
   getPositionScopeText,
@@ -54,6 +60,7 @@ import {
   writePositionAuditLog,
   notifyNewAdmin,
   notifyRevokedAdmin,
+  getAdminPrimaryPositionId,
 } from "../helpers";
 import {
   COLLEGES,
@@ -93,6 +100,9 @@ export function registerPositionHandlers(bot: Bot, supabase: SupabaseClient): vo
       kb.text(ADMIN_TEXTS.positions.btn_level_reps, "level_reps").row();
       kb.text(ADMIN_TEXTS.positions.btn_org_chart, "org_chart").row();
       kb.text(ADMIN_TEXTS.positions.btn_audit_log, "audit_log").row();
+      // نظام دعوات المسؤولين (للمركزي فقط)
+      kb.text("➕ دعوة مسؤول جديد", "invite_admin").row();
+      kb.text("📋 الدعوات المعلّقة", "invite_list").row();
     } else {
       // مسؤول كلية — 3 أقسام
       kb.text(ADMIN_TEXTS.positions.btn_level_reps, "level_reps").row();
@@ -1454,4 +1464,471 @@ export function registerPositionHandlers(bot: Bot, supabase: SupabaseClient): vo
     kb.text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins");
     return kb;
   }
+
+  // =====================================================
+  // 13) نظام دعوات المسؤولين (Admin Invitations)
+  // =====================================================
+  // تدفق بديل لإدخال Telegram ID: يُنشئ دعوة برابط t.me يحمل token
+  // المستلم يفتح الرابط فيبدأ /start invite_<token> فيُسجَّل كمسؤول تلقائياً.
+  //
+  // Handlers:
+  //   - invite_admin                            → اختيار نوع المسؤول
+  //   - invite_role_central                     → طلب اسم → (messages.ts) إنشاء دعوة
+  //   - invite_role_college                     → اختيار كلية
+  //   - invite_role_college_{collegeId}         → طلب اسم
+  //   - invite_role_level                       → اختيار كلية
+  //   - invite_role_level_college_{collegeId}   → اختيار تخصص
+  //   - invite_role_level_spec_{specId}         → اختيار مستوى
+  //   - invite_role_level_lvl_{specId}_{level}  → طلب اسم
+  //   - invite_list                             → عرض الدعوات المعلّقة
+  //   - invite_revoke_{invitationId}            → إلغاء دعوة
+  //   - cancel_invite                           → إلغاء تدفق الاسم
+  // =====================================================
+
+  // ---- Helper: بناء رابط الدعوة ----
+  function buildInviteLink(token: string): string {
+    return `https://t.me/usttesteradminbot?start=invite_${token}`;
+  }
+
+  // ---- Helper: صياغة تسمية الدور ----
+  function formatRoleLabel(role: "central" | "college" | "level"): string {
+    switch (role) {
+      case "central":
+        return "🛡 مسؤول مركزي";
+      case "college":
+        return "🏛 مسؤول كلية";
+      case "level":
+        return "📊 مندوب مستوى";
+      default:
+        return role;
+    }
+  }
+
+  // ---- Helper: صياغة نطاق الدعوة (كلية/تخصص/مستوى) ----
+  function formatScopeLabel(inv: any): string {
+    if (inv.role === "central") return "";
+    if (inv.role === "college" && inv.college_id) {
+      const c = getCollegeById(inv.college_id);
+      return c ? `📍 ${c.name}` : "";
+    }
+    if (inv.role === "level" && inv.specialty_id && inv.level_num) {
+      const s = getSpecialtyById(inv.specialty_id);
+      const c = s ? getCollegeById(s.college_id) : null;
+      const parts: string[] = [];
+      if (c) parts.push(c.short_name);
+      if (s) parts.push(s.short_name);
+      parts.push(`المستوى ${inv.level_num}`);
+      return `📍 ${parts.join(" / ")}`;
+    }
+    return "";
+  }
+
+  // ---- invite_admin: اختيار نوع المسؤول ----
+  bot.callbackQuery("invite_admin", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission, {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_manage_admins,
+          "manage_admins"
+        ),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    const kb = new InlineKeyboard()
+      .text("🛡 مسؤول مركزي", "invite_role_central")
+      .row()
+      .text("🏛 مسؤول كلية", "invite_role_college")
+      .row()
+      .text("📊 مندوب مستوى", "invite_role_level")
+      .row()
+      .text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins");
+
+    await ctx.editMessageText(
+      "🎟️ *إنشاء دعوة مسؤول جديد*\n\nاختر نوع المسؤول المراد دعوته:\n\n⏳ الدعوة صالحة لمدة 7 أيام.",
+      { reply_markup: kb, parse_mode: "Markdown" }
+    );
+  });
+
+  // ---- invite_role_central: طلب اسم المسؤول المركزي ----
+  bot.callbackQuery("invite_role_central", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission, {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_manage_admins,
+          "manage_admins"
+        ),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.awaiting_invite_name = true;
+    session.awaiting_invite_context = { role: "central" };
+    await saveSession(session);
+
+    await ctx.editMessageText(
+      "🛡 *دعوة مسؤول مركزي*\n\nأرسل اسم المسؤول (سيظهر داخل النظام):",
+      {
+        reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_invite"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // ---- invite_role_college: عرض قائمة الكليات ----
+  bot.callbackQuery("invite_role_college", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission, {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_manage_admins,
+          "manage_admins"
+        ),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    const kb = new InlineKeyboard();
+    for (const college of COLLEGES) {
+      kb.text(
+        `${college.emoji} ${college.short_name}`,
+        `invite_role_college_${college.id}`
+      ).row();
+    }
+    kb.text("🔙 اختيار النوع", "invite_admin").row();
+    kb.text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins");
+
+    await ctx.editMessageText(
+      "🏛 *دعوة مسؤول كلية*\n\nاختر الكلية:",
+      { reply_markup: kb, parse_mode: "Markdown" }
+    );
+  });
+
+  // ---- invite_role_college_{collegeId}: طلب اسم مسؤول الكلية ----
+  bot.callbackQuery(/^invite_role_college_(\d+)$/, async (ctx) => {
+    const collegeId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission, {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_manage_admins,
+          "manage_admins"
+        ),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    const college = getCollegeById(collegeId);
+    if (!college) {
+      await ctx.reply("⚠️ الكلية غير موجودة.");
+      return;
+    }
+
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.awaiting_invite_name = true;
+    session.awaiting_invite_context = { role: "college", college_id: collegeId };
+    await saveSession(session);
+
+    await ctx.editMessageText(
+      `🏛 *دعوة مسؤول كلية ${college.name}*\n\nأرسل اسم المسؤول:`,
+      {
+        reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_invite"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // ---- invite_role_level: عرض قائمة الكليات (للمندوب) ----
+  bot.callbackQuery("invite_role_level", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission, {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_manage_admins,
+          "manage_admins"
+        ),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    const kb = new InlineKeyboard();
+    for (const college of COLLEGES) {
+      kb.text(
+        `${college.emoji} ${college.short_name}`,
+        `invite_role_level_college_${college.id}`
+      ).row();
+    }
+    kb.text("🔙 اختيار النوع", "invite_admin").row();
+    kb.text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins");
+
+    await ctx.editMessageText(
+      "📊 *دعوة مندوب مستوى*\n\nاختر الكلية أولاً:",
+      { reply_markup: kb, parse_mode: "Markdown" }
+    );
+  });
+
+  // ---- invite_role_level_college_{collegeId}: عرض تخصصات الكلية ----
+  bot.callbackQuery(/^invite_role_level_college_(\d+)$/, async (ctx) => {
+    const collegeId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission, {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_manage_admins,
+          "manage_admins"
+        ),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    const college = getCollegeById(collegeId);
+    if (!college) {
+      await ctx.reply("⚠️ الكلية غير موجودة.");
+      return;
+    }
+
+    const specialties = getSpecialtiesByCollege(collegeId);
+    if (specialties.length === 0) {
+      await ctx.editMessageText("⚠️ لا توجد تخصصات في هذه الكلية.", {
+        reply_markup: new InlineKeyboard().text(
+          "🔙 الكليات",
+          "invite_role_level"
+        ),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    const kb = new InlineKeyboard();
+    for (const spec of specialties) {
+      kb.text(
+        `📚 ${spec.short_name}`,
+        `invite_role_level_spec_${spec.id}`
+      ).row();
+    }
+    kb.text("🔙 الكليات", "invite_role_level").row();
+    kb.text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins");
+
+    await ctx.editMessageText(
+      `📚 *مندوب مستوى — ${college.name}*\n\nاختر التخصص:`,
+      { reply_markup: kb, parse_mode: "Markdown" }
+    );
+  });
+
+  // ---- invite_role_level_spec_{specId}: عرض مستويات التخصص ----
+  bot.callbackQuery(/^invite_role_level_spec_(\d+)$/, async (ctx) => {
+    const specId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission, {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_manage_admins,
+          "manage_admins"
+        ),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    const spec = getSpecialtyById(specId);
+    if (!spec) {
+      await ctx.reply("⚠️ التخصص غير موجود.");
+      return;
+    }
+
+    const kb = new InlineKeyboard();
+    for (let lvl = 1; lvl <= spec.levels_count; lvl++) {
+      kb.text(
+        `📊 المستوى ${lvl}`,
+        `invite_role_level_lvl_${specId}_${lvl}`
+      ).row();
+    }
+    kb.text("🔙 التخصصات", `invite_role_level_college_${spec.college_id}`).row();
+    kb.text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins");
+
+    await ctx.editMessageText(
+      `📊 *مندوب مستوى — ${spec.short_name}*\n\nاختر المستوى:`,
+      { reply_markup: kb, parse_mode: "Markdown" }
+    );
+  });
+
+  // ---- invite_role_level_lvl_{specId}_{levelNum}: طلب اسم المندوب ----
+  bot.callbackQuery(/^invite_role_level_lvl_(\d+)_(\d+)$/, async (ctx) => {
+    const specId = parseInt(ctx.match[1]);
+    const levelNum = parseInt(ctx.match[2]);
+    await ctx.answerCallbackQuery();
+
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission, {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_manage_admins,
+          "manage_admins"
+        ),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    const spec = getSpecialtyById(specId);
+    if (!spec) {
+      await ctx.reply("⚠️ التخصص غير موجود.");
+      return;
+    }
+
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.awaiting_invite_name = true;
+    session.awaiting_invite_context = {
+      role: "level",
+      college_id: spec.college_id,
+      specialty_id: specId,
+      level_num: levelNum,
+    };
+    await saveSession(session);
+
+    await ctx.editMessageText(
+      `📊 *دعوة مندوب مستوى*\n\n📍 ${spec.short_name} — المستوى ${levelNum}\n\nأرسل اسم المندوب:`,
+      {
+        reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_invite"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // ---- invite_list: عرض الدعوات المعلّقة ----
+  bot.callbackQuery("invite_list", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission, {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_manage_admins,
+          "manage_admins"
+        ),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    let invitations: any[] = [];
+    try {
+      invitations = await getPendingInvitations(supabase);
+    } catch (e) {
+      console.error("Failed to load pending invitations:", e);
+    }
+
+    if (invitations.length === 0) {
+      await ctx.editMessageText(
+        "📋 *الدعوات المعلّقة*\n\nلا توجد دعوات معلّقة حالياً.",
+        {
+          reply_markup: new InlineKeyboard()
+            .text("➕ دعوة مسؤول جديد", "invite_admin")
+            .row()
+            .text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins"),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    let msg = `📋 *الدعوات المعلّقة (${invitations.length})*\n\n`;
+    const kb = new InlineKeyboard();
+    for (const inv of invitations) {
+      const roleLabel = formatRoleLabel(inv.role);
+      const scopeLabel = formatScopeLabel(inv);
+      const name = inv.custom_name || "—";
+      const link = buildInviteLink(inv.token);
+      const expires = inv.expires_at
+        ? new Date(inv.expires_at).toLocaleDateString("ar-EG")
+        : "—";
+      msg +=
+        `🎟️ *${roleLabel}*` +
+        (scopeLabel ? ` — ${scopeLabel}` : "") +
+        `\n👤 ${name}\n🔗 \`${link}\`\n⏳ ينتهي: ${expires}\n\n`;
+      kb.url("🔗 فتح", link).text("❌ إلغاء", `invite_revoke_${inv.id}`).row();
+    }
+    kb.text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins");
+
+    await ctx.editMessageText(msg, {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  });
+
+  // ---- invite_revoke_{invitationId}: إلغاء دعوة معلّقة ----
+  bot.callbackQuery(/^invite_revoke_(\d+)$/, async (ctx) => {
+    const invitationId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+
+    const perms = await getUserPermissions(ctx.from.id);
+    if (!perms.permissions.has("manage_admins")) {
+      await ctx.editMessageText(ADMIN_TEXTS.positions.no_permission, {
+        reply_markup: new InlineKeyboard().text(
+          ADMIN_TEXTS.navigation.back_to_manage_admins,
+          "manage_admins"
+        ),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    let ok = false;
+    try {
+      ok = await revokeInvitation(supabase, invitationId);
+    } catch (e) {
+      console.error("revokeInvitation failed:", e);
+    }
+
+    if (!ok) {
+      await ctx.reply("⚠️ فشل إلغاء الدعوة. ربما تم استخدامها أو إلغاؤها مسبقاً.");
+      return;
+    }
+
+    await ctx.editMessageText(
+      "✅ *تم إلغاء الدعوة بنجاح.*\n\nلم يعد الرابط صالحاً للاستخدام.",
+      {
+        reply_markup: new InlineKeyboard()
+          .text("📋 الدعوات المعلّقة", "invite_list")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // ---- cancel_invite: إلغاء تدفق إدخال الاسم ----
+  bot.callbackQuery("cancel_invite", async (ctx) => {
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    await ctx.answerCallbackQuery();
+    session.awaiting_invite_name = undefined;
+    session.awaiting_invite_context = undefined;
+    await saveSession(session);
+
+    await ctx.editMessageText("❌ *تم إلغاء إنشاء الدعوة.*", {
+      reply_markup: new InlineKeyboard()
+        .text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins")
+        .row()
+        .text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard"),
+      parse_mode: "Markdown",
+    });
+  });
 }

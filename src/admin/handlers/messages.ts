@@ -28,6 +28,8 @@ import {
   writeSubjectAuditLog,
   normalizeSubjectName,
   updateCommitteeChannel,
+  generateInviteToken,
+  createInvitation,
 } from "../../shared/db";
 import { getCollegeById, getSpecialtyById } from "../../shared/data/colleges";
 import {
@@ -898,6 +900,126 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
       if (assign.step === "verify") {
         return;
       }
+    }
+
+    // =====================================================
+    // إنشاء دعوة مسؤول — استقبال الاسم (Invite Flow)
+    // =====================================================
+    // يُضبط عبر callbacks في positions.ts:
+    //   invite_role_central / invite_role_college_{id} / invite_role_level_lvl_{spec}_{level}
+    // هنا نستقبل الاسم، نُنشئ token، نُسجّل الدعوة في admin_invitations،
+    // ثم نعرض الرابط للمسؤول ليُشاركه مع المدعو.
+    if (session.awaiting_invite_name && session.awaiting_invite_context) {
+      const inviteCtx = session.awaiting_invite_context;
+      const name = (ctx.message?.text || "").trim();
+
+      if (!name || name.length < 2 || name.length > 100) {
+        await ctx.reply("⚠️ الاسم غير صالح (2-100 حرف). أعد المحاولة:", {
+          reply_markup: new InlineKeyboard().text("❌ إلغاء", "cancel_invite"),
+          parse_mode: "Markdown",
+        });
+        return;
+      }
+
+      // امسح الجلسة مبكراً (حتى لو فشل الإنشاء، الجلسة نظيفة)
+      session.awaiting_invite_name = undefined;
+      session.awaiting_invite_context = undefined;
+      await saveSession(session);
+
+      // حدّد position_id المرتبط بالدور
+      let positionId: string | null = null;
+      if (inviteCtx.role === "central") {
+        positionId = "central_chair";
+      } else if (inviteCtx.role === "college" && inviteCtx.college_id) {
+        positionId = `college_admin_${inviteCtx.college_id}`;
+      } else if (
+        inviteCtx.role === "level" &&
+        inviteCtx.specialty_id &&
+        inviteCtx.level_num
+      ) {
+        positionId = `level_rep_${inviteCtx.specialty_id}_${inviteCtx.level_num}`;
+      }
+
+      // اقرأ position_id الفعلي للداعي (للتدقيق)
+      const inviterPositionId = await getAdminPrimaryPositionId(
+        supabase,
+        ctx.from.id
+      );
+
+      // توليد token آمن
+      const token = generateInviteToken();
+
+      // إنشاء الدعوة في DB
+      let inviteId: number | null = null;
+      try {
+        inviteId = await createInvitation(supabase, {
+          token,
+          role: inviteCtx.role,
+          custom_name: name,
+          college_id: inviteCtx.college_id || null,
+          specialty_id: inviteCtx.specialty_id || null,
+          level_num: inviteCtx.level_num || null,
+          position_id: positionId,
+          invited_by_telegram_id: ctx.from.id,
+          invited_by_position_id: inviterPositionId,
+        });
+      } catch (e) {
+        console.error("createInvitation failed:", e);
+      }
+
+      if (!inviteId) {
+        await ctx.reply("⚠️ فشل إنشاء الدعوة في قاعدة البيانات. حاول مرة أخرى.", {
+          reply_markup: new InlineKeyboard()
+            .text("🔙 إدارة المسؤولين", "manage_admins"),
+        });
+        return;
+      }
+
+      // بناء الرسالة النهائية مع الرابط
+      const link = `https://t.me/usttesteradminbot?start=invite_${token}`;
+      let roleLabel = "";
+      let scopeLine = "";
+      if (inviteCtx.role === "central") {
+        roleLabel = "🛡 مسؤول مركزي";
+      } else if (inviteCtx.role === "college" && inviteCtx.college_id) {
+        roleLabel = "🏛 مسؤول كلية";
+        const c = getCollegeById(inviteCtx.college_id);
+        scopeLine = c ? `\n📍 ${c.name}` : "";
+      } else if (
+        inviteCtx.role === "level" &&
+        inviteCtx.specialty_id &&
+        inviteCtx.level_num
+      ) {
+        roleLabel = "📊 مندوب مستوى";
+        const s = getSpecialtyById(inviteCtx.specialty_id);
+        const c = s ? getCollegeById(s.college_id) : null;
+        const parts: string[] = [];
+        if (c) parts.push(c.short_name);
+        if (s) parts.push(s.short_name);
+        parts.push(`المستوى ${inviteCtx.level_num}`);
+        scopeLine = `\n📍 ${parts.join(" / ")}`;
+      }
+
+      const msg =
+        `✅ *تم إنشاء الدعوة بنجاح!*\n\n` +
+        `🎟️ ${roleLabel}${scopeLine}\n` +
+        `👤 ${name}\n\n` +
+        `🔗 *رابط الدعوة:*\n\`${link}\`\n\n` +
+        `⏳ الدعوة صالحة لمدة 7 أيام.\n` +
+        `📤 شارك الرابط مع المدعو عبر تلجرام.`;
+
+      await ctx.reply(msg, {
+        reply_markup: new InlineKeyboard()
+          .url("🔗 فتح الرابط", link)
+          .row()
+          .text("📋 الدعوات المعلّقة", "invite_list")
+          .row()
+          .text("➕ دعوة أخرى", "invite_admin")
+          .row()
+          .text(ADMIN_TEXTS.navigation.back_to_manage_admins, "manage_admins"),
+        parse_mode: "Markdown",
+      });
+      return;
     }
 
     // =====================================================

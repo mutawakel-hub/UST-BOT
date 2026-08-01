@@ -35,6 +35,14 @@ export interface AdminSession {
     is_replacement?: boolean;
   };
   awaiting_position_revoke?: { position_id: string; holder_name?: string; position_title?: string };
+  // نظام دعوات المسؤولين (Invite Flow)
+  awaiting_invite_name?: boolean;
+  awaiting_invite_context?: {
+    role: "central" | "college" | "level";
+    college_id?: number;
+    specialty_id?: number;
+    level_num?: number;
+  };
   awaiting_channel_edit?: number; // channel_id
   awaiting_channel_edit_field?: "url" | "display_name"; // أي حقل يُعدَّل (المرحلة 2)
   // سياق إضافة/تعديل قناة لجنة (المرحلة 2)
@@ -163,6 +171,8 @@ export function resetSessionAwaitingStates(session: AdminSession): void {
   session.awaiting_content_search = false;
   session.awaiting_position_assign = undefined;
   session.awaiting_position_revoke = undefined;
+  session.awaiting_invite_name = undefined;
+  session.awaiting_invite_context = undefined;
   session.awaiting_channel_edit = undefined;
   session.awaiting_channel_edit_field = undefined;
   session.awaiting_channel_add_step = undefined;
