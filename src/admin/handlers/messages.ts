@@ -1282,6 +1282,54 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
     const fileSizeMb = bytesToMb(fileSizeBytes);
 
     // =====================================================
+    // استقبال ملف خطة استرشادية
+    // =====================================================
+    if (session?.awaiting_plan_upload) {
+      const specId = session.awaiting_plan_upload;
+      session.awaiting_plan_upload = undefined;
+      await saveSession(session);
+
+      try {
+        // خزّن file_id في جدول specialties
+        await supabase.update("specialties", {
+          plan_url: doc.file_id,
+          plan_updated_at: new Date().toISOString(),
+          plan_updated_by: ctx.from.id,
+        }, `id=eq.${specId}`);
+
+        // اقرأ اسم التخصص للرسالة
+        let specName = "التخصص";
+        try {
+          const specResult = await supabase.select("specialties", {
+            columns: "name,college_id",
+            filter: `id=eq.${specId}`,
+            single: true,
+          });
+          const spec = Array.isArray(specResult) ? specResult[0] : specResult;
+          if (spec?.name) specName = spec.name;
+          const collegeId = spec?.college_id;
+
+          await ctx.reply(
+            `✅ *تم رفع الخطة الاسترشادية بنجاح!*\n\n🗺 التخصص: ${specName}\n📎 الملف: ${doc.file_name}\n\nالطلاب سيرون الخطة الآن عند الضغط على "🗺 الخطة الاسترشادية".`,
+            {
+              reply_markup: new InlineKeyboard()
+                .text("🔙 التخصصات", `plan_col_${collegeId || 0}`)
+                .row()
+                .text(ADMIN_TEXTS.navigation.back_to_academic, "academic_mgmt"),
+              parse_mode: "Markdown",
+            }
+          );
+        } catch {
+          await ctx.reply("✅ تم رفع الخطة بنجاح.");
+        }
+      } catch (e: any) {
+        console.error("Failed to save plan:", e);
+        await ctx.reply("⚠️ فشل حفظ الخطة. حاول مرة أخرى.");
+      }
+      return;
+    }
+
+    // =====================================================
     // استقبال ملف في الاستيراد المتتابع (المرحلة 3)
     // =====================================================
     if (session?.awaiting_import_step === "file" && session.import_context) {

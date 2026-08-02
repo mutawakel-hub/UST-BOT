@@ -360,12 +360,16 @@ export function registerSubjectHandlers(bot: Bot, supabase: SupabaseClient): voi
       kb.text(ADMIN_TEXTS.academic_mgmt.btn_channels, "manage_channels").row();
     }
 
-    // الأقسام التالية قيد التطوير (للمركزي فقط حالياً)
+    // 🗂 الخطط الاسترشادية — للمركزي + مسؤول الكلية
+    if (p.has("manage_subjects")) {
+      kb.text(ADMIN_TEXTS.academic_mgmt.btn_academic_plans, "academic_plans_mgmt").row();
+    }
+
+    // أقسام قيد التطوير (للمركزي فقط)
     if (perms.is_central) {
       kb.text(ADMIN_TEXTS.academic_mgmt.btn_colleges, "academic_coming_soon").row();
       kb.text(ADMIN_TEXTS.academic_mgmt.btn_specialties, "academic_coming_soon").row();
       kb.text(ADMIN_TEXTS.academic_mgmt.btn_study_systems, "academic_coming_soon").row();
-      kb.text(ADMIN_TEXTS.academic_mgmt.btn_academic_plans, "academic_coming_soon").row();
     }
 
     kb.text(ADMIN_TEXTS.navigation.back_to_dashboard, "back_to_dashboard");
@@ -374,6 +378,259 @@ export function registerSubjectHandlers(bot: Bot, supabase: SupabaseClient): voi
       reply_markup: kb,
       parse_mode: "Markdown",
     });
+  });
+
+  // ====== 🗂 إدارة الخطط الاسترشادية ======
+  // للمركزي: كل التخصصات
+  // لمسؤول الكلية: تخصصات كليته فقط
+
+  // القائمة الرئيسية للخطط — عرض الكليات
+  bot.callbackQuery("academic_plans_mgmt", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const perms = await getUserPermissions(ctx.from.id);
+
+    const collegeIds = getAdminCollegeIds(perms);
+    if (collegeIds.length === 0) {
+      await ctx.editMessageText("⚠️ لا توجد كليات ضمن نطاقك.");
+      return;
+    }
+
+    let msg = "🗂 *إدارة الخطط الاسترشادية*\n\nاختر الكلية:\n\n";
+    const kb = new InlineKeyboard();
+    for (const cid of collegeIds) {
+      const college = getCollegeById(cid);
+      if (college) {
+        kb.text(`${college.emoji} ${college.short_name}`, `plan_col_${cid}`).row();
+      }
+    }
+    kb.text(ADMIN_TEXTS.navigation.back_to_academic, "academic_mgmt");
+
+    await ctx.editMessageText(msg, {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  });
+
+  // اختيار كلية → عرض التخصصات مع حالة الخطة
+  bot.callbackQuery(/^plan_col_(\d+)$/, async (ctx) => {
+    const collegeId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+
+    // اقرأ التخصصات من DB
+    let specs: any[] = [];
+    try {
+      const result = await supabase.select("specialties", {
+        columns: "id,name,short_name,college_id,plan_url,plan_updated_at",
+        filter: `college_id=eq.${collegeId}&is_active=eq.true`,
+        order: "name.asc",
+      });
+      specs = Array.isArray(result) ? result : [];
+    } catch (e) {
+      console.error("Failed to fetch specialties for plans:", e);
+    }
+
+    if (specs.length === 0) {
+      await ctx.editMessageText("⚠️ لا توجد تخصصات في هذه الكلية.", {
+        reply_markup: new InlineKeyboard().text("🔙 الخطط", "academic_plans_mgmt"),
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    const college = getCollegeById(collegeId);
+    let msg = `🗂 *الخطط الاسترشادية*\n\n${college?.emoji} ${college?.name}\n\n`;
+    const kb = new InlineKeyboard();
+    for (const s of specs) {
+      const hasPlan = !!s.plan_url;
+      const status = hasPlan ? "✅" : "❌";
+      msg += `${status} ${s.name}\n`;
+      kb.text(`${status} ${s.short_name || s.name.substring(0, 20)}`, `plan_spec_${s.id}`);
+      kb.row();
+    }
+    kb.text("🔙 الخطط", "academic_plans_mgmt");
+
+    await ctx.editMessageText(msg, {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  });
+
+  // اختيار تخصص → عرض تفاصيل الخطة + أزرار الإجراءات
+  bot.callbackQuery(/^plan_spec_(\d+)$/, async (ctx) => {
+    const specId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+
+    // اقرأ التخصص من DB
+    let spec: any = null;
+    try {
+      const result = await supabase.select("specialties", {
+        columns: "id,name,short_name,college_id,plan_url,plan_updated_at,plan_updated_by",
+        filter: `id=eq.${specId}`,
+        single: true,
+      });
+      spec = Array.isArray(result) ? result[0] : result;
+    } catch (e) {
+      console.error("Failed to fetch specialty for plan:", e);
+    }
+
+    if (!spec) {
+      await ctx.editMessageText("⚠️ التخصص غير موجود.");
+      return;
+    }
+
+    const college = getCollegeById(spec.college_id);
+    const hasPlan = !!spec.plan_url;
+    const updatedDate = spec.plan_updated_at
+      ? new Date(spec.plan_updated_at).toLocaleDateString("ar-EG")
+      : "غير محدد";
+
+    let msg = `🗂 *خطة ${spec.name}*\n\n`;
+    msg += `🏛 الكلية: ${college?.name || ""}\n`;
+    msg += `📚 التخصص: ${spec.name}\n`;
+    msg += `📋 الحالة: ${hasPlan ? "✅ متوفرة" : "❌ غير متوفرة"}\n`;
+    if (hasPlan) {
+      msg += `📅 آخر تحديث: ${updatedDate}\n`;
+    }
+    msg += "\nاختر الإجراء:";
+
+    const kb = new InlineKeyboard();
+    if (hasPlan) {
+      kb.text("👁 معاينة الخطة", `plan_view_${specId}`).row();
+      kb.text("🔄 تحديث الخطة", `plan_upload_${specId}`).row();
+      kb.text("🗑 حذف الخطة", `plan_delete_${specId}`).row();
+    } else {
+      kb.text("📤 رفع خطة جديدة", `plan_upload_${specId}`).row();
+    }
+    kb.text("🔙 التخصصات", `plan_col_${spec.college_id}`);
+
+    await ctx.editMessageText(msg, {
+      reply_markup: kb,
+      parse_mode: "Markdown",
+    });
+  });
+
+  // رفع/تحديث خطة — طلب ملف PDF
+  bot.callbackQuery(/^plan_upload_(\d+)$/, async (ctx) => {
+    const specId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    session.awaiting_plan_upload = specId;
+    await saveSession(session);
+
+    await ctx.editMessageText(
+      "📤 *رفع الخطة الاسترشادية*\n\n📎 أرسل ملف PDF الخطة الآن:",
+      {
+        reply_markup: new InlineKeyboard().text("❌ إلغاء", "plan_cancel"),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // معاينة الخطة (إرسال الملف للمسؤول)
+  bot.callbackQuery(/^plan_view_(\d+)$/, async (ctx) => {
+    const specId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery({ text: "⏳ جارٍ جلب الخطة..." });
+
+    let spec: any = null;
+    try {
+      const result = await supabase.select("specialties", {
+        columns: "id,name,plan_url",
+        filter: `id=eq.${specId}`,
+        single: true,
+      });
+      spec = Array.isArray(result) ? result[0] : result;
+    } catch (e) {
+      console.error("Failed to fetch plan:", e);
+    }
+
+    if (!spec?.plan_url) {
+      await ctx.reply("⚠️ لا توجد خطة لهذا التخصص.");
+      return;
+    }
+
+    try {
+      await bot.api.sendDocument(ctx.chat.id, spec.plan_url, {
+        caption: `🗺 الخطة الاسترشادية — ${spec.name}`,
+      });
+    } catch (e: any) {
+      await ctx.reply("⚠️ تعذّر إرسال الملف. قد يكون file_id منتهي الصلاحية.");
+    }
+  });
+
+  // حذف الخطة
+  bot.callbackQuery(/^plan_delete_(\d+)$/, async (ctx) => {
+    const specId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery();
+
+    await ctx.editMessageText(
+      "⚠️ *تأكيد حذف الخطة*\n\nسيتم حذف رابط الخطة من التخصص.\nالطلاب لن يروا زر الخطة بعد الآن.\n\nهل أنت متأكد؟",
+      {
+        reply_markup: new InlineKeyboard()
+          .text("✅ نعم، احذف", `plan_confirm_delete_${specId}`)
+          .text("❌ إلغاء", `plan_spec_${specId}`),
+        parse_mode: "Markdown",
+      }
+    );
+  });
+
+  // تأكيد حذف الخطة
+  bot.callbackQuery(/^plan_confirm_delete_(\d+)$/, async (ctx) => {
+    const specId = parseInt(ctx.match[1]);
+    await ctx.answerCallbackQuery({ text: "🗑 جارٍ الحذف..." });
+
+    try {
+      // اقرع college_id للرجوع
+      let spec: any = null;
+      try {
+        const result = await supabase.select("specialties", {
+          columns: "college_id",
+          filter: `id=eq.${specId}`,
+          single: true,
+        });
+        spec = Array.isArray(result) ? result[0] : result;
+      } catch {}
+
+      await supabase.update("specialties", {
+        plan_url: null,
+        plan_updated_at: new Date().toISOString(),
+        plan_updated_by: ctx.from.id,
+      }, `id=eq.${specId}`);
+
+      await ctx.editMessageText(
+        "✅ تم حذف الخطة بنجاح.\n\nالطلاب لن يرون زر الخطة لهذا التخصص.",
+        {
+          reply_markup: new InlineKeyboard().text(
+            "🔙 التخصصات",
+            `plan_col_${spec?.college_id || 0}`
+          ),
+          parse_mode: "Markdown",
+        }
+      );
+    } catch (e) {
+      console.error("Failed to delete plan:", e);
+      await ctx.reply("⚠️ فشل حذف الخطة.");
+    }
+  });
+
+  // إلغاء رفع الخطة
+  bot.callbackQuery("plan_cancel", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const session = await getOrCreateSession(ctx.from.id, ctx.from.first_name);
+    const specId = session.awaiting_plan_upload;
+    session.awaiting_plan_upload = undefined;
+    await saveSession(session);
+
+    await ctx.editMessageText(
+      "✅ تم إلغاء رفع الخطة.",
+      {
+        reply_markup: new InlineKeyboard().text(
+          "🔙 التخصصات",
+          specId ? `plan_col_${specId}` : "academic_plans_mgmt"
+        ),
+        parse_mode: "Markdown",
+      }
+    );
   });
 
   // ====== أقسام قيد التطوير ======

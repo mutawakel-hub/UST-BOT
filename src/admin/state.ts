@@ -71,6 +71,8 @@ export interface AdminSession {
   awaiting_subject_edit_id?: number;
   awaiting_subject_edit_field?: "name" | "code" | "credits";
   awaiting_subject_delete_id?: number;
+  // سياق رفع خطة استرشادية
+  awaiting_plan_upload?: number; // specialty_id
   // تكريم
   awaiting_honor_reject?: number; // honor_id
   awaiting_honor_new_step?: "student_id" | "title" | "bonus";
@@ -183,6 +185,7 @@ export function resetSessionAwaitingStates(session: AdminSession): void {
   session.awaiting_subject_edit_id = undefined;
   session.awaiting_subject_edit_field = undefined;
   session.awaiting_subject_delete_id = undefined;
+  session.awaiting_plan_upload = undefined;
   session.awaiting_honor_reject = undefined;
   session.awaiting_honor_new_step = undefined;
   session.awaiting_honor_new_data = undefined;

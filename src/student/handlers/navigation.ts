@@ -115,26 +115,66 @@ export function registerNavigationHandlers(bot: Bot, supabase: SupabaseClient): 
     });
   });
 
-  // الخطة الاسترشادية
+  // الخطة الاسترشادية — قراءة من DB
   bot.callbackQuery(/plan_(\d+)/, async (ctx) => {
     const specId = parseInt(ctx.match[1]);
-    const spec = getSpecialtyById(specId);
     await ctx.answerCallbackQuery();
-    if (!spec) return;
+
+    // اقرأ بيانات التخصص + الخطة من DB
+    let spec: any = null;
+    try {
+      const result = await supabase.select("specialties", {
+        columns: "id,name,short_name,college_id,plan_url",
+        filter: `id=eq.${specId}`,
+        single: true,
+      });
+      spec = Array.isArray(result) ? result[0] : result;
+    } catch (e) {
+      console.error("Failed to fetch specialty for plan:", e);
+    }
+
+    if (!spec) {
+      await ctx.reply("⚠️ التخصص غير موجود.");
+      return;
+    }
 
     const college = getCollegeById(spec.college_id);
-    const bc = breadcrumb("🏛 الكليات", `${college?.emoji} ${college?.short_name}`, `📚 ${spec.short_name}`, "🗺 الخطة");
+    const bc = breadcrumb("🏛 الكليات", `${college?.emoji} ${college?.short_name}`, `📚 ${spec.short_name || spec.name}`, "🗺 الخطة");
 
-    await ctx.reply(`${bc}\n\n${TEXTS.choose_level.plan_message}`, {
-      reply_markup: new InlineKeyboard().url(
-        "📥 تحميل الخطة (PDF تجريبي)",
-        FALLBACK_PDF_URL
-      ).row().text(
+    // لو لا توجد خطة — اعرض رسالة
+    if (!spec.plan_url) {
+      await ctx.reply(
+        `${bc}\n\n🗺 *الخطة الاسترشادية*\n\n⚠️ لا توجد خطة استرشادية لهذا التخصص حالياً.\n\n_سيتم إضافتها قريباً من قبل اللجنة العلمية._`,
+        {
+          reply_markup: new InlineKeyboard().text(
+            TEXTS.navigation.back_to_levels,
+            `back_to_levels_${specId}`
+          ),
+          parse_mode: "Markdown",
+        }
+      );
+      return;
+    }
+
+    // توجد خطة — اعرض رسالة + أرسل الملف
+    const planMessage = resolveTextSync("choose_level", "plan_message", TEXTS.choose_level.plan_message);
+    await ctx.reply(`${bc}\n\n${planMessage}`, {
+      reply_markup: new InlineKeyboard().text(
         TEXTS.navigation.back_to_levels,
         `back_to_levels_${specId}`
       ),
       parse_mode: "Markdown",
     });
+
+    // أرسل ملف الخطة
+    try {
+      await ctx.replyWithDocument(spec.plan_url, {
+        caption: `🗺 الخطة الاسترشادية — ${spec.name}`,
+      });
+    } catch (e: any) {
+      console.error("Failed to send plan file:", e);
+      await ctx.reply("⚠️ تعذّر إرسال ملف الخطة. حاول لاحقاً.");
+    }
   });
 
   // اختيار مستوى → قائمة الفصول
