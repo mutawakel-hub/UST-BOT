@@ -1290,15 +1290,10 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
       await saveSession(session);
 
       try {
-        // خزّن file_id في جدول specialties
-        await supabase.update("specialties", {
-          plan_url: doc.file_id,
-          plan_updated_at: new Date().toISOString(),
-          plan_updated_by: ctx.from.id,
-        }, `id=eq.${specId}`);
-
-        // اقرأ اسم التخصص للرسالة
+        // اقرأ college_id + storage_channel_id لتخزين الملف
+        let storageChannelId: string | null = null;
         let specName = "التخصص";
+        let collegeId = 0;
         try {
           const specResult = await supabase.select("specialties", {
             columns: "name,college_id",
@@ -1307,21 +1302,53 @@ export function registerMessageHandlers(bot: Bot, supabase: SupabaseClient): voi
           });
           const spec = Array.isArray(specResult) ? specResult[0] : specResult;
           if (spec?.name) specName = spec.name;
-          const collegeId = spec?.college_id;
+          collegeId = spec?.college_id || 0;
 
-          await ctx.reply(
-            `✅ *تم رفع الخطة الاسترشادية بنجاح!*\n\n🗺 التخصص: ${specName}\n📎 الملف: ${doc.file_name}\n\nالطلاب سيرون الخطة الآن عند الضغط على "🗺 الخطة الاسترشادية".`,
-            {
-              reply_markup: new InlineKeyboard()
-                .text("🔙 التخصصات", `plan_col_${collegeId || 0}`)
-                .row()
-                .text(ADMIN_TEXTS.navigation.back_to_academic, "academic_mgmt"),
-              parse_mode: "Markdown",
-            }
-          );
-        } catch {
-          await ctx.reply("✅ تم رفع الخطة بنجاح.");
+          if (collegeId) {
+            const collegeResult = await supabase.select("colleges", {
+              columns: "storage_channel_id,name",
+              filter: `id=eq.${collegeId}`,
+              single: true,
+            });
+            const college = Array.isArray(collegeResult) ? collegeResult[0] : collegeResult;
+            storageChannelId = college?.storage_channel_id || null;
+          }
+        } catch (e) {
+          console.warn("Failed to fetch spec/college for plan:", e);
         }
+
+        // أعد إرسال الملف لقناة تخزين الكلية للحصول على file_id يعمل من أي بوت
+        let planFileId = doc.file_id; // fallback: استخدم file_id الأصلي
+        if (storageChannelId) {
+          try {
+            const channelMsg = await bot.api.sendDocument(storageChannelId, doc.file_id, {
+              caption: `🗺 الخطة الاسترشادية — ${specName}`,
+            });
+            if ((channelMsg as any).document?.file_id) {
+              planFileId = (channelMsg as any).document.file_id;
+            }
+          } catch (e: any) {
+            console.warn("Failed to forward plan to storage channel, using original file_id:", e?.message?.substring(0, 100));
+          }
+        }
+
+        // خزّن file_id في جدول specialties
+        await supabase.update("specialties", {
+          plan_url: planFileId,
+          plan_updated_at: new Date().toISOString(),
+          plan_updated_by: ctx.from.id,
+        }, `id=eq.${specId}`);
+
+        await ctx.reply(
+          `✅ *تم رفع الخطة الاسترشادية بنجاح!*\n\n🗺 التخصص: ${specName}\n📎 الملف: ${doc.file_name}\n\nالطلاب سيرون الخطة الآن عند الضغط على "🗺 الخطة الاسترشادية".`,
+          {
+            reply_markup: new InlineKeyboard()
+              .text("🔙 التخصصات", `plan_col_${collegeId}`)
+              .row()
+              .text(ADMIN_TEXTS.navigation.back_to_academic, "academic_mgmt"),
+            parse_mode: "Markdown",
+          }
+        );
       } catch (e: any) {
         console.error("Failed to save plan:", e);
         await ctx.reply("⚠️ فشل حفظ الخطة. حاول مرة أخرى.");

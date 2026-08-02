@@ -166,14 +166,26 @@ export function registerNavigationHandlers(bot: Bot, supabase: SupabaseClient): 
       parse_mode: "Markdown",
     });
 
-    // أرسل ملف الخطة
+    // أرسل ملف الخطة عبر sendDocument (يدعم file_id من أي بوت)
     try {
-      await ctx.replyWithDocument(spec.plan_url, {
-        caption: `🗺 الخطة الاسترشادية — ${spec.name}`,
-      });
+      await bot.api.sendDocument(
+        ctx.chat.id,
+        spec.plan_url,
+        { caption: `🗺 الخطة الاسترشادية — ${spec.name}` }
+      );
     } catch (e: any) {
-      console.error("Failed to send plan file:", e);
-      await ctx.reply("⚠️ تعذّر إرسال ملف الخطة. حاول لاحقاً.");
+      console.error("Failed to send plan file:", e?.message?.substring(0, 200));
+      // fallback: أرسل رابط تحميل لو file_id لا يعمل
+      await ctx.reply(
+        "⚠️ تعذّر إرسال ملف الخطة تلقائياً.\n\n💡 يمكنك طلب الخطة من اللجنة العلمية.",
+        {
+          reply_markup: new InlineKeyboard().text(
+            TEXTS.navigation.back_to_levels,
+            `back_to_levels_${specId}`
+          ),
+          parse_mode: "Markdown",
+        }
+      );
     }
   });
 
